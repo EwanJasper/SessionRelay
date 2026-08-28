@@ -511,6 +511,7 @@ export function createNoteSession(db: DB, o: { projectId: string; title: string;
   `).run(id, nid, o.projectId, o.title.slice(0, 120), now.toISOString(), now.toISOString(),
     JSON.stringify(tags), metaTextOf(o.title, tags));
   insertMessage(db, { sessionId: id, role: 'user', content: o.content, seqNum: 1, createdAt: now.toISOString() });
+  bumpMessageCount(db, id, 1);
   confirmSession(db, id, now.toISOString()); // 立即提取（笔记中的决策句式直接进决策库）+ 摘要
   // confirm 会以提取结果重写 meta_text → 再并入标签，保证标签可搜
   const s = getSessionFull(db, id);
