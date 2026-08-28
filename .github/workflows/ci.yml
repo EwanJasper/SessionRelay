@@ -25,7 +25,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      - name: 安装依赖（预编译下载偶发限流，重试一次）
+        run: npm ci || (sleep 15 && npm ci)
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
