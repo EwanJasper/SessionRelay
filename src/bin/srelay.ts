@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name('srelay')
   .description('会话接力 SessionRelay — 属于项目、不属于任何厂商的本地记忆层')
-  .version('0.1.0 (Phase 1)');
+  .version('0.1.0');
 
 program
   .command('init')
