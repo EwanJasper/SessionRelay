@@ -17,6 +17,7 @@
 | #5 | 2026-08-28 | v3.1 | Phase 1/2 实现回填：R8（sessions.pending_at，cooldown 计时需要）；ignore 两层判定语义入 §6.2；ZCode adapter 提前至 Phase 1 落地（偏差登记，Phase 3 仅余 end-signals 精化与 files 提取）；Phase 1/2 验收均已在实机达成（报告 `sessionrelay/docs/phase1-report.md`、`phase2-report.md`） |
 | #6 | 2026-08-28 | v3.1 | Phase 3 实现回填：MCP 8 工具 + Scope A/B 档实机达成（报告 `phase3-report.md`）；§6.5 的 attach 偏差登记——session_links 一等关联推迟至 Phase 4（需会话身份），MVP 以 sessionIds 谓词 + scope_log 留痕等价落地（P3-A） |
 | #7 | 2026-08-28 | v3.1 | **MVP 收官（Phase 0→3.5 全部完成）**：HOP 交接包落地（报告 `phase35-report.md`，81/81 测试）——导出/导入/归化/默认脱敏/隔离导入/release/HANDOFF.md 署名全部实机验证；实机发现登记：子目录 CLI 向上发现父根（P35-A，README 提示）、files 单段斜杠误报（P35-B，Phase 4）、自导回导产生后缀副本（P35-C，合并规则正确行为）。下一站 Phase 4（`--ai`/会话身份/协议推广/npm 发布/对外发布战役一） |
+| #9 | 2026-08-28 | v3.1 | 实机使用驱动的设计迭代：上下文安全护栏（D22：默认 20 条 × 1000 字 × 50KB 硬顶——防 AI 上下文爆炸）；role 过滤（T39：堵 agent 绕过 MCP 直查 SQLite 的逃逸出口）；文件内容不入库（"为什么"归会话，"是什么"归 git）；会话级存储 vs 碎片存储的差异化叙事写入 README 与设计笔记（`docs/design-notes-mcp-context-safety.md`） |
 
 ------
 
@@ -979,6 +980,8 @@ my-app-handoff.hop            （zip 容器）
 | **D18** | **B 端整体冻结至 ≥2 全职；未来切口 = 数据不出内网 + 私有化**（Review #2） | 销售与私有化交付非 solo 可承载；国内合规才是真实 B 端切口 | 按云同步+权限的海外 SaaS 打法做（切口错位且无人力） |
 | **D19** | **HOP 导入归化：project_id 重写为当前项目，原值存 origin_project**（Review #3） | project_id 是检索过滤键；保留导出方 ID 则导入会话在一切检索路径不可见，"导入即可检索"的交接验收直接失败 | 保留原 project_id（功能失效）；跨项目全局检索（违反项目级隔离原则） |
 | **D21** | **MCP 写域准入：允许注释/笔记/关联/导入导出（内容不可变旁路写入），禁止状态迁移；agent 发起的导入默认隔离**（Review #8） | AI 侧闭环（写入结论、交接、关联）与安全（状态机单点、防注入）兼得 | 开放完整写权（状态迁移越权）；MCP 导入不隔离（注入面扩大） |
+| **D22** | **上下文安全护栏：get_session_detail 默认最多 20 条 × 1000 字，硬顶 50KB；要更多需显式传参**（Review #9） | AI agent 不自觉控制返回量（一个 230 条会话最坏 920KB 可吃掉 25% 上下文窗口）；默认安全 + hint 引导翻页优于信任 AI 自觉 | 不加护栏（上下文爆炸）；硬限制不可调（需要全文时无法获取） |
+| **D23** | **会话级存储是反幻觉的架构基础：存储粒度决定 AI 看到什么、能否溯源**（Review #9） | 碎片式存储（claude-mem）导致上下文污染 + 压缩失真 + 无法溯源 → 幻觉；会话级存储 + 出处强制 + 原文可回跳 = 结构性抑制 | 碎片/摘要式存储（信息丢失不可逆）；注入式上下文（push 而非 pull） |
 | **D20** | **守护服务化：watch --install-service 注册系统服务，init 默认推荐注册；守护缺席时 CLI 红色告警 + sync 兜底**（Review #3） | "被动捕获默认开启"的承诺依赖守护常驻，不能建立在用户记得手动跑进程上——可用性需要"守护的守护" | 只提供前台 watch（承诺落空，啊哈时刻崩塌） |
 
 ------

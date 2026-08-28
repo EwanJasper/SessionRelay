@@ -93,37 +93,60 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
 
   server.registerTool('get_session_detail', {
     title: '会话详情',
-    description: '取某会话的消息（可按角色过滤、限制单条长度）。session_id 支持前缀。role=user 只取用户提问（轻量）；缺省返回全部',
+    description: '取某会话的消息（可按角色过滤、限制范围与长度）。默认安全：最多 20 条 × 1000 字 ≈ 20KB。要更多请显式传 start_msg/end_msg 或 max_chars。session_id 支持前缀',
     inputSchema: {
       session_id: z.string(),
       start_msg: z.number().optional().describe('起始消息序号（含）'),
       end_msg: z.number().optional().describe('结束消息序号（含）'),
-      role: z.enum(['user', 'assistant']).optional().describe('只取该角色的消息（解决"AI 回复太长，只要用户提问"的场景）'),
-      max_chars: z.number().optional().describe('单条消息截断长度（默认 4000；设大值取全文）'),
+      role: z.enum(['user', 'assistant']).optional().describe('只取该角色的消息（user=用户提问，轻量）'),
+      max_chars: z.number().optional().describe('单条截断长度（默认 1000；需全文时显式传大值如 5000）'),
     },
   }, async (args) => {
     const s = findSessionByPrefix(db, args.session_id, project) ?? getSession(db, args.session_id);
     if (!s) return toolOut({ found: false, reason: '未找到会话' });
+    const DEFAULT_MSGS = 20;    // 上下文安全护栏（D22）
+    const DEFAULT_CHARS = 1000;
+    const HARD_TOTAL = 50 * 1024; // 50KB 硬顶
+
     const from = args.start_msg ?? 1;
-    const to = args.end_msg ?? Math.max(s.message_count, 1);
-    const cap = args.max_chars ?? 4000;
+    const requestedTo = args.end_msg ?? Math.max(s.message_count, 1);
+    const to = Math.min(requestedTo, from + DEFAULT_MSGS - 1); // 不指定 end_msg 时最多 20 条
+    const cap = args.max_chars ?? DEFAULT_CHARS;
+
     let msgs = getMessageRange(db, s.id, from, to);
-    if (args.role) {
-      msgs = msgs.filter((m) => m.role === args.role);
+    if (args.role) msgs = msgs.filter((m) => m.role === args.role);
+
+    // 逐条累积，超 50KB 硬顶即停
+    const result: Array<{ seq: number; role: string; content: string; createdAt: string | null }> = [];
+    let totalBytes = 0;
+    let sizeTruncated = false;
+    for (const m of msgs) {
+      const content = m.content.length > cap
+        ? m.content.slice(0, cap) + `…(全文 ${m.content.length} 字，max_chars 可调大)`
+        : m.content;
+      const bytes = Buffer.byteLength(content, 'utf8');
+      if (totalBytes + bytes > HARD_TOTAL) { sizeTruncated = true; break; }
+      totalBytes += bytes;
+      result.push({ seq: m.seq_num, role: m.role, content, createdAt: m.created_at });
     }
-    const result = msgs.map((m) => ({
-      seq: m.seq_num, role: m.role,
-      content: m.content.length > cap ? m.content.slice(0, cap) + `…(截断，全文 ${m.content.length} 字，加大 max_chars 取更多)` : m.content,
-      createdAt: m.created_at,
-    }));
+
+    // 构建 hint（AI 行动指引——不信任 AI 自觉，用提示引导正确行为）
+    const hints: string[] = [];
+    if (to < requestedTo || sizeTruncated) {
+      hints.push(`当前显示 ${result.length} 条（共 ${s.message_count} 条）`);
+      if (s.message_count > 20) hints.push('建议：role="user" 只看用户提问（通常很少）；get_decisions() 直接拿全部决策；start_msg 翻页');
+    }
     return toolOut({
       found: true,
       session: sessionBrief(db, s.id),
       summary_rule: s.summary_rule,
-      range: [from, to],
+      range: [from, from + result.length - 1],
       roleFilter: args.role ?? 'all',
       totalInDb: s.message_count,
       returned: result.length,
+      totalBytesKB: Math.round(totalBytes / 1024),
+      truncated: to < requestedTo || sizeTruncated,
+      ...(hints.length > 0 ? { hint: hints.join('；') } : {}),
       messages: result,
       provenance: { sessionId: s.id, source: s.source, createdAt: s.created_at, state: s.state },
     });
