@@ -3,11 +3,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { SessionSourceAdapter, AdapterConfig } from './types.js';
 import { claudeProjectsDir, zcodeDbPath, type RelayConfig } from '../shared/config.js';
 import { adapter as claudeAdapter } from './claude-code/index.js';
 import { adapter as zcodeAdapter } from './zcode/index.js';
+import { adapter as codexAdapter } from './codex/index.js';
 
 const require = createRequire(import.meta.url);
 
@@ -76,6 +78,9 @@ export function adapterConfig(cfg: RelayConfig, sourceId: string): AdapterConfig
   if (sourceId === 'zcode') {
     return { dbPath: zcodeDbPath(cfg) };
   }
+  if (sourceId === 'codex') {
+    return { codexDir: (cfg.capture as Record<string, unknown>).codex_dir as string ?? path.join(os.homedir(), '.codex') };
+  }
   const capture = cfg.capture as Record<string, unknown>;
   return (capture[`custom_${sourceId}`] as AdapterConfig) ?? {};
 }
@@ -83,6 +88,7 @@ export function adapterConfig(cfg: RelayConfig, sourceId: string): AdapterConfig
 // ── 内置适配器注册（ESM top-level import，无循环依赖问题） ──
 register(claudeAdapter);
 register(zcodeAdapter);
+register(codexAdapter);
 
 // 标记已初始化（纯标记，加载 custom 由调用方触发）
 let customLoaded = false;
