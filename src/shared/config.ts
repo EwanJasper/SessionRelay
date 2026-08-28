@@ -18,6 +18,7 @@ export interface RelayConfig {
     zcode_db_path?: string;
     codex_dir?: string;
     trae_dir?: string;
+    qoder_dir?: string;
   };
   search: { tokenizer: 'jieba' | 'bigram'; min_hits_hint: number; auto_days: number };
   privacy: { ignore_file: string; export_redact: boolean };
@@ -62,6 +63,12 @@ export function traeDir(cfg: RelayConfig): string {
   return process.env.TRAE_DIR
     ?? cfg.capture.trae_dir
     ?? path.join(os.homedir(), 'AppData', 'Roaming', 'Trae CN');
+}
+
+export function qoderDir(cfg: RelayConfig): string {
+  return process.env.QODER_DIR
+    ?? cfg.capture.qoder_dir
+    ?? path.join(os.homedir(), '.qoder-cn');
 }
 
 export function loadConfig(root: string): RelayConfig {

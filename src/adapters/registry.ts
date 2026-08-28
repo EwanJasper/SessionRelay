@@ -6,11 +6,12 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { SessionSourceAdapter, AdapterConfig } from './types.js';
-import { claudeProjectsDir, zcodeDbPath, codexDir, traeDir, type RelayConfig } from '../shared/config.js';
+import { claudeProjectsDir, zcodeDbPath, codexDir, traeDir, qoderDir, type RelayConfig } from '../shared/config.js';
 import { adapter as claudeAdapter } from './claude-code/index.js';
 import { adapter as zcodeAdapter } from './zcode/index.js';
 import { adapter as codexAdapter } from './codex/index.js';
 import { adapter as traeAdapter } from './trae/index.js';
+import { adapter as qoderAdapter } from './qoder/index.js';
 
 const require = createRequire(import.meta.url);
 
@@ -85,6 +86,9 @@ export function adapterConfig(cfg: RelayConfig, sourceId: string): AdapterConfig
   if (sourceId === 'trae') {
     return { traeDir: traeDir(cfg) };
   }
+  if (sourceId === 'qoder') {
+    return { qoderDir: qoderDir(cfg) };
+  }
   const capture = cfg.capture as Record<string, unknown>;
   return (capture[`custom_${sourceId}`] as AdapterConfig) ?? {};
 }
@@ -94,6 +98,7 @@ register(claudeAdapter);
 register(zcodeAdapter);
 register(codexAdapter);
 register(traeAdapter);
+register(qoderAdapter);
 
 // 标记已初始化（纯标记，加载 custom 由调用方触发）
 let customLoaded = false;
