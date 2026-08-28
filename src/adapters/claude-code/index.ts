@@ -1,13 +1,10 @@
-// Claude Code Adapter（方针 §6.1 / 技术方案 §3.1，Phase 1 实现）
-// 存储：~/.claude/projects/<路径slug>/<sessionId>.jsonl，每行一个事件
-// 已按本机真实格式验证（Spike S5 交叉验证）：
-//  - 目录 slug = 项目绝对路径的 [\\/:] → '-'（D:\a\b → D--a-b）
-//  - 行：{type:'user'|'assistant', message:{content}, timestamp, isSidechain, attachment?, cwd, sessionId}
+// Claude Code Adapter（统一接口版，改进方案 改动1）
+// 存储：~/.claude/projects/<slug>/<sessionId>.jsonl
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathSlug } from '../../shared/paths.js';
 import { tailCompleteLines } from './tailer.js';
-import type { DiscoveredSession, ParseOutcome, ReadResult } from '../types.js';
+import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult } from '../types.js';
 
 export const SOURCE_ID = 'claude-code';
 
@@ -33,7 +30,10 @@ export function discover(projectRoot: string, baseDir: string): DiscoveredSessio
   return out;
 }
 
-export function parseLine(lineText: string, lineNo: number): ParseOutcome {
+export function parseLine(lineText: string, lineNo: number):
+  | { kind: 'message'; role: 'user' | 'assistant'; content: string; seqNum: number; createdAt?: string }
+  | { kind: 'skip' }
+  | { kind: 'bad' } {
   let o: Record<string, unknown>;
   try {
     o = JSON.parse(lineText);
@@ -50,7 +50,7 @@ export function parseLine(lineText: string, lineNo: number): ParseOutcome {
     kind: 'message',
     role: t,
     content,
-    seqNum: lineNo, // 确定性源序号 = 行号（§3.1 契约 1）
+    seqNum: lineNo,
     createdAt: typeof o.timestamp === 'string' ? o.timestamp : undefined,
   };
 }
@@ -82,3 +82,22 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
     cursor: { offset: t.newOffset, lines: t.consumedLineCount },
   };
 }
+
+// ── 统一接口导出（注册表用） ──
+export const adapter: SessionSourceAdapter = {
+  id: SOURCE_ID,
+  displayName: 'Claude Code',
+  discover(root, config) {
+    return discover(root, config.projectsDir as string);
+  },
+  async readNew(ds, cursor, _config) {
+    return readNew(ds, cursor);
+  },
+  watchRoots(_root, config) {
+    return [config.projectsDir as string];
+  },
+  healthCheck(_root, config) {
+    const dir = config.projectsDir as string;
+    return fs.existsSync(dir) ? null : `目录不存在：${dir}（未安装 Claude Code 可忽略）`;
+  },
+};

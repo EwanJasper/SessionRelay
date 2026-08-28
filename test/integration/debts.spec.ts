@@ -95,7 +95,8 @@ describe('欠账2 · rebuild（源是事实源，库可重建）', () => {
     const { runSync } = await import('../../src/capture/sync.js');
     let db = createDb(dbFile(PROJECT));
     db.close();
-    fs.rmSync(dbFile(PROJECT), { force: true }); // 重建干净起点
+    // Windows：必须同时删 WAL/SHM，否则 EBUSY
+    for (const ext of ['', '-wal', '-shm']) fs.rmSync(dbFile(PROJECT) + ext, { force: true });
     db = createDb(dbFile(PROJECT));
     await runSync({ projectRoot: PROJECT, config: cfg(), db });
     // 加一个 imported 会话（无本地源，rebuild 唯一搬不了的类别）

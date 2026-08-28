@@ -21,6 +21,9 @@ function taskName(root: string): string {
   return `SessionRelay-Watch-${pathSlug(root).slice(-40).replace(/-+/g, '-').slice(-30)}`;
 }
 
+const REG_PATH = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const REG_NAME = 'SessionRelayWatch';
+
 export async function installWatchService(root: string): Promise<void> {
   if (process.platform !== 'win32') {
     console.log(pc.yellow('当前平台的服务注册将在后续版本提供；可先手动运行 srelay watch --foreground。'));
@@ -29,24 +32,25 @@ export async function installWatchService(root: string): Promise<void> {
   const relay = relayDir(root);
   fs.mkdirSync(relay, { recursive: true });
   const nodeAbs = process.execPath;
-  const isDev = import.meta.url.endsWith('.ts'); // 源码运行（开发）vs dist 构建（发布）
+  const isDev = import.meta.url.endsWith('.ts');
   let runCmd: string;
   if (isDev) {
     const loader = path.join(repoRoot(), 'node_modules', 'tsx', 'dist', 'loader.mjs').replace(/\\/g, '/');
     const cli = path.join(repoRoot(), 'src/bin/srelay.ts').replace(/\\/g, '/');
     runCmd = `"${nodeAbs}" --import "file:///${loader}" "${cli}" watch --foreground`;
   } else {
-    runCmd = `"${nodeAbs}" "${fileURLToPath(import.meta.url)}" watch --foreground`; // 编译产物自路径
+    runCmd = `"${nodeAbs}" "${fileURLToPath(import.meta.url)}" watch --foreground`;
   }
   const cmdPath = path.join(relay, 'watch-task.cmd');
   fs.writeFileSync(cmdPath, ['@echo off', `cd /d "${root}"`, runCmd, ''].join('\r\n'), 'utf8');
-  const tn = taskName(root);
+  // 改动 4：注册表 Run 键（不需要管理员，替代 schtasks）
   try {
-    await execFileP('schtasks', ['/Create', '/F', '/TN', tn, '/SC', 'ONLOGON', '/TR', `"${cmdPath}"`]);
-    console.log(pc.green('✓') + ` 守护服务已注册（登录自启）：${pc.dim(tn)}`);
-    console.log(pc.dim(`  任务脚本：${cmdPath} · 取消：srelay watch --uninstall`));
+    await execFileP('powershell', ['-Command',
+      `Set-ItemProperty -Path '${REG_PATH}' -Name '${REG_NAME}' -Value '${cmdPath}'`]);
+    console.log(pc.green('✓') + ` 守护已注册（登录自启动，无需管理员）`);
+    console.log(pc.dim(`  脚本：${cmdPath} · 取消：srelay watch --uninstall`));
   } catch (e) {
-    console.log(pc.red('✗ 服务注册失败：') + (e as Error).message);
+    console.log(pc.red('✗ 注册失败：') + (e as Error).message);
     console.log(pc.dim(`  可手动执行：${cmdPath}`));
   }
 }
@@ -54,18 +58,20 @@ export async function installWatchService(root: string): Promise<void> {
 export async function uninstallWatchService(root: string): Promise<void> {
   if (process.platform !== 'win32') return;
   try {
-    await execFileP('schtasks', ['/Delete', '/F', '/TN', taskName(root)]);
+    await execFileP('powershell', ['-Command',
+      `Remove-ItemProperty -Path '${REG_PATH}' -Name '${REG_NAME}' -ErrorAction SilentlyContinue`]);
     console.log(pc.green('✓') + ' 守护服务已卸载。');
   } catch {
-    console.log(pc.yellow('未找到已注册的服务任务。'));
+    console.log(pc.yellow('未找到已注册的守护。'));
   }
 }
 
 export async function watchServiceStatus(root: string): Promise<string> {
   if (process.platform !== 'win32') return '未实现';
   try {
-    await execFileP('schtasks', ['/Query', '/TN', taskName(root)]);
-    return '已注册';
+    const r = await execFileP('powershell', ['-Command',
+      `(Get-ItemProperty '${REG_PATH}' -ErrorAction SilentlyContinue).${REG_NAME}`]);
+    return r.stdout.trim() ? '已注册' : '未注册';
   } catch {
     return '未注册';
   }

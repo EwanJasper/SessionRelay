@@ -1,15 +1,14 @@
-// watch 守护（技术方案 §5.5 / §1.2：唯一常驻写者 + 唯一状态迁移者）
-// 结构：锁心跳 + 快路径（fs.watch 源目录，500ms 去抖）+ 30s 判定 tick + 60s 安全再同步
+// watch 守护（技术方案 §5.5 / 改进方案 改动1 注册表化）
 import path from 'node:path';
 import { openExisting } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
-import { claudeProjectsDir, zcodeDbPath } from '../shared/config.js';
 import { projectIdOf, dbFile } from '../shared/paths.js';
 import { acquireLock, touchLock, releaseLock, isDaemonAlive } from '../shared/lock.js';
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
 import { runJudge } from './judge.js';
 import { consumeHookEvents } from './hook-spool.js';
+import { ensureRegistered, get, adapterConfig } from '../adapters/registry.js';
 
 export interface WatchOptions {
   projectRoot: string;
@@ -55,11 +54,17 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
 
   try {
     await cycle('initial');
-    // 快路径：监听各源的数据目录（claude slug 目录 / zcode db 目录）
+    // 改动 1：从注册表获取各源的监听目录（不再硬编码）
+    ensureRegistered(root);
+    ensureRegistered(root);
     const roots = new Set<string>();
     for (const s of opts.config.capture.sources) {
-      if (s === 'claude-code') roots.add(claudeProjectsDir(opts.config));
-      if (s === 'zcode') roots.add(path.dirname(zcodeDbPath(opts.config)));
+      const adapter = get(s);
+      if (adapter?.watchRoots) {
+        for (const dir of adapter.watchRoots(root, adapterConfig(opts.config, s))) {
+          roots.add(dir);
+        }
+      }
     }
     for (const dir of roots) {
       try {
