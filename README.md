@@ -130,6 +130,8 @@ srelay export --all      # 交接包（默认脱敏）→ 发给同事
 srelay import xxx.hop --from 你的名字
 ```
 
+👉 完整实操指南（五个场景：项目交接/新人入职/安全导入/跨项目迁移/定期归档）：[导入导出指南](docs/import-export-guide.md)
+
 ## ⚠️ 为什么需要守护进程
 
 **ZCode 在上下文压缩时会物理删除旧消息**（实测确认：一个 500 条会话压缩后被删 3976 条）。守护进程每 30 秒自动同步，确保消息在被删之前入库。
@@ -290,9 +292,18 @@ module.exports = {
 
 ## 文档
 
-- [产品与技术指导方针 v3.1](docs/product/sessionRelay-指导方针v3.1.md)（21 条决策日志 D1-D21）
+### 使用指南
+- [导入导出实操指南](docs/import-export-guide.md)——项目交接 / 新人入职 / 安全导入 / 跨项目迁移 / 定期归档，五个场景完整命令
+- [Adapter SDK](docs/adapters/README.md)——如何编写自定义适配器（7 行代码接入新 AI 工具）
+
+### 设计文档
+- [产品与技术指导方针 v3.1](docs/product/sessionRelay-指导方针v3.1.md)（25 条决策日志 D1-D25）
 - [技术方案 v1.1](docs/product/sessionRelay-技术方案v1.1.md)（38 条技术决策 T1-T38）
-- [HOP 交接协议规格 hop/1.0](spec/hop-1.0.md)
+- [HOP 交接协议规格 hop/1.0](spec/hop-1.0.md)（开放格式，MIT）
+- [MCP 上下文安全设计笔记](docs/design-notes-mcp-context-safety.md)——会话级存储 vs 碎片存储、反幻觉架构、渐进披露漏斗
+- [改进方案 v1.0](docs/improvement-plan-v1.md)——适配器插件化 + compaction 防护完整技术方案
+
+### 内部资料
 - 阶段报告：[P0](docs/spike-report-p0.md) · [P1](docs/phase1-report.md) · [P2](docs/phase2-report.md) · [P3](docs/phase3-report.md) · [P3.5](docs/phase35-report.md)
 - [ZCode 存储格式逆向笔记](docs/adapters/zcode-format.md)
 
