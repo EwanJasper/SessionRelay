@@ -75,12 +75,14 @@ const call = async (name: string, args: Record<string, unknown> = {}) => {
 };
 
 describe('P3 · MCP 契约（stdio 真握手）', () => {
-  it('initialize + tools/list：8 个工具全部注册', async () => {
+  it('initialize + tools/list：15 个工具全部注册（8 读 + 7 写域）', async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'get_decisions', 'get_file_history', 'get_session_detail', 'get_stats',
-      'get_unresolved', 'list_sessions', 'search_sessions', 'set_scope',
+      'annotate_session', 'export_handoff', 'get_decisions', 'get_file_history',
+      'get_linked_sessions', 'get_session_detail', 'get_stats', 'get_unresolved',
+      'import_handoff', 'link_sessions', 'list_sessions', 'release_quarantine',
+      'save_note', 'search_sessions', 'set_scope',
     ]);
   });
 
@@ -131,9 +133,64 @@ describe('P3 · MCP 契约（stdio 真握手）', () => {
     expect(out.decisions[0].provenance.msg).toBeGreaterThan(0);
   });
 
+  // ══════════ 写域工具（D21）══════════
+
+  it('save_note：写入结论笔记 → 可检索、决策句式入库', async () => {
+    const note = (await call('save_note', {
+      title: '会话接力 v0.1.0 发布结论',
+      content: '决定采用 v0.1.0 作为首个公开发布版本，交接格式定为 hop/1.0。',
+      tags: ['发布', '里程碑'],
+    })) as { ok: boolean; sessionId: string };
+    expect(note.ok).toBe(true);
+    const search = (await call('search_sessions', { query: '里程碑 发布' })) as { hits: Array<{ sessionId: string }> };
+    expect(search.hits.some((h) => h.sessionId === note.sessionId)).toBe(true);
+    const decs = (await call('get_decisions', {})) as { decisions: Array<{ text: string }> };
+    expect(decs.decisions.some((d) => d.text.includes('v0.1.0'))).toBe(true); // 笔记决策句式直接进决策库
+  });
+
+  it('annotate_session：标签增删 + 摘要写入并生效', async () => {
+    const r = (await call('annotate_session', {
+      session_id: 'snew', add_tags: ['重要'], summary: '数据库定 PostgreSQL 的会话',
+    })) as { ok: boolean; userTags: string[]; userSummary?: string };
+    expect(r.ok).toBe(true);
+    expect(r.userTags).toContain('重要');
+    expect(r.userSummary).toContain('PostgreSQL');
+    const back = (await call('annotate_session', { session_id: 'snew', remove_tags: ['重要'] })) as { userTags: string[] };
+    expect(back.userTags).not.toContain('重要');
+  });
+
+  it('link_sessions / get_linked_sessions：关联双向可查', async () => {
+    const l = (await call('link_sessions', {
+      session_id: 'snew', linked_ids: ['sauth'], kind: 'related',
+    })) as { ok: boolean; linked: string[] };
+    expect(l.ok).toBe(true);
+    expect(l.linked).toHaveLength(1);
+    const out = (await call('get_linked_sessions', { session_id: 'snew' })) as { count: number; links: Array<{ direction: string }> };
+    expect(out.count).toBe(1);
+    expect(out.links[0].direction).toBe('out');
+    const inn = (await call('get_linked_sessions', { session_id: 'sauth' })) as { links: Array<{ direction: string }> };
+    expect(inn.links.some((x) => x.direction === 'in')).toBe(true);
+  });
+
+  it('export_handoff → import_handoff（默认隔离）→ release_quarantine 全链路', async () => {
+    const pkgPath = path.join(TMP, 'mcp-handoff.hop');
+    const exp = (await call('export_handoff', { output: pkgPath, all: true })) as { ok: boolean; file: string; sessionCount: number };
+    expect(exp.ok).toBe(true);
+    expect(exp.sessionCount).toBeGreaterThanOrEqual(3);
+    expect(fs.existsSync(pkgPath)).toBe(true);
+    // 同项目重导入（隔离默认开）：同身份同指纹 → 跳过（幂等）
+    const imp = (await call('import_handoff', { path: pkgPath })) as { ok: boolean; imported: number; skipped: number; quarantined: number };
+    expect(imp.ok).toBe(true);
+    // fixture 会话为原生捕获（content_hash 空）→ 重导自己的包按合并规则生成隔离副本（P35-C 文档化行为）
+    expect(imp.imported).toBeGreaterThanOrEqual(3);
+    expect(imp.quarantined).toBe(imp.imported);
+    const rel = (await call('release_quarantine', { session_id_prefix: 'zzzz-none' })) as { released: number };
+    expect(rel.released).toBe(0);
+  });
+
   it('get_stats：统计与当前 scope', async () => {
     const out = (await call('get_stats', {})) as { sessions: Record<string, number>; scope: { mode: string } | null };
-    expect(out.sessions.total).toBe(3);
+    expect(out.sessions.total).toBeGreaterThanOrEqual(3); // 写域测试会新增笔记/导入副本
     expect(out.scope?.mode).toBe('full');
   });
 });

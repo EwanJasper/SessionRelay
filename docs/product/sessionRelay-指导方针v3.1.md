@@ -613,7 +613,9 @@ srelay serve                     # MCP Server（stdio）
 | `get_stats` | 索引统计 | — | — | 无 |
 | `set_scope` | 逃生口（含 mode:'full'） | — | — | mode?, filters? |
 
-注：`get_linked_sessions`（会话关联查询）Phase 4 随 branch/PID 归属一并引入。
+**写域工具与边界（Review #8/D21）**：MCP 除 8 个读工具外新增 7 个写域工具——注释（标签/摘要）、结论笔记（source=note，可溯源）、会话关联（link/get_linked，双向）、交接包导入导出（import 默认隔离，比 CLI 更保守）。**边界不变**：会话状态迁移（confirm/purge/judge）仍专属 watch/CLI；写域均为"内容不可变的旁路写入"；隐私 ignore 对写域同样生效。
+
+注：`get_linked_sessions` 已随 Review #8 落地（P3-A 提前完成）；branch/PID 级"当前会话身份"仍在 Phase 4。
 
 ------
 
@@ -976,6 +978,7 @@ my-app-handoff.hop            （zip 容器）
 | **D17** | **商业化冻结 12 个月；唯一验证点 = HANDOFF.md 页脚署名**（Review #2） | solo 无销售体系；未验证假设上建设是最大浪费；署名同时服务获客与 K 因子观测 | 建团队版/Pro（把幻想当需求） |
 | **D18** | **B 端整体冻结至 ≥2 全职；未来切口 = 数据不出内网 + 私有化**（Review #2） | 销售与私有化交付非 solo 可承载；国内合规才是真实 B 端切口 | 按云同步+权限的海外 SaaS 打法做（切口错位且无人力） |
 | **D19** | **HOP 导入归化：project_id 重写为当前项目，原值存 origin_project**（Review #3） | project_id 是检索过滤键；保留导出方 ID 则导入会话在一切检索路径不可见，"导入即可检索"的交接验收直接失败 | 保留原 project_id（功能失效）；跨项目全局检索（违反项目级隔离原则） |
+| **D21** | **MCP 写域准入：允许注释/笔记/关联/导入导出（内容不可变旁路写入），禁止状态迁移；agent 发起的导入默认隔离**（Review #8） | AI 侧闭环（写入结论、交接、关联）与安全（状态机单点、防注入）兼得 | 开放完整写权（状态迁移越权）；MCP 导入不隔离（注入面扩大） |
 | **D20** | **守护服务化：watch --install-service 注册系统服务，init 默认推荐注册；守护缺席时 CLI 红色告警 + sync 兜底**（Review #3） | "被动捕获默认开启"的承诺依赖守护常驻，不能建立在用户记得手动跑进程上——可用性需要"守护的守护" | 只提供前台 watch（承诺落空，啊哈时刻崩塌） |
 
 ------

@@ -18,7 +18,7 @@
 | ---- | ---- |
 | 🖥️ **被动捕获** | 默认监听 Claude Code（JSONL）与 ZCode（SQLite）会话源，零打扰；`full / meta / off` 三档隐私模式 + `.sessionrelayignore` 硬边界 |
 | 🔍 **中文检索** | jieba 分词 + SQLite FTS5 双索引，会话级 AND 覆盖 + OR 兜底；每条结果强制携带**出处块**（来源会话/agent/消息序号） |
-| 🤖 **MCP Server** | 8 个工具（stdio），任何支持 MCP 的 AI agent 可直接查询；`search / decisions / file_history / unresolved / set_scope…` |
+| 🤖 **MCP Server** | 15 个工具（stdio，8 读 + 7 写域：笔记/注释/关联/导入导出），任何支持 MCP 的 AI agent 可直接查询；`search / decisions / file_history / unresolved / set_scope…` |
 | 🎯 **Scope 检索边界** | `scope.json` 项目契约 + auto-scope 兜底，交集语义只能收窄；`attach` 挂载指定历史会话 |
 | 🧠 **结构化提取** | 零 LLM 规则提取：决策/话题/涉及文件/未决问题 + 免费规则摘要（confirmed 时自动生成） |
 | 📦 **HOP 交接协议** | `hop/1.0` 开放格式：sha256 完整性校验 + **默认密钥脱敏** + quarantine 隔离导入（反 prompt 注入）+ 自动生成 HANDOFF.md |

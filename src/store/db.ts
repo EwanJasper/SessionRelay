@@ -467,6 +467,60 @@ export function insertImportedMessage(db: DB, sessionId: string, m: { seq: numbe
   return insertMessage(db, { sessionId, role: m.role, content: m.content, seqNum: m.seq, createdAt: m.createdAt ?? undefined });
 }
 
+// ── 会话关联（P3-A 提前落地：link/get_linked 由 MCP 工具驱动） ──
+
+export function addSessionLink(db: DB, sessionId: string, linkedSessionId: string, kind: 'pinned' | 'continues' | 'related' = 'related'): number {
+  if (sessionId === linkedSessionId) return 0;
+  return db.prepare('INSERT OR IGNORE INTO session_links (session_id, linked_session_id, kind, created_at) VALUES (?,?,?,?)')
+    .run(sessionId, linkedSessionId, kind, new Date().toISOString()).changes;
+}
+
+export interface LinkedSessionBrief {
+  sessionId: string; title: string | null; source: string; createdAt: string;
+  state: string; kind: string; direction: 'out' | 'in';
+}
+
+export function getLinkedSessions(db: DB, sessionId: string): LinkedSessionBrief[] {
+  const out = db.prepare(`
+    SELECT l.kind AS kind, s.id AS sid, s.title AS title, s.source AS source, s.created_at AS ca, s.state AS st
+    FROM session_links l JOIN sessions s ON s.id = l.linked_session_id
+    WHERE l.session_id = ?
+  `).all(sessionId) as Array<{ kind: string; sid: string; title: string | null; source: string; ca: string; st: string }>;
+  const inn = db.prepare(`
+    SELECT l.kind AS kind, s.id AS sid, s.title AS title, s.source AS source, s.created_at AS ca, s.state AS st
+    FROM session_links l JOIN sessions s ON s.id = l.session_id
+    WHERE l.linked_session_id = ?
+  `).all(sessionId) as Array<{ kind: string; sid: string; title: string | null; source: string; ca: string; st: string }>;
+  return [
+    ...out.map((r) => ({ sessionId: r.sid, title: r.title, source: r.source, createdAt: r.ca, state: r.st, kind: r.kind, direction: 'out' as const })),
+    ...inn.map((r) => ({ sessionId: r.sid, title: r.title, source: r.source, createdAt: r.ca, state: r.st, kind: r.kind, direction: 'in' as const })),
+  ];
+}
+
+// ── AI 笔记会话（MCP 写域：结论性记忆，source='note'，可溯源可检索） ──
+
+export function createNoteSession(db: DB, o: { projectId: string; title: string; content: string; tags?: string[] }): string {
+  const now = new Date();
+  const nid = `note-${now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`;
+  const id = require$sessionId('note', nid);
+  const tags = o.tags ?? [];
+  db.prepare(`
+    INSERT INTO sessions (id, source, source_session_id, project_id, origin, state, title, created_at,
+                          last_event_at, user_tags, meta_text, source_file)
+    VALUES (?, 'note', ?, ?, 'manual', 'active', ?, ?, ?, ?, ?, 'mcp:save_note')
+  `).run(id, nid, o.projectId, o.title.slice(0, 120), now.toISOString(), now.toISOString(),
+    JSON.stringify(tags), metaTextOf(o.title, tags));
+  insertMessage(db, { sessionId: id, role: 'user', content: o.content, seqNum: 1, createdAt: now.toISOString() });
+  confirmSession(db, id, now.toISOString()); // 立即提取（笔记中的决策句式直接进决策库）+ 摘要
+  // confirm 会以提取结果重写 meta_text → 再并入标签，保证标签可搜
+  const s = getSessionFull(db, id);
+  if (s) {
+    db.prepare('UPDATE sessions SET meta_text = ? WHERE id = ?')
+      .run(metaTextOf(s.title, [...s.topics, ...tags]), id);
+  }
+  return id;
+}
+
 export function insertTransferLog(db: DB, type: 'export' | 'import', filePath: string, fromUser: string | null, toUser: string | null, sessionIds: string[]): void {
   db.prepare('INSERT INTO transfer_log (type, file_path, from_user, to_user, session_ids, created_at) VALUES (?,?,?,?,?,?)')
     .run(type, filePath, fromUser, toUser, JSON.stringify(sessionIds), new Date().toISOString());
