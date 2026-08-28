@@ -67,6 +67,7 @@ describe('P1 · claude-code 捕获链', () => {
     expect(rows[0].title).toBe('我们讨论数据库索引方案');
     expect(rows[0].source).toBe('claude-code');
     expect(rows[0].state).toBe('active');
+    expect(rows[0].message_count).toBe(2); // full 模式必须维护计数（list/detail/摘要依赖）
     // 中文检索可用（正文已分词入 FTS）
     const hits = searchSessions(db, { project: PID, query: '索引 分区' });
     expect(hits.map(h => h.sessionId)).toContain(rows[0].id);

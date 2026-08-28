@@ -124,6 +124,7 @@ async function ingestOne(
     if (ctx.mode === 'full') {
       let inserted = 0;
       for (const m of read.messages) inserted += insertMessage(db, { sessionId: up.id, role: m.role, content: m.content, seqNum: m.seqNum, createdAt: m.createdAt });
+      if (inserted > 0) bumpMessageCount(db, up.id, inserted); // list/detail/摘要依赖该计数（修复：full 模式此前漏维护）
       ctx.result.newMessages += inserted;
     } else {
       // meta 模式：不落正文，只累计计数（方针 §6.2）
