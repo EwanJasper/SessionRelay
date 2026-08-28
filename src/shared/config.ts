@@ -32,7 +32,7 @@ export function defaultConfig(): RelayConfig {
       mode: 'full',
       idle_threshold_min: 10,
       cooldown_hours: 6,
-      sources: ['claude-code', 'zcode', 'codex'],
+      sources: ['claude-code', 'zcode', 'codex', 'qoder'],
     },
     search: { tokenizer: 'jieba', min_hits_hint: 3, auto_days: 30 },
     privacy: { ignore_file: '.sessionrelayignore', export_redact: true },
