@@ -13,10 +13,11 @@ export interface RelayConfig {
     idle_threshold_min: number;
     cooldown_hours: number;
     sources: string[];
-    /** 覆盖项（测试/非标准安装用）；缺省 ~/.claude/projects */
+    /** 覆盖各源的默认存储路径（自定义安装位置时设置）。支持环境变量：CLAUDE_PROJECTS_DIR / ZCODE_DB_PATH / CODEX_DIR / TRAE_DIR */
     claude_projects_dir?: string;
-    /** 缺省 ~/.zcode/cli/db/db.sqlite */
     zcode_db_path?: string;
+    codex_dir?: string;
+    trae_dir?: string;
   };
   search: { tokenizer: 'jieba' | 'bigram'; min_hits_hint: number; auto_days: number };
   privacy: { ignore_file: string; export_redact: boolean };
@@ -32,18 +33,35 @@ export function defaultConfig(): RelayConfig {
       cooldown_hours: 6,
       sources: ['claude-code', 'zcode', 'codex'],
     },
-    search: { tokenizer: 'jieba', min_hits_hint: 3, auto_days: 30 }, // auto_days：A 档 auto-scope 时间窗，0=关闭
+    search: { tokenizer: 'jieba', min_hits_hint: 3, auto_days: 30 },
     privacy: { ignore_file: '.sessionrelayignore', export_redact: true },
     identity: {},
   };
 }
 
+/** 路径解析优先级：环境变量 > config.json > 默认值 */
 export function claudeProjectsDir(cfg: RelayConfig): string {
-  return cfg.capture.claude_projects_dir ?? path.join(os.homedir(), '.claude', 'projects');
+  return process.env.CLAUDE_PROJECTS_DIR
+    ?? cfg.capture.claude_projects_dir
+    ?? path.join(os.homedir(), '.claude', 'projects');
 }
 
 export function zcodeDbPath(cfg: RelayConfig): string {
-  return cfg.capture.zcode_db_path ?? path.join(os.homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
+  return process.env.ZCODE_DB_PATH
+    ?? cfg.capture.zcode_db_path
+    ?? path.join(os.homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
+}
+
+export function codexDir(cfg: RelayConfig): string {
+  return process.env.CODEX_DIR
+    ?? cfg.capture.codex_dir
+    ?? path.join(os.homedir(), '.codex');
+}
+
+export function traeDir(cfg: RelayConfig): string {
+  return process.env.TRAE_DIR
+    ?? cfg.capture.trae_dir
+    ?? path.join(os.homedir(), 'AppData', 'Roaming', 'Trae CN');
 }
 
 export function loadConfig(root: string): RelayConfig {

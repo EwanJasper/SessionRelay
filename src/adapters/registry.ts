@@ -6,10 +6,11 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { SessionSourceAdapter, AdapterConfig } from './types.js';
-import { claudeProjectsDir, zcodeDbPath, type RelayConfig } from '../shared/config.js';
+import { claudeProjectsDir, zcodeDbPath, codexDir, traeDir, type RelayConfig } from '../shared/config.js';
 import { adapter as claudeAdapter } from './claude-code/index.js';
 import { adapter as zcodeAdapter } from './zcode/index.js';
 import { adapter as codexAdapter } from './codex/index.js';
+import { adapter as traeAdapter } from './trae/index.js';
 
 const require = createRequire(import.meta.url);
 
@@ -79,7 +80,10 @@ export function adapterConfig(cfg: RelayConfig, sourceId: string): AdapterConfig
     return { dbPath: zcodeDbPath(cfg) };
   }
   if (sourceId === 'codex') {
-    return { codexDir: (cfg.capture as Record<string, unknown>).codex_dir as string ?? path.join(os.homedir(), '.codex') };
+    return { codexDir: codexDir(cfg) };
+  }
+  if (sourceId === 'trae') {
+    return { traeDir: traeDir(cfg) };
   }
   const capture = cfg.capture as Record<string, unknown>;
   return (capture[`custom_${sourceId}`] as AdapterConfig) ?? {};
@@ -89,6 +93,7 @@ export function adapterConfig(cfg: RelayConfig, sourceId: string): AdapterConfig
 register(claudeAdapter);
 register(zcodeAdapter);
 register(codexAdapter);
+register(traeAdapter);
 
 // 标记已初始化（纯标记，加载 custom 由调用方触发）
 let customLoaded = false;
