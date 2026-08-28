@@ -20,6 +20,7 @@ program
   .command('sync')
   .description('一次性增量捕获 + 判定')
   .option('--backfill <window>', 'Nd | all')
+  .option('--json')
   .action(async (opts) => { const { cmdSync } = await import('../cli/sync.js'); await cmdSync(opts); });
 
 program
@@ -32,9 +33,27 @@ program
   .action(async (opts) => { const { cmdWatch } = await import('../cli/watch.js'); await cmdWatch(opts); });
 
 program
+  .command('save [id]')
+  .description('手动存储会话（与自动捕获并存；off 模式下的唯一入口）')
+  .option('--recent <window>', '如 7d')
+  .option('--interactive', '交互勾选')
+  .option('--tag <tags>', '逗号分隔标签')
+  .option('--summary <text>', '手动摘要（用户权威层）')
+  .option('--source <s>')
+  .option('--json')
+  .action(async (id: string | undefined, f) => { const { cmdSave } = await import('../cli/save.js'); await cmdSave({ ...f, id }); });
+
+program
+  .command('rebuild')
+  .description('从源文件全量重建索引（imported 保留，旧库存为 .bak）')
+  .option('--force', '跳过确认/越过守护检查')
+  .action(async (f) => { const { cmdRebuild } = await import('../cli/maint.js'); await cmdRebuild(f); });
+
+program
   .command('status')
   .description('透明度面板：模式/守护/计数/拦截/体积')
-  .action(async () => { const { cmdStatus } = await import('../cli/status.js'); await cmdStatus(); });
+  .option('--json')
+  .action(async (f) => { const { cmdStatus } = await import('../cli/status.js'); await cmdStatus(f); });
 
 program
   .command('mode <full|meta|off>')
@@ -60,6 +79,7 @@ program
   .command('show <sessionIdPrefix>')
   .description('查看会话详情（消息片段）')
   .option('--range <a:b>', '消息序号范围')
+  .option('--json')
   .action(async (id, opts) => { const { cmdShow } = await import('../cli/query.js'); await cmdShow(id, opts); });
 
 program
@@ -68,6 +88,7 @@ program
   .option('--source <s>')
   .option('--state <st>')
   .option('--limit <n>', '默认 20')
+  .option('--json')
   .action(async (opts) => {
     const { cmdList } = await import('../cli/query.js');
     await cmdList({ ...opts, limit: opts.limit ? Number(opts.limit) : undefined });
@@ -78,6 +99,7 @@ program
   .description('本地匿名计数器')
   .option('--report', '生成自愿提交的匿名报告')
   .option('--reset', '清零')
+  .option('--json')
   .action(async (opts) => { const { cmdStats } = await import('../cli/misc.js'); await cmdStats(opts); });
 
 program
@@ -105,11 +127,13 @@ program
   .option('--until <date>')
   .option('--sessions <ids>', '会话 ID 前缀列表（attach 语义）')
   .option('--full', '逃生口：解除 A/B/C 裁剪（ignore 不受影响）')
+  .option('--pick', 'TUI 勾选候选会话（C 档 fallback）')
   .action(async (f) => {
     const scope = await import('../cli/scope.js');
     if (f.set) return scope.cmdScopeSet(f);
     if (f.add) return scope.cmdScopeAdd(f);
     if (f.reset) return scope.cmdScopeReset();
+    if (f.pick) return (await import('../cli/maint.js')).cmdScopePick();
     return scope.cmdScopeShow();
   });
 
@@ -126,7 +150,8 @@ program
 program
   .command('export')
   .description('导出 HOP 交接包（默认尊重当前 scope；含 HANDOFF.md 与脱敏）')
-  .option('--output <file>', '输出 .hop 路径')
+  .option('--output <file>', '输出路径')
+  .option('--format <fmt>', 'hop（默认）| markdown | summary')
   .option('--all', '忽略 scope，导出全库')
   .option('--topic <t>')
   .option('--tag <t>')
@@ -157,6 +182,7 @@ program
   .option('--topic <t>')
   .option('--source <s>')
   .option('--limit <n>', '默认 20')
+  .option('--json')
   .action(async (opts) => {
     const { cmdDecisions } = await import('../cli/meta.js');
     await cmdDecisions({ ...opts, limit: opts.limit ? Number(opts.limit) : undefined });
@@ -166,6 +192,7 @@ program
   .command('unresolved')
   .description('列出未解决问题（启发式）')
   .option('--limit <n>', '默认 20')
+  .option('--json')
   .action(async (opts) => {
     const { cmdUnresolved } = await import('../cli/meta.js');
     await cmdUnresolved({ limit: opts.limit ? Number(opts.limit) : undefined });
@@ -174,7 +201,8 @@ program
 program
   .command('history <filePath>')
   .description('某文件被哪些会话讨论过')
-  .action(async (f) => { const { cmdHistory } = await import('../cli/meta.js'); await cmdHistory(f); });
+  .option('--json')
+  .action(async (f: string, o) => { const { cmdHistory } = await import('../cli/meta.js'); await cmdHistory(f, o); });
 
 program
   .command('hook <event>')

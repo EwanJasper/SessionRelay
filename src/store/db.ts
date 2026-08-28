@@ -4,6 +4,9 @@
 import Database from 'better-sqlite3';
 import { toSearchText } from '../core/tokenize/tokenizer.js';
 
+// 便捷再导出：dbFile 常被误从本模块导入（实测已误 4 次），统一出口消灭此类错误
+export { dbFile } from '../shared/paths.js';
+
 export type DB = Database.Database;
 
 const SCHEMA_VERSION = 1;
@@ -162,6 +165,7 @@ export interface UpsertCapture {
   createdAt: string;
   lastEventAt: string;
   sourceFile: string;
+  origin?: 'auto' | 'manual';
 }
 
 export function upsertCapturedSession(
@@ -176,8 +180,8 @@ export function upsertCapturedSession(
     db.prepare(`
       INSERT INTO sessions (id, source, source_session_id, project_id, origin, state, title,
                             created_at, last_event_at, source_file, meta_text, synced_at)
-      VALUES (?, ?, ?, ?, 'auto', 'active', ?, ?, ?, ?, ?, ?)
-    `).run(id, s.source, s.sourceSessionId, s.projectId, s.title ?? null, s.createdAt,
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+    `).run(id, s.source, s.sourceSessionId, s.projectId, s.origin ?? 'auto', s.title ?? null, s.createdAt,
       s.lastEventAt, s.sourceFile, metaTextOf(s.title ?? null), new Date().toISOString());
     return { id, isNew: true, prevState: 'active', title: s.title ?? null };
   }

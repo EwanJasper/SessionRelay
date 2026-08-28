@@ -1,6 +1,6 @@
 // srelay export / import / team（方针 §8.4/§8.5）
 import { loadConfig } from '../shared/config.js';
-import { runExport } from '../relay/export.js';
+import { runExport, runExportMarkdown } from '../relay/export.js';
 import { runImport, runRelease } from '../relay/import.js';
 import { listTransferLog, teamStatus } from '../store/db.js';
 import { ZipSlipError, IntegrityError } from '../relay/hop.js';
@@ -9,7 +9,7 @@ import { requireRoot, openRelayDb, pc, fmtDate } from './ui.js';
 import type { ScopePredicate } from '../core/scope/evaluator.js';
 
 export interface ExportFlags {
-  output?: string; all?: boolean; noRedact?: boolean; decisionsOnly?: boolean;
+  output?: string; all?: boolean; noRedact?: boolean; decisionsOnly?: boolean; format?: string;
   topic?: string; tag?: string; source?: string; since?: string; until?: string; excludeTag?: string;
 }
 
@@ -24,13 +24,19 @@ export async function cmdExport(f: ExportFlags): Promise<void> {
     if (f.source) filters.sources = [f.source];
     if (f.since) filters.since = f.since;
     if (f.until) filters.until = f.until;
-    const r = runExport({
+    const common = {
       root, cfg, db,
       output: f.output, all: f.all, noRedact: f.noRedact, decisionsOnly: f.decisionsOnly,
       filters: Object.keys(filters).length ? filters : undefined,
       excludeTags: f.excludeTag ? [f.excludeTag] : undefined,
       stats: openStats(root),
-    });
+    };
+    if (f.format === 'markdown' || f.format === 'summary') {
+      const r = runExportMarkdown({ ...common, summaryOnly: f.format === 'summary' });
+      console.log(pc.green('✓') + ` 已导出 ${f.format} → ${r.file}（${r.sessionCount} 会话）`);
+      return;
+    }
+    const r = runExport(common);
     console.log(pc.green('✓') + ` 已导出 ${r.sessionCount} 会话 · ${r.messageCount} 消息 → ${r.file}`);
     if (r.redactionHits > 0) console.log(pc.yellow(`  脱敏：命中 ${r.redactionHits} 处（报告在包内 summary/redaction-report.txt）`));
     console.log(pc.dim('  交接：把 .hop 文件发给同事，对方运行 srelay import <file>'));

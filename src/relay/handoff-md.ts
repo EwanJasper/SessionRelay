@@ -5,7 +5,7 @@ export interface HandoffDecision { at: string; source: string; sessionId: string
 
 const d = (iso: string) => iso.slice(5, 10);
 
-export function buildHandoff(projectName: string, sessions: HopSessionFile[], decisions: HandoffDecision[], footer: string): string {
+export function buildHandoff(projectName: string, sessions: HopSessionFile[], decisions: HandoffDecision[], footer: string, opts?: { summaryOnly?: boolean }): string {
   const lines: string[] = [];
   lines.push(`# 项目交接文档 · ${projectName}`);
   lines.push(`> 自动生成于 ${new Date().toISOString().slice(0, 10)} · ${sessions.length} 个会话 · 来源 ${[...new Set(sessions.map((s) => s.source))].join(', ')}`);
@@ -36,11 +36,13 @@ export function buildHandoff(projectName: string, sessions: HopSessionFile[], de
   for (const q of unresolved.slice(0, 15)) lines.push(`- [ ] ${q.q}（${d(q.at ?? q.s.created_at)}，${q.s.source}）`);
   lines.push('');
 
-  lines.push('## 📖 会话摘要');
-  for (const s of sessions) {
-    lines.push(`### ${s.title ?? s.id}（${d(s.created_at)}，${s.source}）`);
-    lines.push(s.summary_rule ? s.summary_rule.split('\n').slice(0, 4).join('  \n') : `_${s.messages.length} 条消息（无规则摘要）_`);
-    lines.push('');
+  if (!opts?.summaryOnly) {
+    lines.push('## 📖 会话摘要');
+    for (const s of sessions) {
+      lines.push(`### ${s.title ?? s.id}（${d(s.created_at)}，${s.source}）`);
+      lines.push(s.summary_rule ? s.summary_rule.split('\n').slice(0, 4).join('  \n') : `_${s.messages.length} 条消息（无规则摘要）_`);
+      lines.push('');
+    }
   }
 
   lines.push('---');

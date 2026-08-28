@@ -6,7 +6,7 @@
 // 2. 单字 CJK 必须入索引（"按月"非词典词，切为 按|月 —— 短语查询 C5 依赖位置连续性）；
 //    单字仅在"非引号查询"侧丢弃（AND 词元无区分度）。引号短语保留完整 token 序列。
 import { Jieba } from '@node-rs/jieba';
-import { dict } from '@node-rs/jieba/dict';
+import { dict } from '@node-rs/jieba/dict.js';
 
 const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
 

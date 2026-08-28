@@ -5,13 +5,14 @@ import { searchSessions } from '../search-svc/engine.js';
 import { getSession } from '../store/db.js';
 import { requireRoot, openRelayDb, pc, fmtDate } from './ui.js';
 
-export async function cmdDecisions(opts: { topic?: string; source?: string; limit?: number }): Promise<void> {
+export async function cmdDecisions(opts: { topic?: string; source?: string; limit?: number; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
     const rows = listDecisions(db, cfg.identity.project_id ?? root, { topic: opts.topic, source: opts.source })
       .slice(0, opts.limit ?? 20);
+    if (opts.json) { console.log(JSON.stringify({ count: rows.length, decisions: rows }, null, 2)); return; }
     if (rows.length === 0) {
       console.log(pc.dim('（暂无已确认决策。会话 confirmed 后自动提取——见 srelay list --state pending）'));
       return;
@@ -26,12 +27,13 @@ export async function cmdDecisions(opts: { topic?: string; source?: string; limi
   }
 }
 
-export async function cmdUnresolved(opts: { limit?: number }): Promise<void> {
+export async function cmdUnresolved(opts: { limit?: number; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
     const rows = listUnresolved(db, cfg.identity.project_id ?? root, opts.limit ?? 20);
+    if (opts.json) { console.log(JSON.stringify({ count: rows.length, unresolved: rows }, null, 2)); return; }
     if (rows.length === 0) { console.log(pc.dim('（暂无未决问题）')); return; }
     for (const r of rows) {
       console.log(`${pc.yellow('◻')} ${r.q}`);
@@ -42,7 +44,7 @@ export async function cmdUnresolved(opts: { limit?: number }): Promise<void> {
   }
 }
 
-export async function cmdHistory(filePath: string): Promise<void> {
+export async function cmdHistory(filePath: string, opts?: { json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);

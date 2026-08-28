@@ -1,8 +1,7 @@
 {
   "name": "sessionrelay",
-  "version": "0.0.1",
-  "private": true,
-  "description": "会话接力 SessionRelay — 项目级跨 Agent 会话记忆层（Phase 0 Spike）",
+  "version": "0.1.0",
+  "description": "会话接力 SessionRelay — 属于项目、不属于任何厂商的本地记忆层（跨 Agent 会话记忆 / 中文检索 / MCP / HOP 交接协议）",
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -15,9 +14,12 @@
     "s2": "vitest run test/integration/tail-resume.spec.ts",
     "s3": "vitest run test/unit/state",
     "s4": "vitest run test/unit/scope",
-    "s5": "vitest run test/integration/capture.spec.ts"
+    "s5": "vitest run test/integration/capture.spec.ts",
+    "build": "tsup",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
+    "@inquirer/prompts": "^8.7.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@node-rs/jieba": "^2.0.2",
     "better-sqlite3": "^12.11.1",
@@ -29,8 +31,31 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.20.1",
+    "tsup": "^8.5.1",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
-  }
+  },
+  "bin": {
+    "srelay": "dist/srelay.js",
+    "sessionrelay": "dist/srelay.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "spec",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "claude-code",
+    "zcode",
+    "session-memory",
+    "cross-agent",
+    "ai-memory",
+    "local-first",
+    "handoff"
+  ]
 }

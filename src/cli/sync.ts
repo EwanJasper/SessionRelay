@@ -5,7 +5,7 @@ import { runSync } from '../capture/sync.js';
 import { runJudge } from '../capture/judge.js';
 import { openRelayDb } from './ui.js';
 
-export async function cmdSync(opts: { backfill?: string }): Promise<void> {
+export async function cmdSync(opts: { backfill?: string; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
@@ -22,6 +22,7 @@ export async function cmdSync(opts: { backfill?: string }): Promise<void> {
       idleMin: cfg.capture.idle_threshold_min,
       cooldownH: cfg.capture.cooldown_hours,
     });
+    if (opts.json) { console.log(JSON.stringify({ ...s, judge: j }, null, 2)); return; }
     console.log(`同步完成：发现 ${s.discovered} · 新会话 ${s.newSessions} · 新消息 ${s.newMessages} · resumed ${s.resumed}${s.blocked ? pc.yellow(` · 拦截 ${s.blocked}`) : ''}`);
     if (j.toPending || j.confirmed) console.log(pc.dim(`判定：${j.toPending} 转 pending · ${j.confirmed} 确认`));
   } finally {

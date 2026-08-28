@@ -67,7 +67,7 @@ export async function cmdSearch(query: string, flags: SearchFlags): Promise<void
   }
 }
 
-export async function cmdShow(idPrefix: string, opts: { range?: string }): Promise<void> {
+export async function cmdShow(idPrefix: string, opts: { range?: string; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
@@ -77,6 +77,11 @@ export async function cmdShow(idPrefix: string, opts: { range?: string }): Promi
     const s = findSessionByPrefix(db, idPrefix, cfg.identity.project_id ?? root);
     if (!s) { console.log(pc.red('✗ 未找到会话：') + idPrefix); return; }
     const [from, to] = parseRange(opts.range, s.message_count);
+    if (opts.json) {
+      const msgs = getMessageRange(db, s.id, from, to);
+      console.log(JSON.stringify({ session: s, range: [from, to], messages: msgs }, null, 2));
+      return;
+    }
     console.log(pc.bold(`「${s.title ?? s.id}」`));
     console.log(pc.dim(`${s.source} · ${fmtDate(s.created_at)} · ${s.state} · ${s.message_count} 消息 · 显示 #${from}-#${to}`));
     console.log('─'.repeat(58));
@@ -91,13 +96,17 @@ export async function cmdShow(idPrefix: string, opts: { range?: string }): Promi
   }
 }
 
-export async function cmdList(opts: { source?: string; state?: string; limit?: number }): Promise<void> {
+export async function cmdList(opts: { source?: string; state?: string; limit?: number; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
     const asm = assembleScope({ root, cfg, includeAuto: false });
     const rows = listSessions(db, { projectId: cfg.identity.project_id ?? root, source: opts.source, state: opts.state, limit: opts.limit ?? 20, where: asm.where });
+    if (opts.json) {
+      console.log(JSON.stringify({ count: rows.length, sessions: rows }, null, 2));
+      return;
+    }
     if (rows.length === 0) { console.log(pc.dim('（空）先 srelay sync 或等待守护捕获。')); return; }
     for (const s of rows) {
       console.log(`${pc.dim(fmtDate(s.last_event_at ?? s.created_at))}  ${s.source.padEnd(11)} ${stateBadge(s.state).padEnd(10)} 「${(s.title ?? '').slice(0, 36)}」 ${pc.dim(`${s.id} · ${s.message_count}msg`)}`);

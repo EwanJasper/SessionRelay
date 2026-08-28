@@ -63,12 +63,13 @@ export async function cmdPurge(opts: { pending?: boolean; yes?: boolean }): Prom
   }
 }
 
-export async function cmdStats(opts: { report?: boolean; reset?: boolean }): Promise<void> {
+export async function cmdStats(opts: { report?: boolean; reset?: boolean; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const stats = openStats(root);
   if (opts.reset) { stats.reset(); console.log(pc.green('✓') + ' 计数器已清零。'); return; }
   if (opts.report) { console.log(stats.reportText()); return; }
   const snap = stats.snapshot();
+  if (opts.json) { console.log(JSON.stringify(snap, null, 2)); return; }
   const keys = Object.keys(snap).sort();
   if (keys.length === 0) { console.log(pc.dim('（暂无计数）')); return; }
   console.log('本地匿名计数器（零外呼，可 srelay stats --reset 清零）：');

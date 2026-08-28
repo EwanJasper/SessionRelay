@@ -80,7 +80,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
 async function ingestOne(
   db: DB,
   ds: DiscoveredSession,
-  ctx: { mode: string; projectId: string; cfg: RelayConfig; result: SyncStats; stats?: StatsCounter; ignoreRules: string[] },
+  ctx: { mode: string; projectId: string; cfg: RelayConfig; result: SyncStats; stats?: StatsCounter; ignoreRules: string[]; origin?: 'auto' | 'manual' },
 ): Promise<void> {
   // 读新内容（在事务外读源，事务内只写库）
   const cursorBefore = getCursor(db, ds.source, ds.sourceFile);
@@ -110,6 +110,7 @@ async function ingestOne(
       createdAt: ds.createdAt ?? lastEventAt,
       lastEventAt,
       sourceFile: ds.sourceFile,
+      origin: ctx.origin,
     });
     if (up.isNew) ctx.result.newSessions++;
 
@@ -135,4 +136,37 @@ async function ingestOne(
       suspect: read.badLines > 50, // 格式漂移预警（方针风险 #11）
     });
   })();
+}
+
+/** 手动 save 专用（D2 并存范式）：绕过 mode 检查（off 模式下唯一入口），ignore 硬边界仍然生效 */
+export async function captureSessions(opts: {
+  projectRoot: string;
+  config: RelayConfig;
+  db: DB;
+  sessions: DiscoveredSession[];
+  stats?: StatsCounter;
+}): Promise<SyncStats> {
+  const cfg = opts.config;
+  const result: SyncStats = { mode: 'manual', discovered: opts.sessions.length, newSessions: 0, newMessages: 0, resumed: 0, badLines: 0, blocked: 0 };
+  const ignoreRules = loadIgnoreRules(opts.projectRoot);
+  const projectId = cfg.identity.project_id ?? projectIdOf(opts.projectRoot);
+  for (const ds of opts.sessions) {
+    if (isSessionBlocked(ignoreRules, { source: ds.source, title: ds.title ?? null, sourceFile: ds.sourceFile })) {
+      result.blocked++;
+      opts.stats?.increment('blocked_by_ignore');
+      continue;
+    }
+    await ingestOne(opts.db, ds, { mode: 'full', projectId, cfg, result, stats: opts.stats, ignoreRules, origin: 'manual' });
+  }
+  return result;
+}
+
+/** 供 save/CLI 使用的发现器（与 runSync 同源） */
+export function discoverAll(root: string, cfg: RelayConfig): DiscoveredSession[] {
+  const out: DiscoveredSession[] = [];
+  for (const source of cfg.capture.sources) {
+    if (source === 'claude-code') out.push(...claude.discover(root, claudeProjectsDir(cfg)));
+    else if (source === 'zcode') out.push(...zcode.discover(root, zcodeDbPath(cfg)));
+  }
+  return out;
 }

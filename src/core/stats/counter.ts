@@ -8,7 +8,7 @@ export type StatsEvent =
   | 'install' | 'init_done' | 'backfill_done' | 'first_hit'
   | 'cli_search' | 'cli_show' | 'mcp_search' | 'mcp_detail'
   | 'export_pkg' | 'import_pkg'
-  | 'blocked_by_ignore' | 'resumed' | 'confirmed'; // 后三个为内部健康事件，报告时可剔除
+  | 'blocked_by_ignore' | 'resumed' | 'confirmed' | 'manual_save'; // 后三个为内部健康事件，报告时可剔除
 
 export class StatsCounter {
   constructor(private file: string) {}

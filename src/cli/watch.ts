@@ -29,15 +29,17 @@ export async function installWatchService(root: string): Promise<void> {
   const relay = relayDir(root);
   fs.mkdirSync(relay, { recursive: true });
   const nodeAbs = process.execPath;
-  const loader = path.join(repoRoot(), 'node_modules', 'tsx', 'dist', 'loader.mjs').replace(/\\/g, '/');
-  const cli = path.join(repoRoot(), 'src', 'bin', 'srelay.ts').replace(/\\/g, '/');
+  const isDev = import.meta.url.endsWith('.ts'); // 源码运行（开发）vs dist 构建（发布）
+  let runCmd: string;
+  if (isDev) {
+    const loader = path.join(repoRoot(), 'node_modules', 'tsx', 'dist', 'loader.mjs').replace(/\\/g, '/');
+    const cli = path.join(repoRoot(), 'src/bin/srelay.ts').replace(/\\/g, '/');
+    runCmd = `"${nodeAbs}" --import "file:///${loader}" "${cli}" watch --foreground`;
+  } else {
+    runCmd = `"${nodeAbs}" "${fileURLToPath(import.meta.url)}" watch --foreground`; // 编译产物自路径
+  }
   const cmdPath = path.join(relay, 'watch-task.cmd');
-  fs.writeFileSync(cmdPath, [
-    '@echo off',
-    `cd /d "${root}"`,
-    `"${nodeAbs}" --import "file:///${loader}" "${cli}" watch --foreground`,
-    '',
-  ].join('\r\n'), 'utf8');
+  fs.writeFileSync(cmdPath, ['@echo off', `cd /d "${root}"`, runCmd, ''].join('\r\n'), 'utf8');
   const tn = taskName(root);
   try {
     await execFileP('schtasks', ['/Create', '/F', '/TN', tn, '/SC', 'ONLOGON', '/TR', `"${cmdPath}"`]);

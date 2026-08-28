@@ -24,19 +24,22 @@
 | 📦 **HOP 交接协议** | `hop/1.0` 开放格式：sha256 完整性校验 + **默认密钥脱敏** + quarantine 隔离导入（反 prompt 注入）+ 自动生成 HANDOFF.md |
 | ⚙️ **两阶段判定** | `active → pending_end → confirmed`，resume 自动回滚；原始会话文件是唯一事实源，库可随时重建 |
 
-## 快速开始（开发态）
+## 快速开始
 
 ```bash
 git clone https://github.com/EwanJasper/SessionRelay.git
-cd SessionRelay && npm install
+cd SessionRelay && npm install && npm run build   # 产出 dist/srelay.js（零 tsx 依赖）
 
-# 在你的项目根目录（示例）：
-node --import ./node_modules/tsx/dist/loader.mjs <本仓库>/src/bin/srelay.ts init   # 初始化 + 回填30天
-node --import ./node_modules/tsx/dist/loader.mjs <本仓库>/src/bin/srelay.ts search 中文关键词
-node --import ./node_modules/tsx/dist/loader.mjs <本仓库>/src/bin/srelay.ts status  # 透明度面板
+# 本地安装为全局命令（可选）：
+npm link                                            # 之后可直接使用 srelay <命令>
+
+# 在你的项目根目录：
+srelay init          # 初始化 + 回填30天（1 分钟内可搜到上月讨论）
+srelay search 中文关键词
+srelay status        # 透明度面板
 ```
 
-npm 包分发（`npx sessionrelay`）在 Phase 4 发布，见[路线图](docs/phase35-report.md)。
+> 未 `npm link` 时，用 `node <本仓库路径>/dist/srelay.js <命令>` 等价调用。npm 包分发（`npx sessionrelay`）见[路线图](docs/phase35-report.md)。
 
 ### 注册为 AI agent 的 MCP 服务
 
@@ -50,18 +53,36 @@ npm 包分发（`npx sessionrelay`）在 Phase 4 发布，见[路线图](docs/ph
 
 注册后，你的 agent 即可回答："之前为什么决定用 PostgreSQL？"——带出处。
 
+### Claude Code 生命周期钩子（可选，加速会话结束判定）
+
+在 `~/.claude/settings.json` 中注册 Stop/SessionEnd 钩子，会话结束即刻转 pending（无需等待静默阈值）：
+
+```json
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "srelay hook session-end --id $CLAUDE_SESSION_ID" }] }]
+  }
+}
+```
+
 ## 常用命令
 
 ```bash
-srelay init --yes           # 初始化（默认回填 30 天，1 分钟内可搜到上月讨论）
+srelay init --yes           # 初始化（默认回填 30 天）
+srelay save <会话ID> --tag 架构决策 --summary "定了JWT"   # 手动存储（与自动捕获并存；off 模式唯一入口）
 srelay sync                 # 增量捕获 + 两阶段判定
+srelay rebuild --force      # 从源全量重建索引（imported 保留，旧库 .bak）
 srelay watch --install-service  # 注册守护（Windows 计划任务，登录自启）
 srelay search <关键词> [--topic --source --since --json]
-srelay decisions            # 全部已确认决策（带出处，可回跳）
+srelay decisions [--json]   # 全部已确认决策（带出处，可回跳）
+srelay unresolved           # 未解决问题
 srelay history <文件路径>    # 该文件被哪些会话讨论过
-srelay export --all         # 导出 .hop 交接包（默认脱敏）
-srelay import <pkg.hop> --from 张三   # 接收方在自己的项目根执行
+srelay scope set|add|reset|show|pick   # 检索边界契约（B 档 + C 档 TUI）
+srelay attach <ids…> / detach          # 挂载/解除指定历史会话
+srelay export [--format hop|markdown|summary] [--all]   # 交接包 / HANDOFF 直出（默认脱敏）
+srelay import <pkg.hop> [--from 张三 --quarantine --release <id>]  # 接收方在自己项目根执行
 srelay team status | log    # 交接审计
+srelay stats [--json|--report|--reset]  # 本地匿名计数器（零外呼）
 srelay doctor               # 环境自检
 ```
 
