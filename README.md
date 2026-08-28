@@ -130,7 +130,32 @@ srelay export --all      # 交接包（默认脱敏）→ 发给同事
 srelay import xxx.hop --from 你的名字
 ```
 
-### 注册为 AI agent 的 MCP 服务
+## ⚠️ 为什么需要守护进程
+
+**ZCode 在上下文压缩时会物理删除旧消息**（实测确认：一个 500 条会话压缩后被删 3976 条）。守护进程每 30 秒自动同步，确保消息在被删之前入库。
+
+不开守护的风险：手动 sync 之间的间隔内，如果 AI 触发上下文压缩，被删的原始消息将**永久丢失**。
+
+```bash
+srelay watch --install-service   # Windows 注册表自启动（无需管理员）
+srelay watch --foreground        # macOS/Linux 前台运行（服务注册开发中）
+```
+
+守护的资源开销：CPU 空闲时 ≈ 0%（事件驱动），内存 ~80MB（Node.js 常驻），磁盘 I/O 增量极低，**网络零外呼**。
+
+## MCP 接入指南
+
+### Claude Code（一条命令）
+
+```bash
+claude mcp add sessionrelay --scope user -- srelay serve
+```
+
+注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、15 个工具就绪。
+
+### ZCode / 其他 MCP 客户端
+
+在项目的 MCP 配置（`.mcp.json` 或客户端设置）中添加：
 
 ```json
 {
@@ -140,7 +165,66 @@ srelay import xxx.hop --from 你的名字
 }
 ```
 
-注册后问你的 AI："**之前为什么决定用 PostgreSQL？**"——它将调用 `get_decisions`，给出带出处的回答。
+### 最稳兜底（任何 MCP 客户端通吃，绕过 PATH 问题）
+
+```json
+{
+  "mcpServers": {
+    "sessionrelay": {
+      "command": "node",
+      "args": ["/你的安装路径/SessionRelay/dist/srelay.js", "serve"],
+      "env": { "SRELAY_PROJECT_ROOT": "/你的项目路径" }
+    }
+  }
+}
+```
+
+### 接入后怎么验证
+
+新开一个 AI 会话，问它：
+
+> **"我们之前为什么决定用 PostgreSQL？"**
+
+正确的样子：AI 调用 `get_decisions` 或 `search_sessions`，回答里带出处（日期、来源 agent、会话 ID、消息序号）。如果它说"不知道"，说明 MCP 未接通——检查 `srelay doctor`。
+
+### 15 个工具能回答什么
+
+<details>
+<summary><b>读工具（8 个）</b>——点击展开</summary>
+
+| 工具 | AI 从此能回答 |
+| ---- | ------------- |
+| `search_sessions` | "我们之前讨论过 X 吗？"（中文全文 + 元数据过滤） |
+| `get_session_detail` | "那场讨论具体聊了什么？"（可按角色过滤、分页、截断） |
+| `list_sessions` | "这个项目都聊过哪些话题？" |
+| `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
+| `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
+| `get_unresolved` | "还有什么没定的？"（未决问题清单） |
+| `get_stats` | "记忆库什么状态？"（会话数/来源/体积） |
+| `set_scope` | 检索边界逃生口 |
+
+</details>
+
+<details>
+<summary><b>写域工具（7 个）</b>——点击展开</summary>
+
+| 工具 | 能力 | 安全边界 |
+| ---- | ---- | -------- |
+| `annotate_session` | 给会话打标签 / 写摘要 | 只改元数据，不改写对话 |
+| `save_note` | AI 把结论写成笔记 | source=note，可识别可审计 |
+| `export_handoff` | 生成 .hop 交接包 | 只读导出 |
+| `import_handoff` | 导入交接包 | **默认隔离模式** |
+| `release_quarantine` | 放行隔离正文 | 需显式调用 |
+| `link_sessions` | 建立会话关联 | 关联可查可撤销 |
+| `get_linked_sessions` | 双向查询关联 | 只读 |
+
+</details>
+
+### 上下文安全（AI 不会"吃太多"）
+
+- `get_session_detail` 默认最多 20 条 × 1000 字 ≈ 20KB，硬顶 50KB
+- 超出时返回 `truncated: true` + 行动建议（`role="user"` 只看提问 / `get_decisions()` 直接拿结论 / 翻页）
+- 要更多需显式传参——默认安全，不信任 AI 自觉
 
 ### Claude Code 生命周期钩子（可选，加速会话确认）
 
@@ -151,6 +235,32 @@ srelay import xxx.hop --from 你的名字
   }
 }
 ```
+
+## 自定义适配器（新 Agent 接入）
+
+会话接力支持插件化适配器——**加新 AI 工具 = 零改核心代码**：
+
+```
+.sessionrelay/adapters/my-agent.js   ← 放一个 JS 文件即可
+```
+
+```javascript
+// 最小实现
+module.exports = {
+  id: 'my-agent',
+  displayName: 'My Agent',
+  discover(projectRoot, config) {
+    // 返回属于该项目的会话列表
+    return [{ source: 'my-agent', sourceSessionId: 'xxx', sourceFile: '...', sizeBytes: 1024, mtimeMs: Date.now() }];
+  },
+  async readNew(ds, cursor, config) {
+    // 增量读取新消息（cursor 是你自己定义的水位对象）
+    return { messages: [{ role: 'user', content: '...', seqNum: 1 }], badLines: 0, cursor: { offset: 100 } };
+  },
+};
+```
+
+完整接口和更多能力（watchRoots / healthCheck / detectCompaction）见 [Adapter SDK 文档](docs/adapters/README.md)。
 
 ## 隐私设计
 
