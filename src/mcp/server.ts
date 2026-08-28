@@ -93,26 +93,38 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
 
   server.registerTool('get_session_detail', {
     title: '会话详情',
-    description: '取某会话的完整消息（或片段）。session_id 支持前缀',
+    description: '取某会话的消息（可按角色过滤、限制单条长度）。session_id 支持前缀。role=user 只取用户提问（轻量）；缺省返回全部',
     inputSchema: {
       session_id: z.string(),
       start_msg: z.number().optional().describe('起始消息序号（含）'),
       end_msg: z.number().optional().describe('结束消息序号（含）'),
+      role: z.enum(['user', 'assistant']).optional().describe('只取该角色的消息（解决"AI 回复太长，只要用户提问"的场景）'),
+      max_chars: z.number().optional().describe('单条消息截断长度（默认 4000；设大值取全文）'),
     },
   }, async (args) => {
     const s = findSessionByPrefix(db, args.session_id, project) ?? getSession(db, args.session_id);
     if (!s) return toolOut({ found: false, reason: '未找到会话' });
     const from = args.start_msg ?? 1;
     const to = args.end_msg ?? Math.max(s.message_count, 1);
-    const msgs = getMessageRange(db, s.id, from, to).map((m) => ({
-      seq: m.seq_num, role: m.role, content: m.content.length > 4000 ? m.content.slice(0, 4000) + '…(截断)' : m.content, createdAt: m.created_at,
+    const cap = args.max_chars ?? 4000;
+    let msgs = getMessageRange(db, s.id, from, to);
+    if (args.role) {
+      msgs = msgs.filter((m) => m.role === args.role);
+    }
+    const result = msgs.map((m) => ({
+      seq: m.seq_num, role: m.role,
+      content: m.content.length > cap ? m.content.slice(0, cap) + `…(截断，全文 ${m.content.length} 字，加大 max_chars 取更多)` : m.content,
+      createdAt: m.created_at,
     }));
     return toolOut({
       found: true,
       session: sessionBrief(db, s.id),
       summary_rule: s.summary_rule,
       range: [from, to],
-      messages: msgs,
+      roleFilter: args.role ?? 'all',
+      totalInDb: s.message_count,
+      returned: result.length,
+      messages: result,
       provenance: { sessionId: s.id, source: s.source, createdAt: s.created_at, state: s.state },
     });
   });
