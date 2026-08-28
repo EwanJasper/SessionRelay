@@ -1,0 +1,9 @@
+node_modules/
+dist/
+test/.tmp/
+*.log
+
+# 会话接力运行时数据与交接包（含会话内容，严禁入库）
+.sessionrelay/
+*.hop
+.sessionrelayignore.local

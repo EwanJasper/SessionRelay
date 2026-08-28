@@ -1,0 +1,36 @@
+{
+  "name": "sessionrelay",
+  "version": "0.0.1",
+  "private": true,
+  "description": "会话接力 SessionRelay — 项目级跨 Agent 会话记忆层（Phase 0 Spike）",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "s1": "vitest run test/unit/tokenize test/integration/search.spec.ts",
+    "s2": "vitest run test/integration/tail-resume.spec.ts",
+    "s3": "vitest run test/unit/state",
+    "s4": "vitest run test/unit/scope",
+    "s5": "vitest run test/integration/capture.spec.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@node-rs/jieba": "^2.0.2",
+    "better-sqlite3": "^12.11.1",
+    "commander": "^14.0.3",
+    "fflate": "^0.8.3",
+    "picocolors": "1.1.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.20.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
