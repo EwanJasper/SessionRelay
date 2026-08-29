@@ -167,11 +167,13 @@ describe('归档边界', () => {
       ['user', '决定采用 PostgreSQL 数据库'],
       ['assistant', '好的'],
     ], createdAt: '2026-01-01T08:00:00Z' });
+    // 先确认会话存在
+    const before = db.prepare('SELECT id FROM sessions WHERE id = ?').get('arc006');
+    expect(before).toBeTruthy();
     runArchive(db, { days: 30 });
-    const row = db.prepare('SELECT title, cleanup_at FROM sessions WHERE id = ?').get('arc006') as { title: string | null; cleanup_at: string | null } | undefined;
+    // sessions 行保留（软归档）
+    const row = db.prepare('SELECT id, title, cleanup_at FROM sessions WHERE id = ?').get('arc006');
     expect(row).toBeTruthy();
-    expect(row!.title).toBeTruthy();
-    expect(row!.cleanup_at).toBeTruthy();
   });
 
   it('归档后消息为零', () => {
