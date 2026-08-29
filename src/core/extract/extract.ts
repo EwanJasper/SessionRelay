@@ -16,6 +16,7 @@ export interface ExtractedMeta {
   decisions: Array<{ text: string; seq: number; at?: string }>;
   questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }>;
   codeBlockCount: number;
+  keyExchanges: Array<{ userText: string; aiText: string; userSeq: number; reason: string }>;
 }
 
 // ── files_mentioned：路径正则（绝对路径 / 带扩展名的相对路径） ──
@@ -121,6 +122,52 @@ export function countCodeBlocks(texts: string[]): number {
   return Math.floor(n / 2);
 }
 
+// ── key_exchanges：关键往返提取（归档后推导过程的中间粒度） ──
+// 规则优先级：含决策句的往返 > 含未决问题的提问 > 用户消息最长前 3 条。上限 8 组。
+export interface KeyExchange { userText: string; aiText: string; userSeq: number; reason: string }
+
+export function extractKeyExchanges(msgs: Msg[]): KeyExchange[] {
+  // 配对：每条 user 消息找它后面最近的一条 assistant 回复
+  const pairs: Array<{ user: Msg; ai: Msg | null }> = [];
+  for (let i = 0; i < msgs.length; i++) {
+    if (msgs[i].role !== 'user') continue;
+    const userText = msgs[i].content.trim();
+    if (userText.length < 8) continue; // 太短的（"好的""重启"）不算往返
+    let ai: Msg | null = null;
+    for (let j = i + 1; j < msgs.length; j++) {
+      if (msgs[j].role === 'assistant') { ai = msgs[j]; break; }
+      if (msgs[j].role === 'user') break; // 连续两条 user，前者无回复
+    }
+    pairs.push({ user: msgs[i], ai });
+  }
+
+  const scored = pairs.map(({ user, ai }) => {
+    let score = 0;
+    let reason = '';
+    const userText = user.content.replace(/\s+/g, ' ').trim();
+    // 过滤系统注入的伪用户消息（TodoWrite reminder / system-reminder / command 输出等）
+    if (/^(The TodoWrite tool|<system-reminder|<command-|<local-command|\[Request interrupted)/.test(userText)) {
+      return { userText, aiText: ai?.content ?? '', userSeq: user.seqNum, score: -1, reason: '系统消息' };
+    }
+    // 1) 含决策句
+    const decisionHit = DECISION_RES.some(re => re.test(user.content) || (ai ? re.test(ai.content) : false));
+    if (decisionHit) { score += 3; reason = '含决策'; }
+    // 2) 含未决问题
+    if (Q_MARK.test(user.content) && Q_HINT.test(user.content)) { score += 2; reason = reason || '关键提问'; }
+    // 3) 用户消息长（核心需求陈述）
+    if (user.content.length > 100) { score += 1; reason = reason || '需求陈述'; }
+    return { userText, aiText: ai?.content ?? '', userSeq: user.seqNum, score, reason };
+  }).filter(p => p.score > 0); // 过滤系统消息(score=-1)
+
+  scored.sort((a, b) => b.score - a.score || b.userText.length - a.userText.length);
+  return scored.slice(0, 8).map(p => ({
+    userText: p.userText.slice(0, 200),
+    aiText: p.aiText.replace(/\s+/g, ' ').trim().slice(0, 200),
+    userSeq: p.userSeq,
+    reason: p.reason,
+  }));
+}
+
 export function extractMessages(msgs: Msg[]): ExtractedMeta {
   const texts = msgs.map((m) => m.content);
   return {
@@ -129,6 +176,7 @@ export function extractMessages(msgs: Msg[]): ExtractedMeta {
     decisions: extractDecisions(msgs),
     questions: extractQuestions(msgs),
     codeBlockCount: countCodeBlocks(texts),
+    keyExchanges: extractKeyExchanges(msgs),
   };
 }
 

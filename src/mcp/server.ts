@@ -107,6 +107,7 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
       start_msg: z.number().optional().describe('起始消息序号（含）'),
       end_msg: z.number().optional().describe('结束消息序号（含）'),
       role: z.enum(['user', 'assistant']).optional().describe('只取该角色的消息（user=用户提问，轻量）'),
+      include_exchanges: z.boolean().optional().describe('附带关键往返（用户提问+AI结论对，约 3KB）——理解"为什么"的中间粒度，省去拉全文'),
       max_chars: z.number().optional().describe('单条截断长度（默认 1000；需全文时显式传大值如 5000）'),
     },
   }, async (args) => {
@@ -144,6 +145,16 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
       hints.push(`当前显示 ${result.length} 条（共 ${s.message_count} 条）`);
       if (s.message_count > 20) hints.push('建议：role="user" 只看用户提问（通常很少）；get_decisions() 直接拿全部决策；start_msg 翻页');
     }
+    // 关键往返（可选）：从 code_changes 列的 keyExchanges 字段取（归档后仍保留）
+    let keyExchanges: unknown = undefined;
+    if (args.include_exchanges) {
+      try {
+        const full = getSessionFull(db, s.id);
+        const cc = full ? (db.prepare('SELECT code_changes FROM sessions WHERE id = ?').get(s.id) as { code_changes: string | null } | undefined) : undefined;
+        const parsed = cc?.code_changes ? JSON.parse(cc.code_changes) : null;
+        keyExchanges = parsed?.keyExchanges ?? [];
+      } catch { keyExchanges = []; }
+    }
     return toolOut({
       found: true,
       session: sessionBrief(db, s.id),
@@ -155,6 +166,7 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
       totalBytesKB: Math.round(totalBytes / 1024),
       estimated_tokens: Math.round(totalBytes / 3),
       truncated: to < requestedTo || sizeTruncated,
+      ...(keyExchanges !== undefined ? { key_exchanges: keyExchanges } : {}),
       ...(hints.length > 0 ? { hint: hints.join('；') } : {}),
       messages: result,
       provenance: { sessionId: s.id, source: s.source, createdAt: s.created_at, state: s.state },

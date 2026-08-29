@@ -398,7 +398,7 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
     JSON.stringify(meta.topics),
     JSON.stringify(meta.decisions),
     JSON.stringify(meta.questions),
-    JSON.stringify({ codeBlockCount: meta.codeBlockCount }),
+    JSON.stringify({ codeBlockCount: meta.codeBlockCount, keyExchanges: meta.keyExchanges }),
     summary,
     metaTextOf(s?.title ?? null, topicsAndDecisions),
     id,

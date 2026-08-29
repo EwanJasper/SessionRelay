@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractFiles, extractTopics, extractDecisions, extractQuestions,
-  countCodeBlocks, extractMessages, summaryRule, type Msg,
+  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, type Msg,
 } from '../../src/core/extract/extract.js';
 
 const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
@@ -77,5 +77,40 @@ describe('P2 · code_changes 与 summary_rule', () => {
     expect(s).toContain('索引讨论');
     expect(s).toContain('决定用 B+树索引');
     expect(s).toContain('2 消息');
+  });
+});
+
+
+describe('P2+ · key_exchanges 关键往返', () => {
+  it('含决策的往返优先提取', () => {
+    const msgs: Msg[] = [
+      { role: 'user', content: '我们决定了用 PostgreSQL 作为主库，分区按月', seqNum: 1 },
+      { role: 'assistant', content: '好的，这是一个明智的选择，因为分区表支持更好', seqNum: 2 },
+      { role: 'user', content: '好的', seqNum: 3 },  // 太短不配对
+      { role: 'user', content: '今天的天气怎么样', seqNum: 4 },  // 无决策无问题
+      { role: 'assistant', content: '晴天', seqNum: 5 },
+    ];
+    const ex = extractKeyExchanges(msgs);
+    expect(ex.length).toBeGreaterThanOrEqual(1);
+    expect(ex[0].reason).toContain('决策');
+    expect(ex[0].userSeq).toBe(1);
+  });
+
+  it('上限 8 组', () => {
+    const msgs: Msg[] = [];
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: 'user', content: '为什么这里要这样设计一个很长的问题需要讨论清楚' + i, seqNum: i * 2 + 1 });
+      msgs.push({ role: 'assistant', content: '因为架构考虑' + i, seqNum: i * 2 + 2 });
+    }
+    expect(extractKeyExchanges(msgs).length).toBeLessThanOrEqual(8);
+  });
+
+  it('extractMessages 输出包含 keyExchanges', () => {
+    const meta = extractMessages([
+      { role: 'user', content: '决定了采用 Redis 做缓存', seqNum: 1 },
+      { role: 'assistant', content: '好的', seqNum: 2 },
+    ]);
+    expect(meta.keyExchanges).toBeDefined();
+    expect(meta.keyExchanges.length).toBeGreaterThanOrEqual(1);
   });
 });
