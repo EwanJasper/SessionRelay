@@ -370,9 +370,6 @@ export async function runServe(): Promise<void> {
     process.stderr.write('srelay serve: 未找到 .sessionrelay（先在项目内 srelay init）\n');
     process.exit(1);
   }
-  // 懒启动：serve 启动时检查守护，不在则后台拉起
-  const { ensureDaemon } = await import('../cli/ui.js');
-  ensureDaemon(root);
   const cfg = loadConfig(root);
   const db = openExisting(dbFile(root));
   const server = buildServer(root, db, cfg);

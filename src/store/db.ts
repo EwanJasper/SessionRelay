@@ -218,13 +218,13 @@ export function upsertCapturedSession(
       s.lastEventAt, s.sourceFile, metaTextOf(s.title ?? null), new Date().toISOString());
     return { id, isNew: true, prevState: 'active', title: s.title ?? null };
   }
-  // 标题为空时允许补填（首条用户消息晚到）
+  // 标题为空时允许补填（首条用户消息晚到）；origin 显式传入时更新（手动 save 覆盖 auto）
   if (!existing.title && s.title) {
-    db.prepare('UPDATE sessions SET title = ?, meta_text = ?, last_event_at = ?, synced_at = ? WHERE id = ?')
-      .run(s.title, metaTextOf(s.title), s.lastEventAt, new Date().toISOString(), existing.id);
+    db.prepare('UPDATE sessions SET title = ?, meta_text = ?, last_event_at = ?, synced_at = ?, origin = COALESCE(?, origin) WHERE id = ?')
+      .run(s.title, metaTextOf(s.title), s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
   } else {
-    db.prepare('UPDATE sessions SET last_event_at = ?, synced_at = ? WHERE id = ?')
-      .run(s.lastEventAt, new Date().toISOString(), existing.id);
+    db.prepare('UPDATE sessions SET last_event_at = ?, synced_at = ?, origin = COALESCE(?, origin) WHERE id = ?')
+      .run(s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
   }
   return { id: existing.id, isNew: false, prevState: existing.state, title: existing.title ?? s.title ?? null };
 }

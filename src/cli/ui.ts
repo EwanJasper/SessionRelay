@@ -20,7 +20,14 @@ export function die(msg: string, hint?: string): never {
 export function requireRoot(): string {
   const root = findRelayRoot(process.cwd());
   if (!root) die('未找到 .sessionrelay（本项目尚未初始化）', '在项目根目录运行 srelay init');
-  ensureDaemon(root); // 懒启动：守护不在时自动拉起
+  ensureDaemon(root);
+  return root;
+}
+
+/** 只在只读命令中调用懒启动（search/list/status 等）；写命令（save/sync/archive）自身会做同步 */
+export function requireRootWithDaemon(): string {
+  const root = requireRoot();
+  ensureDaemon(root);
   return root;
 }
 
@@ -29,6 +36,7 @@ export function requireRoot(): string {
  * 在所有读命令（search/list/show/decisions/status 等）的入口调用
  */
 export function ensureDaemon(root: string): void {
+  if (process.env.VITEST) return; // 测试环境不拉守护（避免 EBUSY 和竞态）
   const alive = isDaemonAlive(root);
   if (alive.alive) return; // 已在运行
 

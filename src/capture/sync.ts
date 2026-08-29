@@ -163,9 +163,8 @@ async function ingestOne(
     ? (read.messages[read.messages.length - 1].createdAt ?? ds.updatedAt ?? new Date().toISOString())
     : ds.updatedAt ?? new Date().toISOString();
 
-  // 两层 ignore：入库前 title 复查
-  const { isSessionBlocked: _tmp } = await import('./ignore.js');
-  if (_tmp(ctx.ignoreRules, { source: ds.source, title: ds.title ?? firstUserTitle, sourceFile: ds.sourceFile })) {
+  // 两层 ignore：入库前 title 复查（用已导入的 isSessionBlocked，不用动态 import）
+  if (isSessionBlocked(ctx.ignoreRules, { source: ds.source, title: ds.title ?? firstUserTitle, sourceFile: ds.sourceFile })) {
     ctx.result.blocked++;
     ctx.stats?.increment('blocked_by_ignore');
     db.transaction(() => recordCursor(db, ds.source, ds.sourceFile, read.cursor, { badLines: read.badLines }))();
