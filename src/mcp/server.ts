@@ -87,8 +87,16 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
       snippet: h.snippet,
       provenance: { ...sessionBrief(db, h.sessionId), msg: h.seq, note: `get_session_detail 可取全文` },
     }));
-    const hint = buildHint(callPred, hits.length);
-    return toolOut({ query: args.query, scoped: !!asm.where, escaped: asm.escaped, count: out.length, hits: out, ...(hint ? { hint } : {}) });
+    // token 感知：告诉 AI 本次响应量 + 省 token 的深入路径
+    const respBytes = Buffer.byteLength(JSON.stringify(out), 'utf8');
+    const tokenHint = `本次响应约 ${Math.round(respBytes / 3)} tokens。深入时省 token：get_session_detail(role:'user') 只看用户提问；get_decisions() 直接拿结论`;
+    const hint2 = buildHint(callPred, hits.length);
+    return toolOut({
+      query: args.query, scoped: !!asm.where, escaped: asm.escaped,
+      count: out.length, hits: out,
+      estimated_tokens: Math.round(respBytes / 3),
+      hint: [tokenHint, hint2].filter(Boolean).join(' | '),
+    });
   });
 
   server.registerTool('get_session_detail', {
@@ -145,6 +153,7 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
       totalInDb: s.message_count,
       returned: result.length,
       totalBytesKB: Math.round(totalBytes / 1024),
+      estimated_tokens: Math.round(totalBytes / 3),
       truncated: to < requestedTo || sizeTruncated,
       ...(hints.length > 0 ? { hint: hints.join('；') } : {}),
       messages: result,

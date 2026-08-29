@@ -86,10 +86,25 @@ export async function cmdShow(idPrefix: string, opts: { range?: string; json?: b
     console.log(pc.dim(`${s.source} · ${fmtDate(s.created_at)} · ${s.state} · ${s.message_count} 消息 · 显示 #${from}-#${to}`));
     console.log('─'.repeat(58));
     const msgs = getMessageRange(db, s.id, from, to);
+    // 总预算保护（20KB）：超出时停止输出并提示分段查看
+    const BUDGET = 20 * 1024;
+    let used = 0;
+    let stopped = false;
     for (const m of msgs) {
-      const who = m.role === 'user' ? pc.cyan('用户') : pc.green('AI  ');
       const body = m.content.length > 600 ? m.content.slice(0, 600) + ` …(截断，共 ${m.content.length} 字)` : m.content;
+      used += Buffer.byteLength(body, 'utf8');
+      if (used > BUDGET) {
+        stopped = true;
+        const shown = msgs.indexOf(m);
+        console.log(pc.yellow(`\n⚠️ 输出已达 20KB 预算，已显示 #${from}–#${from + shown - 1}（共 ${msgs.length} 条中）。`));
+        console.log(pc.dim(`  分段查看：--range ${from + shown}:${to}；只看提问：MCP get_session_detail(role: 'user')`));
+        break;
+      }
+      const who = m.role === 'user' ? pc.cyan('用户') : pc.green('AI  ');
       console.log(`${pc.dim(`#${m.seq_num}`)} ${who} ${body.replace(/\n+/g, '\n   ')}`);
+    }
+    if (!stopped) {
+      console.log(pc.dim(`\n💡 省上下文技巧：MCP get_session_detail 支持 role:'user' 只看提问、max_chars 控制单条长度`));
     }
   } finally {
     db.close();
