@@ -13,7 +13,7 @@ import { searchSessions } from '../search-svc/engine.js';
 import { pc, fmtDate } from './ui.js';
 import { installWatchService } from './watch.js';
 
-/** 检测本机已安装的 AI 工具 */
+/** 检测本机已安装的 AI 工具（跨平台路径检测） */
 interface DetectedSource {
   id: string;
   displayName: string;
@@ -23,19 +23,60 @@ interface DetectedSource {
 
 function detectSources(): DetectedSource[] {
   const home = os.homedir();
+  const platform = process.platform;
+
+  // Trae 在不同平台的用户数据目录不同
+  const traePaths: Record<string, string[]> = {
+    win32: [
+      path.join(home, 'AppData', 'Roaming', 'Trae CN'),
+      path.join(home, 'AppData', 'Roaming', 'Trae'),
+    ],
+    darwin: [
+      path.join(home, 'Library', 'Application Support', 'Trae CN'),
+      path.join(home, 'Library', 'Application Support', 'Trae'),
+    ],
+    linux: [
+      path.join(home, '.config', 'Trae CN'),
+      path.join(home, '.config', 'Trae'),
+    ],
+  };
+
   const checks: Array<{ id: string; name: string; paths: string[] }> = [
-    { id: 'claude-code', name: 'Claude Code', paths: [path.join(home, '.claude', 'projects')] },
-    { id: 'zcode', name: 'ZCode', paths: [path.join(home, '.zcode', 'cli', 'db', 'db.sqlite')] },
-    { id: 'codex', name: 'Codex', paths: [path.join(home, '.codex')] },
-    { id: 'qoder', name: 'Qoder', paths: [path.join(home, '.qoder-cn')] },
-    { id: 'trae', name: 'Trae（部分支持）', paths: [path.join(home, 'AppData', 'Roaming', 'Trae CN')] },
+    {
+      id: 'claude-code', name: 'Claude Code',
+      paths: [path.join(home, '.claude', 'projects')],
+    },
+    {
+      id: 'zcode', name: 'ZCode',
+      paths: [path.join(home, '.zcode', 'cli', 'db', 'db.sqlite')],
+    },
+    {
+      id: 'codex', name: 'Codex',
+      paths: [path.join(home, '.codex')],
+    },
+    {
+      id: 'qoder', name: 'Qoder',
+      paths: [
+        path.join(home, '.qoder-cn'),           // 中国版
+        path.join(home, '.qoder'),              // 国际版
+        path.join(home, '.qoder-cn', 'cache', 'projects'),  // 会话数据子目录
+      ],
+    },
+    {
+      id: 'trae', name: 'Trae（部分支持）',
+      paths: traePaths[platform] ?? traePaths.linux ?? [],
+    },
   ];
-  return checks.map(c => ({
-    id: c.id,
-    displayName: c.name,
-    installed: c.paths.some(p => fs.existsSync(p)),
-    path: c.paths[0],
-  }));
+
+  return checks.map(c => {
+    const found = c.paths.find(p => fs.existsSync(p));
+    return {
+      id: c.id,
+      displayName: c.name,
+      installed: !!found,
+      path: found ?? c.paths[0] ?? '(未知路径)',
+    };
+  });
 }
 
 export async function cmdInit(opts: { backfill?: string; yes?: boolean; installService?: boolean; sources?: string }): Promise<void> {
@@ -69,14 +110,20 @@ export async function cmdInit(opts: { backfill?: string; yes?: boolean; installS
       for (const d of notInstalled) {
         console.log(`  ⬜ ${d.displayName.padEnd(20)} ${pc.dim('未检测到')}`);
       }
-      console.log(pc.cyan('\n选择要捕获的来源（逗号分隔，回车=全选已安装的）：'));
+      if (notInstalled.length > 0) {
+        console.log(pc.dim('\n  💡 已安装但未检测到？在 config.json 的 capture.sources 中手动添加，'));
+        console.log(pc.dim('     或设置环境变量覆盖路径（如 CODEX_DIR=/自定义路径）。详见 srelay doctor。'));
+      }
+      console.log(pc.cyan('\n选择要捕获的来源：'));
+      console.log(pc.dim('  回车 或 A = 全选已安装的'));
+      console.log(pc.dim('  逗号分隔 = 只选指定的（如 zcode,claude-code）'));
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const answer = (await rl.question('> ')).trim();
+      const answer = (await rl.question('> ')).trim().toLowerCase();
       rl.close();
-      if (!answer) {
+      if (!answer || answer === 'a' || answer === 'all') {
         selectedSources = installed.map(d => d.id);
       } else {
-        selectedSources = answer.split(',').map(s => s.trim().toLowerCase()).filter(s =>
+        selectedSources = answer.split(',').map(s => s.trim()).filter(s =>
           detected.some(d => d.id === s)
         );
         if (selectedSources.length === 0) {
