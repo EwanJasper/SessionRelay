@@ -60,7 +60,7 @@ beforeAll(async () => {
   transport = new StdioClientTransport({
     command: process.execPath,
     args: ['--import', `file:///${path.join(REPO, 'node_modules/tsx/dist/loader.mjs').replace(/\\/g, '/')}`, path.join(REPO, 'src/bin/srelay.ts'), 'serve'],
-    env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT } as Record<string, string>,
+    env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT, SRELAY_NO_DAEMON_SPAWN: '1' } as Record<string, string>,
     stderr: 'ignore',
   });
   client = new Client({ name: 'srelay-contract-test', version: '0.0.0' });

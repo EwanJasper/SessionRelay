@@ -391,6 +391,13 @@ export async function runServe(): Promise<void> {
     process.stderr.write('srelay serve: 未找到 .sessionrelay（先在项目内 srelay init）\n');
     process.exit(1);
   }
+  // 懒启动（回归修复 46f4371 前移除）：serve 启动时守护不在则后台拉起。
+  // 测试环境跳过：MCP 契约测试以子进程方式起 serve，ensureDaemon 会拉起真实守护
+  // 持有测试 DB 文件句柄，导致 CI Windows 清理报 EBUSY。
+  if (!process.env.VITEST && !process.env.SRELAY_NO_DAEMON_SPAWN) {
+    const { ensureDaemon } = await import('../cli/ui.js');
+    ensureDaemon(root);
+  }
   const cfg = loadConfig(root);
   const db = openExisting(dbFile(root));
   const server = buildServer(root, db, cfg);
