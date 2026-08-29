@@ -90,6 +90,54 @@ export async function cmdDoctor(): Promise<void> {
     } else {
       checks.push(c('守护进程', 'ok', `运行中 (pid ${alive.pid}) · 服务：${await watchServiceStatus(root)}`));
     }
+
+    // ── 新增检查：Codex / Qoder / Trae / 归档表 / custom 适配器 ──
+
+    // Codex
+    const codexDir = path.join(os.homedir(), '.codex');
+    checks.push(fs.existsSync(codexDir)
+      ? c('Codex 源', 'ok', codexDir)
+      : c('Codex 源', 'warn', '未检测到（未安装可忽略）'));
+
+    // Qoder
+    const qoderDir = path.join(os.homedir(), '.qoder-cn');
+    checks.push(fs.existsSync(qoderDir)
+      ? c('Qoder 源', 'ok', qoderDir)
+      : c('Qoder 源', 'warn', '未检测到（未安装可忽略）'));
+
+    // Trae（部分支持，AI 回复加密）
+    const traeDir = path.join(os.homedir(), 'AppData', 'Roaming', 'Trae CN');
+    if (fs.existsSync(traeDir)) {
+      checks.push(c('Trae 源', 'warn', `${traeDir}（部分支持：仅用户提问，AI 回复加密）`));
+    } else {
+      checks.push(c('Trae 源', 'warn', '未检测到（未安装可忽略）'));
+    }
+
+    // 归档表（M2 迁移）
+    if (fs.existsSync(dbFile(root))) {
+      try {
+        const db = new Database(dbFile(root), { readonly: true });
+        const hasCleanupLog = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='cleanup_log'").get();
+        const hasCleanupAt = (db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>).some(col => col.name === 'cleanup_at');
+        db.close();
+        checks.push(hasCleanupLog && hasCleanupAt
+          ? c('归档表（M2）', 'ok', 'cleanup_log + cleanup_at 就绪')
+          : c('归档表（M2）', 'warn', '缺少表或列', '重新打开库自动迁移'));
+      } catch {
+        checks.push(c('归档表（M2）', 'warn', '无法检测'));
+      }
+    }
+
+    // custom 适配器
+    const customDir = path.join(root, '.sessionrelay', 'adapters');
+    if (fs.existsSync(customDir)) {
+      const jsFiles = fs.readdirSync(customDir).filter(f => f.endsWith('.js'));
+      checks.push(jsFiles.length > 0
+        ? c('Custom 适配器', 'ok', `${jsFiles.length} 个已加载：${jsFiles.map(f => f.replace('.js', '')).join(', ')}`)
+        : c('Custom 适配器', 'ok', '目录存在，无自定义适配器'));
+    } else {
+      checks.push(c('Custom 适配器', 'ok', '无（可在 .sessionrelay/adapters/ 添加）'));
+    }
   }
 
   for (const k of checks) {

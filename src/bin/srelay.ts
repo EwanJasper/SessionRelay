@@ -12,6 +12,7 @@ program
   .command('init')
   .description('初始化项目并回填最近 30 天会话（啊哈机制）')
   .option('--backfill <window>', '30d | 90d | none', '30d')
+  .option('--sources <ids>', '逗号分隔：claude-code,zcode,codex,qoder（缺省=交互选择或全选已安装的）')
   .option('--yes', '跳过交互试搜')
   .option('--install-service', '初始化后注册守护服务')
   .action(async (opts) => { const { cmdInit } = await import('../cli/init.js'); await cmdInit(opts); });
