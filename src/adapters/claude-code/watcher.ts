@@ -15,14 +15,15 @@ export function watchDir(
   let timer: NodeJS.Timeout | null = null;
   const pending = new Set<string>();
   const flush = () => {
+    timer = null; // 清引用，防止 close() 时 clearTimeout 已执行的 timer
     const items = [...pending];
     pending.clear();
     for (const f of items) cb(f);
   };
   const onEvent = (file: string) => {
     pending.add(file);
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(flush, debounceMs);
+    // 合并去抖：已有 timer 时不重建（高频事件下避免句柄泄漏）
+    if (!timer) timer = setTimeout(flush, debounceMs);
   };
 
   let watcher: fs.FSWatcher | null = null;

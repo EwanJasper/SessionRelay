@@ -7,11 +7,30 @@ import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult
 
 export const SOURCE_ID = 'zcode';
 
+// 连接缓存：守护每 30 秒调用 discover/readNew，避免每次开/关导致句柄泄漏
+let cachedConn: InstanceType<typeof Database> | null = null;
+let cachedPath: string | null = null;
+
+function getConn(dbPath: string): InstanceType<typeof Database> {
+  if (cachedConn && cachedPath === dbPath && fs.existsSync(dbPath)) return cachedConn;
+  if (cachedConn) { try { cachedConn.close(); } catch { /* 已关 */ } }
+  cachedConn = new Database(dbPath, { readonly: true });
+  cachedConn.pragma('busy_timeout = 3000');
+  cachedPath = dbPath;
+  return cachedConn;
+}
+
+/** 仅供测试：重置连接缓存 */
+export function resetConn(): void {
+  if (cachedConn) { try { cachedConn.close(); } catch { /* 忽略 */ } }
+  cachedConn = null;
+  cachedPath = null;
+}
+
 export function discover(projectRoot: string, dbPath: string): DiscoveredSession[] {
   if (!fs.existsSync(dbPath)) return [];
-  const z = new Database(dbPath, { readonly: true });
+  const z = getConn(dbPath);
   try {
-    z.pragma('busy_timeout = 3000');
     const rows = z
       .prepare('SELECT id, title, time_created, time_updated FROM session WHERE lower(directory) = lower(?)')
       .all(path.resolve(projectRoot)) as Array<{ id: string; title: string; time_created: number; time_updated: number }>;
@@ -26,14 +45,14 @@ export function discover(projectRoot: string, dbPath: string): DiscoveredSession
       mtimeMs: r.time_updated,
     }));
   } finally {
-    z.close();
+    // 使用缓存连接，不关闭（由 resetConn 或进程退出时关闭）
   }
 }
 
 export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown): ReadResult {
   const cur = (cursor ?? {}) as { rowid?: number };
   if (!fs.existsSync(dbPath)) return { messages: [], badLines: 0, cursor: cur };
-  const z = new Database(dbPath, { readonly: true });
+  const z = getConn(dbPath);
   try {
     z.pragma('busy_timeout = 3000');
     const rows = z
@@ -109,7 +128,7 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
     const lastComp = compParts.length > 0 ? compParts[compParts.length - 1].time_created : (cursorObj.lastCompaction ?? 0);
     return { messages, badLines: 0, cursor: { rowid: maxRowid, lastCompaction: lastComp } };
   } finally {
-    z.close();
+    // 缓存连接，不关闭
   }
 }
 
@@ -137,7 +156,7 @@ export function detectCompaction(ds: DiscoveredSession, dbPath: string): Compact
       summaryMessageId: data.summaryMessageId,
     };
   } finally {
-    z.close();
+    // 缓存连接，不关闭
   }
 }
 
@@ -160,7 +179,7 @@ export const adapter: SessionSourceAdapter = {
     if (!fs.existsSync(dbPath)) return `数据库不存在：${dbPath}（未安装 ZCode 可忽略）`;
     try {
       const z = new Database(dbPath, { readonly: true });
-      z.close();
+      // 缓存连接，不关闭
       return null;
     } catch (e) {
       return `只读探测失败：${(e as Error).message}`;

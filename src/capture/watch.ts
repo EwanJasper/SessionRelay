@@ -56,7 +56,6 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
     await cycle('initial');
     // 改动 1：从注册表获取各源的监听目录（不再硬编码）
     ensureRegistered(root);
-    ensureRegistered(root);
     const roots = new Set<string>();
     for (const s of opts.config.capture.sources) {
       const adapter = get(s);
