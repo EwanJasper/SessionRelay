@@ -191,6 +191,11 @@ async function ingestOne(
       ctx.stats?.increment('resumed');
     }
 
+    // 会话复活：归档后新消息到达 → 清除 cleanup_at，回到 hot 层
+    if (!up.isNew && read.messages.length > 0) {
+      db.prepare('UPDATE sessions SET cleanup_at = NULL WHERE id = ? AND cleanup_at IS NOT NULL').run(up.id);
+    }
+
     if (ctx.mode === 'full') {
       let inserted = 0;
       for (const m of read.messages) inserted += insertMessage(db, { sessionId: up.id, role: m.role, content: m.content, seqNum: m.seqNum, createdAt: m.createdAt });

@@ -18,7 +18,7 @@ const PID = projectIdOf(PROJECT);
 const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000).toISOString();
 
 beforeAll(() => {
-  fs.rmSync(TMP, { recursive: true, force: true });
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(path.join(PROJECT, '.sessionrelay'), { recursive: true });
   const cfg = defaultConfig();
   cfg.identity.project_id = PID;
@@ -47,7 +47,7 @@ beforeAll(() => {
   db.close();
 });
 
-afterAll(() => { fs.rmSync(TMP, { recursive: true, force: true }); });
+afterAll(() => { for (let i = 0; i < 3; i++) { try { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {} return; } catch {} } };
 
 let client: Client;
 let transport: StdioClientTransport;
@@ -63,9 +63,7 @@ beforeAll(async () => {
   await client.connect(transport);
 }, 30000);
 
-afterAll(async () => {
-  await client.close();
-});
+afterAll(async () => { try { await client.close(); } catch {} };
 
 const call = async (name: string, args: Record<string, unknown> = {}) => {
   const res = await client.callTool({ name, arguments: args });

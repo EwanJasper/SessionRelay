@@ -36,7 +36,7 @@ function cfg(over: Partial<RelayConfig['capture']> = {}): RelayConfig {
 }
 
 beforeAll(() => {
-  fs.rmSync(TMP, { recursive: true, force: true });
+  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {}
   fs.mkdirSync(path.join(PROJECT, '.sessionrelay'), { recursive: true });
   saveConfig(PROJECT, cfg({ mode: 'off' })); // off 模式：save 是唯一入口（D2 验收）
   createDb(dbFile(PROJECT)).close(); // init 等价：建库建表
@@ -44,7 +44,7 @@ beforeAll(() => {
 afterAll(() => {
   // Windows 偶发 EPERM（SQLite WAL 句柄延迟释放）——重试 + 容错
   for (let i = 0; i < 3; i++) {
-    try { fs.rmSync(TMP, { recursive: true, force: true }); return; } catch { /* retry */ }
+    try { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {} return; } catch { /* retry */ }
   }
 });
 afterEach(() => { vi.restoreAllMocks(); process.chdir(ORIG_CWD); });

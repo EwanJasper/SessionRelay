@@ -37,13 +37,16 @@ export async function runRebuild(opts: { root: string; cfg: RelayConfig; force?:
 
     // 1.5) 状态从事实推导：静默已超冷却期的会话直接补走 pending→confirmed
     //      （否则重建后全部回 active，决策/摘要要再等 6h 冷却——状态损失）
+    //      归档保护：cleanup_at 非空的会话不 confirm（保持归档状态）
     {
       const pid = opts.cfg.identity.project_id ?? opts.root;
       const nowIso = new Date().toISOString();
       const coolCutoff = new Date(Date.now() - opts.cfg.capture.cooldown_hours * 3_600_000).toISOString();
       for (const id of dueIdle(fresh, pid, coolCutoff)) {
+        const row = fresh.prepare('SELECT cleanup_at FROM sessions WHERE id = ?').get(id) as { cleanup_at: string | null } | undefined;
+        if (row?.cleanup_at) continue; // 已归档，保持归档状态
         markPending(fresh, id, nowIso);
-        confirmSession(fresh, id, nowIso); // 提取五件套 + summary_rule + meta_text 全量恢复
+        confirmSession(fresh, id, nowIso);
       }
     }
 

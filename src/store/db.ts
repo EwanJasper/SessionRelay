@@ -9,7 +9,7 @@ export { dbFile } from '../shared/paths.js';
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -121,6 +121,30 @@ CREATE TABLE IF NOT EXISTS transfer_log (
   type TEXT NOT NULL, file_path TEXT NOT NULL, from_user TEXT, to_user TEXT,
   session_ids TEXT, created_at TEXT NOT NULL
 );
+
+-- ═══════════ M2：归档审计（隐私与数据生命周期设计） ═══════════
+CREATE TABLE IF NOT EXISTS cleanup_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  triggered_by      TEXT NOT NULL,
+  mode              TEXT NOT NULL,
+  criteria          TEXT NOT NULL,
+  sessions_affected INTEGER NOT NULL,
+  sessions_skipped  INTEGER NOT NULL,
+  bytes_freed       INTEGER NOT NULL,
+  created_at        TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cleanup_detail (
+  cleanup_log_id INTEGER NOT NULL REFERENCES cleanup_log(id) ON DELETE CASCADE,
+  session_id     TEXT NOT NULL,
+  title          TEXT,
+  source         TEXT NOT NULL,
+  message_count  INTEGER NOT NULL,
+  decision_count INTEGER NOT NULL,
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cleanup_detail_log ON cleanup_detail(cleanup_log_id);
+CREATE INDEX IF NOT EXISTS idx_cleanup_detail_session ON cleanup_detail(session_id);
 `;
 
 export function createDb(file: string = ':memory:'): DB {
@@ -134,6 +158,15 @@ export function createDb(file: string = ':memory:'): DB {
     throw new Error(`数据库由更新版本的 srelay 创建（v${v} > 支持 v${SCHEMA_VERSION}），请升级 srelay（T30）`);
   }
   db.exec(DDL);
+  // M2 迁移：给已有库加归档列（CREATE TABLE IF NOT EXISTS 不会加列）
+  if (v < 2) {
+    const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    const hasCleanupAt = cols.some(c => c.name === 'cleanup_at');
+    if (!hasCleanupAt) {
+      db.exec('ALTER TABLE sessions ADD COLUMN cleanup_at TEXT');
+      db.exec('ALTER TABLE sessions ADD COLUMN original_message_count INTEGER DEFAULT 0');
+    }
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
   return db;
 }
@@ -465,6 +498,23 @@ export function insertImportedSession(db: DB, s: ImportedSessionInput): { id: st
 
 export function insertImportedMessage(db: DB, sessionId: string, m: { seq: number; role: string; content: string; createdAt?: string | null }): number {
   return insertMessage(db, { sessionId, role: m.role, content: m.content, seqNum: m.seq, createdAt: m.createdAt ?? undefined });
+}
+
+// ── 归档审计（隐私与数据生命周期设计） ──
+
+export function insertCleanupLog(db: DB, o: { triggeredBy: string; mode: string; criteria: string }): number {
+  return Number(db.prepare(
+    'INSERT INTO cleanup_log (triggered_by, mode, criteria, sessions_affected, sessions_skipped, bytes_freed, created_at) VALUES (?,?,?,?,?,?,?)'
+  ).run(o.triggeredBy, o.mode, o.criteria, 0, 0, 0, new Date().toISOString()).lastInsertRowid);
+}
+
+export function insertCleanupDetail(db: DB, o: {
+  cleanupLogId: number; sessionId: string; title: string | null; source: string;
+  messageCount: number; decisionCount: number;
+}): void {
+  db.prepare(
+    'INSERT INTO cleanup_detail (cleanup_log_id, session_id, title, source, message_count, decision_count, created_at) VALUES (?,?,?,?,?,?,?)'
+  ).run(o.cleanupLogId, o.sessionId, o.title, o.source, o.messageCount, o.decisionCount, new Date().toISOString());
 }
 
 // ── 会话关联（P3-A 提前落地：link/get_linked 由 MCP 工具驱动） ──

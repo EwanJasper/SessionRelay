@@ -223,10 +223,20 @@ program
   .action(async (id) => { const { cmdConfirm } = await import('../cli/misc.js'); await cmdConfirm(id); });
 
 program
-  .command('purge')
-  .description('清除未固化会话')
-  .option('--pending', '清除 pending_end 会话')
-  .option('--yes', '跳过确认')
-  .action(async (opts) => { const { cmdPurge } = await import('../cli/misc.js'); await cmdPurge(opts); });
+  .command('archive')
+  .description('归档旧会话（保留决策骨架，释放正文空间）或查看归档历史')
+  .option('--days <n>', '归档 N 天前的会话')
+  .option('--before <date>', '归档指定日期前的')
+  .option('--size <n>mb', 'DB 超过此值时归档')
+  .option('--source <s>', '只归档此来源')
+  .option('--sessions <ids>', '归档指定会话（逗号分隔）')
+  .option('--hard', '硬删除（含决策，不可恢复）')
+  .option('--dry-run', '只预览不执行')
+  .option('--history', '查看归档历史')
+  .option('--verbose', '历史详细模式')
+  .option('--session <id>', '查看指定会话的归档记录')
+  .option('--include-protected', '跳过保护规则')
+  .option('--json')
+  .action(async (f) => { const { cmdArchive } = await import('../cli/archive.js'); await cmdArchive(f); });
 
 program.parseAsync(process.argv);
