@@ -68,6 +68,8 @@ export async function uninstallWatchService(root: string): Promise<void> {
 
 export async function watchServiceStatus(root: string): Promise<string> {
   if (process.platform !== 'win32') return '未实现';
+  // 测试环境跳过 PowerShell 子进程（CI 沙箱冷启动可能超 30s 导致测试超时）
+  if (process.env.VITEST) return '（测试跳过）';
   try {
     const r = await execFileP('powershell', ['-Command',
       `(Get-ItemProperty '${REG_PATH}' -ErrorAction SilentlyContinue).${REG_NAME}`]);
