@@ -72,7 +72,7 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
 
   server.registerTool('search_sessions', {
     title: '搜索历史会话',
-    description: '跨 agent 中文全文搜索本项目历史会话（自动应用 scope 与来源出处）',
+    description: '搜索本项目的历史会话记忆。何时用：用户问"之前/上次/为什么当时/我们讨论过吗"、接手项目需要背景、实现前确认已有决策、报错排查怀疑有历史结论。何时不调：纯新问题、当前对话刚说过的内容',
     inputSchema: { query: z.string().describe('搜索词，支持 "短语" 精确匹配'), limit: z.number().optional(), ...zPred },
   }, async (args) => {
     const callPred = predFrom(args);
@@ -224,7 +224,7 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
 
   server.registerTool('get_stats', {
     title: '索引统计',
-    description: '本项目记忆库统计（会话数/状态/来源/体积/当前 scope）',
+    description: '本项目记忆库统计（会话数/状态/来源/体积/当前 scope）。开始处理项目任务前可调用，了解记忆库规模与覆盖范围',
     inputSchema: {},
   }, async () => {
     const byState = countsByState(db, project);
