@@ -67,7 +67,7 @@ beforeAll(async () => {
   await client.connect(transport);
 }, 30000);
 
-afterAll(async () => { try { await client.close(); } catch {} };
+afterAll(async () => { try { await client.close(); } catch {} });
 
 const call = async (name: string, args: Record<string, unknown> = {}) => {
   const res = await client.callTool({ name, arguments: args });
