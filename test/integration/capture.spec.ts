@@ -18,12 +18,14 @@ const ZCODE_DB = path.join(TMP, 'zcode', 'db.sqlite');
 const PID = projectIdOf(PROJECT);
 
 beforeAll(() => {
-  fs.rmSync(TMP, { recursive: true, force: true });
+  for (let i = 0; i < 3; i++) { try { fs.rmSync(TMP, { recursive: true, force: true }); break; } catch { /* retry */ } }
   fs.mkdirSync(PROJECT, { recursive: true });
   fs.mkdirSync(path.join(PROJECT, '.sessionrelay'), { recursive: true });
 });
 
-afterAll(() => { fs.rmSync(TMP, { recursive: true, force: true }); });
+afterAll(() => {
+  for (let i = 0; i < 3; i++) { try { fs.rmSync(TMP, { recursive: true, force: true }); return; } catch { /* retry */ } }
+});
 
 const cfg = (over: Partial<RelayConfig['capture']> = {}): RelayConfig => ({
   ...defaultConfig(),
