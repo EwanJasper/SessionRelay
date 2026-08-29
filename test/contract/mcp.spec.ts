@@ -47,7 +47,11 @@ beforeAll(() => {
   db.close();
 });
 
-afterAll(() => { for (let i = 0; i < 3; i++) { try { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {} return; } catch {} } };
+afterAll(() => {
+  for (let i = 0; i < 3; i++) {
+    try { fs.rmSync(TMP, { recursive: true, force: true }); return; } catch { /* retry */ }
+  }
+});
 
 let client: Client;
 let transport: StdioClientTransport;
