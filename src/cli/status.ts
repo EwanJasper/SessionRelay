@@ -16,7 +16,10 @@ export async function cmdStatus(opts?: { json?: boolean }): Promise<void> {
     const pid = cfg.identity.project_id ?? root;
     const st = countsByState(db, pid);
     const bySource = countsBySource(db, pid);
-    const recent = listSessions(db, { projectId: pid, limit: 3 });
+    // 笔记单独统计（source='note' 是 AI 写的结论，不是对话会话）
+    const noteCount = bySource['note'] ?? 0;
+    const convSources = Object.fromEntries(Object.entries(bySource).filter(([k]) => k !== 'note'));
+    const recent = listSessions(db, { projectId: pid, limit: 4 }).filter(s => s.source !== 'note').slice(0, 3);
     const stats = openStats(root);
     const size = fs.existsSync(dbFile(root)) ? fs.statSync(dbFile(root)).size : 0;
     const alive = isDaemonAlive(root);
@@ -29,7 +32,8 @@ export async function cmdStatus(opts?: { json?: boolean }): Promise<void> {
         mode: cfg.capture.mode,
         daemon: { alive: alive.alive, pid: alive.pid ?? null, service },
         sessions: { total: Object.values(st).reduce((a, b) => a + b, 0), ...st },
-        bySource,
+        notes: noteCount,
+        bySource: convSources,
         ignoredByRules: blocked,
         dbSizeMB: Number((size / 1024 / 1024).toFixed(2)),
         recent: recent.map((s) => ({ id: s.id, title: s.title, source: s.source, state: s.state, lastEventAt: s.last_event_at })),
@@ -46,8 +50,11 @@ export async function cmdStatus(opts?: { json?: boolean }): Promise<void> {
       console.log(`守护    ${pc.red('🔴 auto-capture 未运行，最近会话可能未捕获')}`);
       console.log(pc.yellow(`        → srelay watch --install-service（推荐）或 srelay sync 兜底`));
     }
-    console.log(`会话    active ${st.active ?? 0} · pending ${st.pending_end ?? 0} · confirmed ${st.confirmed ?? 0}`);
-    console.log(`来源    ${Object.entries(bySource).map(([k, v]) => `${k} ${v}`).join(' · ') || pc.dim('（空）')}`);
+    const stText = `active ${st.active ?? 0} · pending ${st.pending_end ?? 0} · confirmed ${st.confirmed ?? 0}`;
+    // note 是 AI 笔记不是对话，从会话统计中分离
+    const noteAdj = noteCount > 0 ? ` ${pc.dim(`+ ${noteCount} 条 AI 笔记`)}` : '';
+    console.log(`会话    ${stText}${noteAdj}`);
+    console.log(`来源    ${Object.entries(convSources).map(([k, v]) => `${k} ${v}`).join(' · ') || pc.dim('（空）')}`);
     console.log(`拦截    ignore 规则累计拦截 ${blocked} 次${cfg.capture.mode !== 'full' ? pc.yellow(` · 当前模式 ${cfg.capture.mode}（不落正文）`) : ''}`);
     console.log(`体积    relay.sqlite ${(size / 1024 / 1024).toFixed(1)} MB`);
     if (recent.length > 0) {

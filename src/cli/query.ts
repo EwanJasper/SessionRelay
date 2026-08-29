@@ -108,8 +108,17 @@ export async function cmdList(opts: { source?: string; state?: string; limit?: n
       return;
     }
     if (rows.length === 0) { console.log(pc.dim('（空）先 srelay sync 或等待守护捕获。')); return; }
-    for (const s of rows) {
+    // 笔记单独分组展示（note 是 AI 结论记录，不是对话会话）
+    const sessions = rows.filter(s => s.source !== 'note');
+    const notes = rows.filter(s => s.source === 'note');
+    for (const s of sessions) {
       console.log(`${pc.dim(fmtDate(s.last_event_at ?? s.created_at))}  ${s.source.padEnd(11)} ${stateBadge(s.state).padEnd(10)} 「${(s.title ?? '').slice(0, 36)}」 ${pc.dim(`${s.id} · ${s.message_count}msg`)}`);
+    }
+    if (notes.length > 0) {
+      console.log(pc.dim(`\n── AI 笔记（${notes.length} 条，srelay list --source note 查看）──`));
+      for (const s of notes) {
+        console.log(`${pc.dim(fmtDate(s.created_at))}  📝 「${(s.title ?? '').slice(0, 40)}」 ${pc.dim(s.id)}`);
+      }
     }
   } finally {
     db.close();
