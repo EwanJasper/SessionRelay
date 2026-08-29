@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { runSync } from '../../src/capture/sync.js';
+import { resetConn } from '../../src/adapters/zcode/index.js';
 import { runJudge } from '../../src/capture/judge.js';
 import { createDb, countsByState, listSessions, getSession, countMessages } from '../../src/store/db.js';
 import { defaultConfig, type RelayConfig } from '../../src/shared/config.js';
@@ -24,6 +25,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  resetConn(); // 释放 ZCode 缓存连接（否则 Windows 无法删除 db.sqlite）
   for (let i = 0; i < 3; i++) { try { fs.rmSync(TMP, { recursive: true, force: true }); return; } catch { /* retry */ } }
 });
 
