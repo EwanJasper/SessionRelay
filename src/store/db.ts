@@ -171,7 +171,7 @@ export function createDb(file: string = ':memory:'): DB {
   return db;
 }
 
-/** 打开已初始化的库（不建表；T30 探测同 createDb） */
+/** 打开已初始化的库（自动执行迁移；T30 探测同 createDb） */
 export function openExisting(file: string): DB {
   const db = new Database(file);
   db.pragma('foreign_keys = ON');
@@ -180,6 +180,18 @@ export function openExisting(file: string): DB {
   if (v > SCHEMA_VERSION) {
     db.close();
     throw new Error(`数据库由更新版本的 srelay 创建（v${v}），请升级 srelay（T30）`);
+  }
+  // 自动迁移：确保旧库升级到当前 schema
+  if (v < SCHEMA_VERSION) {
+    db.exec(DDL);
+    if (v < 2) {
+      const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+      if (!cols.some(c => c.name === 'cleanup_at')) {
+        db.exec('ALTER TABLE sessions ADD COLUMN cleanup_at TEXT');
+        db.exec('ALTER TABLE sessions ADD COLUMN original_message_count INTEGER DEFAULT 0');
+      }
+    }
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
   return db;
 }
