@@ -56,10 +56,38 @@ srelay init
 ```
 
 **init 会做什么**：
-1. 创建 `.sessionrelay/` 目录（数据库 + 配置）
-2. 创建 `.sessionrelayignore`（隐私排除规则模板）
-3. 回填最近 30 天的历史会话
-4. 邀请你试搜一个关键词（验证一切正常）
+1. 检测本机已安装的 AI 工具（跨平台路径检测）
+2. 让你选择要捕获哪些来源（交互式，或 `--sources zcode,claude-code` 指定）
+3. 创建 `.sessionrelay/` 目录（数据库 + 配置）
+4. 创建 `.sessionrelayignore`（隐私排除规则模板）
+5. 回填最近 30 天的历史会话
+6. 邀请你试搜一个关键词（验证一切正常）
+
+### 来源选择
+
+init 时会自动检测：
+
+```
+🔍 检测到以下 AI 编程工具：
+
+  ✅ Claude Code          ~/.claude/projects
+  ✅ ZCode              ~/.zcode/cli/db/db.sqlite
+  ✅ Codex              ~/.codex
+  ✅ Qoder              ~/.qoder-cn
+  ⬜ Trae（部分支持）      未检测到
+
+选择要捕获的来源：
+  回车 或 A = 全选已安装的
+  逗号分隔 = 只选指定的（如 zcode,claude-code）
+>
+```
+
+跳过交互：
+
+```bash
+srelay init --sources zcode,claude-code   # 只要这两个
+srelay init --yes                          # 自动选所有已安装的
+```
 
 **回填更多历史**：
 
