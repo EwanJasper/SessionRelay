@@ -72,6 +72,15 @@ graph TB
 - **Node.js ≥ 22**（Windows / macOS / Linux）
 - 至少一个支持的 AI 编程工具
 
+### npm 安装（推荐）
+
+```bash
+npm install -g @ewanjasper/sessionrelay
+
+# 或零安装试用
+npx @ewanjasper/sessionrelay init
+```
+
 ### 从源码安装
 
 ```bash

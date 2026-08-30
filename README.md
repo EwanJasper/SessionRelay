@@ -99,9 +99,15 @@
 要求 **Node ≥ 22**（Windows / macOS / Linux）：
 
 ```bash
+# 方式一：npm 安装（推荐）
+npm install -g @ewanjasper/sessionrelay
+
+# 方式二：零安装试用
+npx @ewanjasper/sessionrelay init
+
+# 方式三：从源码
 git clone https://github.com/EwanJasper/SessionRelay.git
-cd SessionRelay && npm install && npm run build
-npm link                 # 之后全局可用 srelay 命令
+cd SessionRelay && npm install && npm run build && npm link
 ```
 
 ### 初始化项目
