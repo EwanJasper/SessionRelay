@@ -8,7 +8,7 @@ export default defineConfig({
   target: 'node18',
   outDir: 'dist',
   outFile: 'srelay.js',
-  sourcemap: true,
+  sourcemap: false,
   external: [
     'better-sqlite3',          // 原生（napi），随依赖安装
     '@node-rs/jieba',          // 原生（napi 预编译）

@@ -1,6 +1,6 @@
 {
   "name": "@ewanjasper/sessionrelay",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "会话接力 SessionRelay — 属于项目、不属于任何厂商的本地记忆层（跨 Agent 会话记忆 / 中文检索 / MCP / HOP 交接协议）",
   "type": "module",
   "engines": {
@@ -42,10 +42,13 @@
   },
   "files": [
     "dist",
-    "docs",
+    "docs/user-guide.md",
+    "docs/import-export-guide.md",
+    "docs/adapters/README.md",
     "spec",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "mcp",
