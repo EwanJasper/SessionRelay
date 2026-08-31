@@ -30,10 +30,80 @@
 2. **按需查询**（pull）：AI 不问就不查 → 上下文干净，不被无关记忆污染
 3. **原文可回跳**：AI 拿到的是原始对话全文，不是压缩摘要——决策的"为什么"完整保留
 
+## 架构总览
+
+你和任何 AI 工具聊的内容，被统一收进一个项目级数据库；你、AI、同事都能查。换工具不丢记忆，换人可交接。
+
+```mermaid
+graph TB
+    subgraph Sources["🖥️ 你的 AI 编程工具（各聊各的）"]
+        CC["Claude Code<br/>JSONL 文件"]
+        ZC["ZCode<br/>SQLite 数据库"]
+        CX["Codex<br/>JSONL 文件"]
+        QD["Qoder<br/>JSONL 文件"]
+        TR["Trae<br/>部分支持*"]
+    end
+
+    subgraph Relay["🧠 会话接力（本地记忆层）"]
+        DAEMON["守护进程 watch<br/>每 30 秒自动同步"]
+        DB[("relay.sqlite<br/>统一记忆库")]
+        EXTRACT["结构化提取器<br/>决策 · 话题 · 摘要 · 关键往返"]
+    end
+
+    subgraph Consumers["👥 谁来查询记忆"]
+        YOU["你（CLI）<br/>search · decisions · history"]
+        AGENT["AI Agent（MCP）<br/>15 个工具"]
+        TEAM["同事（HOP 交接包）<br/>export → import"]
+    end
+
+    CC -->|adapter| DAEMON
+    ZC -->|adapter| DAEMON
+    CX -->|adapter| DAEMON
+    QD -->|adapter| DAEMON
+    TR -.->|仅用户提问| DAEMON
+    DAEMON --> DB
+    DB --> EXTRACT
+    DB --> YOU
+    DB --> AGENT
+    DB --> TEAM
+
+    style Relay fill:#1a1a2e,color:#e94560
+    style Sources fill:#16213e,color:#fff
+    style Consumers fill:#0f3460,color:#fff
+```
+
+> \* Trae 的 AI 回复端到端加密，仅能采集用户提问。其他工具不在列表里？写一个[自定义适配器](docs/adapters/README.md)即可，零改核心代码。
+
+## 记忆的生命周期
+
+每个会话在记忆库中经历两阶段判定，**宁可多等，不固化没聊完的对话**：
+
+```mermaid
+stateDiagram-v2
+    [*] --> active: 对话开始/守护捕获
+    active --> pending_end: 超过10分钟没新消息
+    pending_end --> active: 你回来继续聊（复活）
+    pending_end --> confirmed: 安静超过6小时
+    active --> active: 新消息追加
+    confirmed --> active: 追加新消息（回滚+摘要重算）
+    confirmed --> archived: srelay archive（归档）
+    archived --> active: 新消息到达（复活）
+
+    confirmed: ✅ 已固化
+    confirmed: 提取决策/话题/摘要
+    confirmed: 进入全文搜索主索引
+
+    archived: 📦 已归档
+    archived: 骨架保留（决策/话题）
+    archived: 正文已释放（99.4%空间）
+```
+
+**为什么需要中间的 pending 状态**：对话可以复活（第二天 `--resume` 继续）。如果直接固化，提取的决策就是残缺的。pending 是 6 小时缓冲带；就算固化了，追加消息也会自动回滚重算。原始会话文件是唯一事实源——库里任何时候都能 `srelay rebuild` 重建。
+
 ## 核心能力
 
 ### 🖥️ 被动捕获（零打扰）
-- **双源适配**：Claude Code（JSONL）+ ZCode（SQLite，国产一手适配）
+- **五源适配**：Claude Code · ZCode · Codex · Qoder（完整支持）+ Trae（部分：仅用户提问）+ [自定义适配器](docs/adapters/README.md)（加一个 JS 文件接入新工具，零改核心代码）
 - **三档隐私**：`full`（默认） / `meta`（只存元数据） / `off`（仅手动）
 - **`.sessionrelayignore` 硬边界**：隐私排除对自动捕获、手动 save、导出全部生效
 - **两阶段判定**：`active → pending_end → confirmed`，resume 自动回滚，原始会话文件是唯一事实源（库随时可 `rebuild`）
@@ -94,6 +164,26 @@
 - HANDOFF.md 自动生成（决策表 / 涉及文件 / 未解决问题 / 时间线 / 页脚署名）
 - **跨项目导入**：交接包可导入到任何路径/名称的项目（自动归化，`origin_project` 溯源）
 
+一次真实的交接是这样流动的：
+
+```mermaid
+sequenceDiagram
+    participant 张三 as 张三（离开）
+    participant 包 as .hop 交接包
+    participant 小王 as 小王（接手）
+    participant AI as 小王的 AI
+
+    张三->>包: srelay export --all
+    Note over 包: 自动：脱敏密钥<br/>生成 HANDOFF.md<br/>逐文件 sha256
+    包->>小王: 发送文件（微信/邮件均可）
+    小王->>包: srelay import xxx.hop --from 张三
+    Note over 小王: 自动：校验完整性<br/>归化 project_id<br/>记入审计
+    小王->>AI: "为什么数据库选了 PG？"
+    AI->>包: get_decisions()
+    包-->>AI: "决定采用 PostgreSQL（出处：张三 08-20 会话）"
+    AI-->>小王: 带出处的完整回答
+```
+
 ## 快速开始
 
 要求 **Node ≥ 22**（Windows / macOS / Linux）：
@@ -147,6 +237,13 @@ srelay import xxx.hop --from 你的名字
 ```bash
 srelay watch --install-service   # Windows 注册表自启动（无需管理员）
 srelay watch --foreground        # macOS/Linux 前台运行（服务注册开发中）
+```
+
+```mermaid
+timeline
+    title 不开守护 vs 开守护
+    不开守护 : 你聊天（消息进 ZCode 库） : AI 触发上下文压缩 : 💥 消息被 ZCode 物理删除 : 你想起来跑 sync : ❌ 只能拿到压缩摘要，原文永久丢失
+    开守护 : 你聊天（消息进 ZCode 库） : 守护 30 秒内自动入库 : AI 触发压缩 : ZCode 删除消息 : 😌 没关系，原文已在记忆库 : 压缩摘要也被捕获
 ```
 
 守护的资源开销：CPU 空闲时 ≈ 0%（事件驱动），内存 ~80MB（Node.js 常驻），磁盘 I/O 增量极低，**网络零外呼**。
@@ -278,7 +375,7 @@ module.exports = {
 
 ## 质量与验证
 
-- **90/90 测试**（单元 / 集成 / MCP stdio 真握手契约 / 端到端），`npm test` 一键
+- **125 个测试**（单元 / 集成 / MCP stdio 真握手契约 / 端到端），`npm test` 一键
 - **CI 三平台 × Node 22/24 常绿**（typecheck + test + build + dist 冒烟）
 - TypeScript strict，`npm run typecheck` 零错误
 - 每阶段实机验收（含用产品自身记录了自身的诞生过程）
@@ -289,12 +386,13 @@ module.exports = {
 - 守护服务注册仅 Windows（计划任务）；macOS / Linux 用 `srelay watch` 前台运行
 - 开新会话的"自动关联重要会话"需要会话身份（branch/PID），Phase 4 落地；当前用 `attach` 手动挂载
 - 多 agent 同项目并发时 Scope 按 project+cwd 归属
+- Trae 仅部分支持：用户提问可读，AI 回复端到端加密（可用 `save_note` 补记结论）
 - 目录改名/搬迁的历史会话不被自动发现（用交接包迁移）
-- 仅支持 Claude Code 与 ZCode 两个会话源（DSH / Cursor 在路线图）
+- DSH / Cursor 等其他工具在路线图（当前可用[自定义适配器](docs/adapters/README.md)先行接入）
 
 ## 路线图（Phase 4）
 
-`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · `suggest_related_sessions`（话题重叠推荐） · DSH / Cursor / 自定义 adapter · npm 发包 · 语义检索（可选本地嵌入） · HOP 协议第三方推广
+`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · `suggest_related_sessions`（话题重叠推荐） · DSH / Cursor 官方适配 · macOS / Linux 守护服务注册 · 语义检索（可选本地嵌入） · HOP 协议第三方推广
 
 ## 文档
 
