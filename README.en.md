@@ -9,17 +9,9 @@ You spent three days settling an architecture with your AI. That shouldn't vanis
 
 ## 60-second demo
 
-<!-- ▶ To embed native players (one-time, ~10s): edit this file on github.com, drag sessionrelay-en.mp4 below the "English" heading (GitHub auto-inserts a user-attachments link that renders as a player); same for sessionrelay-final.mp4 under 中文版. Then remove this comment and the two ▶ text links -->
+![SessionRelay demo](assets/demo-en.gif)
 
-**English**
-
-[▶ Play in browser (66s)](https://github.com/EwanJasper/SessionRelay/releases/download/v0.2.2/sessionrelay-en.mp4)
-
-**中文版**
-
-[▶ 在浏览器中播放（66 秒）](https://github.com/EwanJasper/SessionRelay/releases/download/v0.2.2/sessionrelay-final.mp4)
-
-Vertical (9:16) and female-voice versions: [Releases · v0.2.2](https://github.com/EwanJasper/SessionRelay/releases/tag/v0.2.2)
+The GIF is silent — full narrated versions (English / 中文, plus a 9:16 vertical cut) are playable directly on the [Releases · v0.2.2](https://github.com/EwanJasper/SessionRelay/releases/tag/v0.2.2) page.
 
 ## What it solves
 
