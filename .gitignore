@@ -7,3 +7,11 @@ test/.tmp/
 .sessionrelay/
 *.hop
 .sessionrelayignore.local
+
+# 过程性内部资料（本地保留，不入库）：阶段报告 + 第三方存储格式逆向笔记
+docs/spike-report-p0.md
+docs/phase1-report.md
+docs/phase2-report.md
+docs/phase3-report.md
+docs/phase35-report.md
+docs/adapters/zcode-format.md
