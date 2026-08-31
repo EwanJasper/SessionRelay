@@ -3,6 +3,12 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.2.3] - 2026-08-31
+
+### 修复
+- MCP 握手 `serverInfo.version` 与 `srelay --version` 改为读取 `package.json`（此前硬编码 `0.1.0` / `0.2.0`，与实际版本脱节，误导排障）
+- `srelay doctor` 的 Node 版本检查从 ≥18 对齐为 ≥22（与 engines 声明一致；better-sqlite3 / jieba 预编译按新 ABI 分发，旧版 Node 会以难排查的方式失败）
+
 ## [0.2.2] - 2026-08-31
 
 ### 文档

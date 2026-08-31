@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // srelay 入口（技术方案 T15：懒加载保启动预算）
 import { Command } from 'commander';
+import pkg from '../../package.json' with { type: 'json' };
+const VERSION: string = pkg.version;
 
 const program = new Command();
 program
   .name('srelay')
   .description('会话接力 SessionRelay — 属于项目、不属于任何厂商的本地记忆层')
-  .version('0.2.0');
+  .version(VERSION);
 
 program
   .command('init')

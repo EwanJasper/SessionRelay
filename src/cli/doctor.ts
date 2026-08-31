@@ -16,9 +16,9 @@ interface Check { name: string; level: Level; detail: string; fix?: string }
 export async function cmdDoctor(): Promise<void> {
   const checks: Check[] = [];
 
-  // 1 Node 版本
+  // 1 Node 版本（engines 要求 >=22；better-sqlite3/jieba 预编译按新 ABI 分发）
   const [maj] = process.versions.node.split('.').map(Number);
-  checks.push(maj >= 18 ? c('Node 运行时', 'ok', `v${process.versions.node}`) : c('Node 运行时', 'err', `v${process.versions.node} < 18`, '升级 Node'));
+  checks.push(maj >= 22 ? c('Node 运行时', 'ok', `v${process.versions.node}`) : c('Node 运行时', 'err', `v${process.versions.node} < 22（engines 要求）`, '升级 Node 至 22+'));
 
   // 2 FTS5
   try {

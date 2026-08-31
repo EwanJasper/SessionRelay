@@ -17,6 +17,8 @@ import { runExport, runExportMarkdown } from '../relay/export.js';
 import { runImport, runRelease } from '../relay/import.js';
 import { ZipSlipError, IntegrityError } from '../relay/hop.js';
 import path from 'node:path';
+import pkg from '../../package.json' with { type: 'json' };
+const VERSION: string = pkg.version;
 import type { ScopePredicate } from '../core/scope/evaluator.js';
 import { compilePredicate } from '../core/scope/evaluator.js';
 import { assembleScope } from '../core/scope/assemble.js';
@@ -55,7 +57,7 @@ function sessionBrief(db: DB, sessionId: string) {
 
 export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
   const project = cfg.identity.project_id ?? root;
-  const server = new McpServer({ name: 'sessionrelay', version: '0.1.0' });
+  const server = new McpServer({ name: 'sessionrelay', version: VERSION });
 
   /** 命中不足提示（方针 §6.4）：返回 scope 外还有多少可用 */
   const buildHint = (callPred: ScopePredicate, hitCount: number): string | null => {
