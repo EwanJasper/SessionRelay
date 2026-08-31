@@ -1,5 +1,7 @@
 # 会话接力 SessionRelay
 
+简体中文 | [English](./README.en.md)
+
 > **属于项目、不属于任何厂商的本地记忆层。**
 > Memory is always complete. Retrieval is always yours to shape.
 > 记忆始终完整收录；检索边界由你划定。
