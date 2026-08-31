@@ -20,6 +20,14 @@ npm run typecheck # tsc --noEmit
 - `npm test` + `npm run typecheck` 必须全绿
 - CI 会跑三平台 × Node 22/24 矩阵
 
+## 设计决策文档
+
+PR 引用决策编号（D20 / T34）时，出处在这里：
+
+- [产品与技术指导方针 v3.1](docs/product/sessionRelay-指导方针v3.1.md)——25 条产品决策 D1-D25
+- [技术方案 v1.1](docs/product/sessionRelay-技术方案v1.1.md)——38 条技术决策 T1-T38
+- [MCP 上下文安全设计笔记](docs/design-notes-mcp-context-safety.md)——会话级存储 vs 碎片存储、反幻觉架构
+
 ## 贡献方向
 
 ### 🤖 编写新适配器

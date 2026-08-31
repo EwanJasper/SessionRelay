@@ -396,21 +396,11 @@ module.exports = {
 
 ## 文档
 
-### 使用指南
 - **[用户手册](docs/user-guide.md)**——从安装到团队交接的完整指南（所有用户必读）
 - [导入导出实操指南](docs/import-export-guide.md)——项目交接 / 新人入职 / 安全导入 / 跨项目迁移 / 定期归档，五个场景完整命令
 - [Adapter SDK](docs/adapters/README.md)——如何编写自定义适配器（7 行代码接入新 AI 工具）
-
-### 设计文档
-- [产品与技术指导方针 v3.1](docs/product/sessionRelay-指导方针v3.1.md)（25 条决策日志 D1-D25）
-- [技术方案 v1.1](docs/product/sessionRelay-技术方案v1.1.md)（38 条技术决策 T1-T38）
-- [HOP 交接协议规格 hop/1.0](spec/hop-1.0.md)（开放格式，MIT）
+- [HOP 交接协议规格 hop/1.0](spec/hop-1.0.md)——开放格式（MIT），欢迎第三方实现读取器
 - [隐私与数据生命周期](docs/privacy-and-lifecycle-design.md)——三层隐私模型（预防/归档/删除）+ 归档机制设计
-- [MCP 上下文安全设计笔记](docs/design-notes-mcp-context-safety.md)——会话级存储 vs 碎片存储、反幻觉架构、渐进披露漏斗
-
-### 内部资料
-- 阶段报告：[P0](docs/spike-report-p0.md) · [P1](docs/phase1-report.md) · [P2](docs/phase2-report.md) · [P3](docs/phase3-report.md) · [P3.5](docs/phase35-report.md)
-- [ZCode 存储格式逆向笔记](docs/adapters/zcode-format.md)
 
 ## License
 
