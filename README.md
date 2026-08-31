@@ -8,6 +8,20 @@
 
 你和 AI 聊了 3 天的方案，不应该随关窗消失。它属于项目，属于下一个接手的人。
 
+## 60 秒演示
+
+<!-- ▶ 内嵌播放器设置（一次性，约 10 秒）：在 GitHub 网页端编辑本文件，将 sessionrelay-final.mp4 拖入到下方"中文版"标题下，会自动插入一行 user-attachments 链接并渲染成原生播放器；英文版同理拖入 sessionrelay-en.mp4。完成后删除本注释和两条 ▶ 文字链接 -->
+
+**中文版**
+
+[▶ 在浏览器中播放（66 秒）](https://github.com/EwanJasper/SessionRelay/releases/download/v0.2.2/sessionrelay-final.mp4)
+
+**English version**
+
+[▶ Play in browser (66s)](https://github.com/EwanJasper/SessionRelay/releases/download/v0.2.2/sessionrelay-en.mp4)
+
+竖版（手机/短视频平台）与女声版：[Releases · v0.2.2](https://github.com/EwanJasper/SessionRelay/releases/tag/v0.2.2)
+
 ## 它解决什么
 
 | 痛点 | 会话接力的答案 |
