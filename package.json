@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "e2e:pack": "node scripts/pack-e2e.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "s1": "vitest run test/unit/tokenize test/integration/search.spec.ts",
