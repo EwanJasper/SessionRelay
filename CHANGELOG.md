@@ -3,6 +3,13 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.2.4] - 2026-09-01
+
+### 测试
+- 新增发布产物冒烟套件：直接测试 `dist/srelay.js`（用户实际运行的文件），覆盖 `--version`/`init`/MCP 握手，断言版本与 `package.json` 一致（运行时无变更）
+- 新增 `npm run e2e:pack`：npm pack → 全新目录真实安装 → bin → init/status → MCP 握手的端到端验证
+- CI 三平台（ubuntu/windows/macos）挂载 pack-e2e，并修正 test/build 顺序使产物冒烟真正生效
+
 ## [0.2.3] - 2026-08-31
 
 ### 修复
