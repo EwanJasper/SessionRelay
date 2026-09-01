@@ -16,7 +16,7 @@
     "s4": "vitest run test/unit/scope",
     "s5": "vitest run test/integration/capture.spec.ts",
     "build": "tsup",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.0",
