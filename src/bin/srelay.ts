@@ -53,6 +53,19 @@ program
   .action(async (f) => { const { cmdRebuild } = await import('../cli/maint.js'); await cmdRebuild(f); });
 
 program
+  .command('forget [id]')
+  .description('彻底遗忘：整条会话（含决策）从本库消失，永不复活（空间老化用 archive，彻底消失用 forget）')
+  .option('--session <id>', '限定捕获会话（防误删笔记）')
+  .option('--note <id>', '限定笔记')
+  .option('--all', '整库重置（需 --confirm <projectId>，守护运行中拒绝）')
+  .option('--confirm <projectId>', '--all 的逐字确认（本项目 id）')
+  .option('--yes', '执行（无 --yes 仅预览）')
+  .option('--history', '查看遗忘审计')
+  .option('--verbose', '审计展开明细')
+  .option('--json', '机器格式')
+  .action(async (id: string | undefined, f) => { const { cmdForget } = await import('../cli/forget.js'); await cmdForget(f, id); });
+
+program
   .command('status')
   .description('透明度面板：模式/守护/计数/拦截/体积')
   .option('--json')
@@ -233,7 +246,7 @@ program
   .option('--size <n>mb', 'DB 超过此值时归档')
   .option('--source <s>', '只归档此来源')
   .option('--sessions <ids>', '归档指定会话（逗号分隔）')
-  .option('--hard', '硬删除（含决策，不可恢复）')
+  .option('--hard', '硬删除（含决策，不可恢复）。注意：--hard 无防复活闸，源文件可能被 sync 重新收录；若需永不回来，用 srelay forget')
   .option('--dry-run', '只预览不执行')
   .option('--history', '查看归档历史')
   .option('--verbose', '历史详细模式')

@@ -84,8 +84,27 @@ try {
   if (si.name !== 'sessionrelay' || si.version !== pkg.version) fail(`serverInfo=${JSON.stringify(si)} ≠ ${pkg.version}`);
   const tools = await client.listTools();
   if (tools.tools.length !== 15) fail(`工具数 ${tools.tools.length} ≠ 15`);
+  const call = async (name, args = {}) => {
+    const res = await client.callTool({ name, arguments: args });
+    const text = res.content?.[0]?.text ?? '{}';
+    return JSON.parse(text);
+  };
+  // 6) 用户路径④（forget G4）：save_note 造一条 → CLI forget 彻底删除 → 审计可查
+  const note = await call('save_note', { title: 'pack-e2e 遗忘验证', content: '决定验证 forget 真实安装路径后删除本笔记。' });
+  if (!note.ok) fail(`save_note 失败：${JSON.stringify(note)}`);
   await client.close();
   log(`MCP 握手 ✓ (serverInfo ${si.name}@${si.version}, 15 tools)`);
+
+  const pv = runBin(['forget', note.sessionId, '--json'], { cwd: proj, stdio: 'pipe' });
+  const preview = JSON.parse(pv);
+  if (preview.id !== note.sessionId || preview.barriers !== false) fail(`forget 预览异常：${pv}`);
+  runBin(['forget', note.sessionId, '--yes'], { cwd: proj, stdio: 'pipe' });
+  const hist = runBin(['forget', '--history', '--verbose'], { cwd: proj, stdio: 'pipe' });
+  if (!hist.includes('note') || !hist.includes('1 会话')) fail(`forget --history 无删除记录：${hist}`);
+  // 删除后 search 不命中
+  const search = runBin(['search', '遗忘验证', '--json'], { cwd: proj, stdio: 'pipe' });
+  if (JSON.parse(search).hits?.some?.((h) => h.sessionId === note.sessionId)) fail('forget 后 note 仍可被检索');
+  log('forget save_note→预览→删除→审计 ✓');
 
   console.log(`\n[pack-e2e] ✓ 全部通过 —— 真实安装路径在本机（${process.platform}/node ${process.versions.node.split('.')[0]}）验证无误`);
 } finally {

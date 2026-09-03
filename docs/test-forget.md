@@ -156,3 +156,23 @@ C4/C5 的执行取决于开放点 1 的裁决（允许复活=按预期行为断�
 | 10 | C 系复活对抗用"直插 DB 会话"测不了——无源文件则 sync 根本发现不了它，写出来是假绿 | contract fixture 手法 + adapter.discover 语义 | 新增 §I：复活对抗必须造真实源文件，与功能断言的直插手法分离 |
 | 11 | 场景串联漏路径：删后用户 `srelay save` 主动重存同一会话——ignore 会拦住人工操作，双向语义未定义 | save→captureSessions→sync.ts:117 ignore 检查 | 新增 C7（预期拦截+必须提示，禁止静默 0） |
 | 12 | 前置构造规格散落各用例（DiscoveredSession 字段、FTS 校验语法、 fixture 手法），执行者要反查代码 | types.ts:59 / 【EXP-VERIFIED】 | 集中为 §I 构造规格表 + §J 验收动线（四步门禁） |
+
+---
+
+## 执行记录（0.2.5 开发期回填；正文 v3 用例编号保持原样）
+
+**自动化落地：`test/forget/` 四文件 43 例全绿 + 全仓 171 例全绿 + pack-e2e（含 forget 环节）本机通过。**
+
+- functional.spec.ts：A1-A5、B1/B2b/B4/B5/B6/B7/B8/B9、D1-D4、F1/F3/F4/F5/F6(并入 D12)、G1/G1b/G5/G6/G7
+- resurrection.spec.ts：C1/C2/C3/C4（按开放点 1 默认裁决断言"复活=预期"）/C5a(JSONL)/C5b(SQLite)/C6/C7 + 幂等补充
+- concurrency.spec.ts：E1（12→14 拒绝）/E2（重跑预览后执行）/E3/E4（双连接 WAL）
+- all-reset.spec.ts：D5-D11 + 空库二次 --all 幂等
+
+与 v3 用例的出入（以代码事实为准，见设计文档 §10）：
+
+1. **F6 修订**：transfer_log 无 FK（审计表，session_ids 为 JSON 文本）——"关联行消失"与 schema 不符；实际行为=行保留且不悬挂（D12 验证 forget 后 export 正常），按此断言。
+2. **A3 断言精确化**：墓碑判定=needsBarriers（origin≠imported 且 source≠note），A3/F1 断言"不新增墓碑"而非全表为 0（此前用例已有墓碑）。
+3. **E2 补充步骤**：乐观锁被拒后须重跑预览刷新快照再 --yes——此即设计语义闭环。
+4. **E5（双 CLI 竞态）**：按 §J 归入本地手动项，未自动化。
+5. **G2（恒 15 工具）**：既有契约测试 mcp.spec.ts 已含，未重复建设。
+6. **G4**：pack-e2e 新增环节——save_note→CLI 预览(--json)→--yes 删除→--history 断言→search 不命中。

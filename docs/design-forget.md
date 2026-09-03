@@ -264,3 +264,16 @@ forget_log 无限增长问题：单条审计 <200B，个人项目删除频率极
 | 18 | P2 | 可发现性未定义（CLI 位置/README/AI 标准答复） | §4 文档入口三处 |
 | 19 | P2 | 预览缺年龄与保留/移除两栏（对齐 archive 视觉语言） | §3.5 预览模板 |
 | 20 | P3 | 歧义报错体验与 --history 输出密度未设计 | §3.5 表格化候选；--history 默认紧凑 |
+
+---
+
+## §10 实现落地备注（0.2.5 开发期追加；正文 v4 保持原样，以下为代码事实）
+
+> 原则：出入以代码事实为准，逐条回写。实现 = src/cli/forget.ts + store/db.ts(schema v3) + capture/ignore.ts(session: 前缀) + capture/sync.ts(复活路径)；测试 = test/forget/ 四文件 43 例。
+
+1. **§5 盲区关闭**：get_file_history / `srelay history` 均走 searchSessions（FTS JOIN sessions），不读 source_files 表——"零会话文件"路径不存在，未做任何过滤修改（测试 B9 把构造安全钉成回归基线）。
+2. **§3.6 乐观锁载体（补充设计）**：预览→--yes 是两次进程调用，diff 载体定为 `.sessionrelay/forget-pending.json` 快照（id/消息数/决策数/链接数）。--yes 时快照 id 匹配且数字变化 → 拒绝并提示重跑预览；无快照（用户直接 --yes）→ 直接执行，--yes 即确认。
+3. **§3.5 类型过滤语义**：`--session/--note` 实现为类型断言过滤器（类型不符直接拒绝，防误删）；id 解析兜底支持 source_session_id 完整匹配（note-xxx / 源会话 ID 形态），前缀歧义防护（COUNT>1 拒绝并列候选表）仅作用于内部 id 前缀。
+4. **C7 非静默提示（补充设计）**：`srelay save`（captureSessions 手动入口）命中墓碑/ignore 时向 warnings 推提示文案（"曾被 srelay forget，已拒绝重新收录"+ 恢复路径说明）；自动守护路径（runSync）保持静默计数防刷屏。
+5. **§3.7 stats.json**：--all 不动 stats.json（纯事件计数无内容泄漏）——钉死于测试 D11。
+6. **跨进程守护语义**：forget 不走 requireRoot 的懒启动守护（否则 --all 会被自己拉起的守护永久阻塞）；写命令与守护并发靠单事务 + busy_timeout。

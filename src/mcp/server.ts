@@ -295,7 +295,7 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
   }, async (args) => {
     const id = createNoteSession(db, { projectId: project, title: args.title, content: args.content, tags: args.tags });
     insertScopeLog(db, 'note', { id, title: args.title }, 'mcp:save_note');
-    return toolOut({ ok: true, sessionId: id, source: 'note', state: 'confirmed', note: '笔记已可被 search / get_decisions / export 检索' });
+    return toolOut({ ok: true, sessionId: id, source: 'note', state: 'confirmed', note: '笔记已可被 search / get_decisions / export 检索；可由用户以 srelay forget 移除' });
   });
 
   server.registerTool('export_handoff', {

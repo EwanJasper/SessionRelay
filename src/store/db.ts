@@ -9,7 +9,7 @@ export { dbFile } from '../shared/paths.js';
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -145,6 +145,38 @@ CREATE TABLE IF NOT EXISTS cleanup_detail (
 );
 CREATE INDEX IF NOT EXISTS idx_cleanup_detail_log ON cleanup_detail(cleanup_log_id);
 CREATE INDEX IF NOT EXISTS idx_cleanup_detail_session ON cleanup_detail(session_id);
+
+-- ═══════════ v3：遗忘（srelay forget，设计 v4 §3.2/§3.4） ═══════════
+-- 墓碑：防复活次级防线（主防线是 .sessionrelayignore 的 session: 规则，跨 rebuild 存活；
+-- 墓碑随库走，rebuild 后消失——故只是 ignore 被用户清理后的兜底）
+CREATE TABLE IF NOT EXISTS forget_tombstones (
+  source            TEXT NOT NULL,
+  source_session_id TEXT NOT NULL,
+  forgot_at         TEXT NOT NULL,
+  PRIMARY KEY (source, source_session_id)
+);
+
+-- 审计：删除本身被永久记住（先例：cleanup_log/cleanup_detail）。
+-- 规范决策（设计 v4 §3.4 评审 A1）：forget_detail.session_id 为裸 TEXT、故意无外键——
+-- 被删行的 id 必须留在审计里，审计链自身永不删除。禁止后续"补上 FK"（会级联破坏审计）。
+CREATE TABLE IF NOT EXISTS forget_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  triggered_by      TEXT NOT NULL,
+  mode              TEXT NOT NULL,
+  criteria          TEXT NOT NULL,
+  sessions_affected INTEGER NOT NULL,
+  messages_affected INTEGER NOT NULL,
+  created_at        TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS forget_detail (
+  forget_log_id INTEGER NOT NULL REFERENCES forget_log(id) ON DELETE CASCADE,
+  session_id    TEXT NOT NULL,
+  title         TEXT,
+  source        TEXT,
+  message_count INTEGER,
+  created_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_forget_detail_log ON forget_detail(forget_log_id);
 `;
 
 export function createDb(file: string = ':memory:'): DB {
@@ -527,6 +559,51 @@ export function insertCleanupDetail(db: DB, o: {
   db.prepare(
     'INSERT INTO cleanup_detail (cleanup_log_id, session_id, title, source, message_count, decision_count, created_at) VALUES (?,?,?,?,?,?,?)'
   ).run(o.cleanupLogId, o.sessionId, o.title, o.source, o.messageCount, o.decisionCount, new Date().toISOString());
+}
+
+// ── 遗忘：墓碑与审计（设计 v4 §3.2/§3.4；MCP 永不获得删除能力） ──
+
+/** 整表一次载入（规范形态，评审 A2：禁止 per-session 点查——常态 <100 行，Set 常驻零成本） */
+export function loadTombstones(db: DB): Set<string> {
+  const rows = db.prepare('SELECT source, source_session_id FROM forget_tombstones').all() as Array<{ source: string; source_session_id: string }>;
+  return new Set(rows.map((r) => `${r.source}:${r.source_session_id}`));
+}
+
+export function insertTombstone(db: DB, source: string, sourceSessionId: string, at: string): void {
+  db.prepare('INSERT OR REPLACE INTO forget_tombstones (source, source_session_id, forgot_at) VALUES (?,?,?)')
+    .run(source, sourceSessionId, at);
+}
+
+export function insertForgetLog(db: DB, o: { triggeredBy: string; mode: string; criteria: string }): number {
+  return Number(db.prepare(
+    'INSERT INTO forget_log (triggered_by, mode, criteria, sessions_affected, messages_affected, created_at) VALUES (?,?,?,?,?,?)'
+  ).run(o.triggeredBy, o.mode, o.criteria, 0, 0, new Date().toISOString()).lastInsertRowid);
+}
+
+export function finalizeForgetLog(db: DB, id: number, sessionsAffected: number, messagesAffected: number): void {
+  db.prepare('UPDATE forget_log SET sessions_affected = ?, messages_affected = ? WHERE id = ?')
+    .run(sessionsAffected, messagesAffected, id);
+}
+
+export function insertForgetDetail(db: DB, o: {
+  forgetLogId: number; sessionId: string; title: string | null; source: string;
+  messageCount: number; createdAt: string | null;
+}): void {
+  db.prepare(
+    'INSERT INTO forget_detail (forget_log_id, session_id, title, source, message_count, created_at) VALUES (?,?,?,?,?,?)'
+  ).run(o.forgetLogId, o.sessionId, o.title, o.source, o.messageCount, o.createdAt);
+}
+
+export function getForgetHistory(db: DB, opts?: { verbose?: boolean; logId?: number }): Array<Record<string, unknown>> {
+  if (opts?.logId) {
+    return db.prepare('SELECT session_id, title, source, message_count, created_at FROM forget_detail WHERE forget_log_id = ?').all(opts.logId) as Array<Record<string, unknown>>;
+  }
+  const logs = db.prepare('SELECT * FROM forget_log ORDER BY id DESC').all() as Array<Record<string, unknown>>;
+  if (!opts?.verbose) return logs;
+  return logs.map((l) => ({
+    ...l,
+    details: db.prepare('SELECT session_id, title, source, message_count FROM forget_detail WHERE forget_log_id = ?').all(l.id),
+  }));
 }
 
 // ── 会话关联（P3-A 提前落地：link/get_linked 由 MCP 工具驱动） ──

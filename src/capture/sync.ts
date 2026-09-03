@@ -1,6 +1,6 @@
 // 捕获同步引擎（技术方案 §5.1 / 改进方案 改动1 注册表化 + 改动3 compaction 警告）
 import { createDb, upsertCapturedSession, insertMessage, rollbackSession,
-         bumpMessageCount, getCursor, recordCursor } from '../store/db.js';
+         bumpMessageCount, getCursor, recordCursor, loadTombstones } from '../store/db.js';
 import type { DB } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
 import { projectIdOf, dbFile } from '../shared/paths.js';
@@ -52,6 +52,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   const db = opts.db ?? createDb(dbFile(root));
   const projectId = cfg.identity.project_id ?? projectIdOf(root);
   const ignoreRules = loadIgnoreRules(root);
+  // forget 防复活次级防线（设计 v4 §3.2）：入口整表载入一次，ingest 内 Set 判定
+  const tombstones = loadTombstones(db);
   const backfillCutoffMs = opts.backfillDays
     ? (opts.now ?? new Date()).getTime() - opts.backfillDays * 86400_000
     : -Infinity;
@@ -71,14 +73,20 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
         result.discovered++;
         if (ds.mtimeMs < backfillCutoffMs) continue;
 
+        // 墓碑（forget 次级防线）：被遗忘会话的新字节直接丢弃，游标也不推进
+        if (tombstones.has(`${ds.source}:${ds.sourceSessionId}`)) {
+          result.blocked++;
+          continue;
+        }
+
         // 两层 ignore
-        if (isSessionBlocked(ignoreRules, { source: ds.source, title: ds.title ?? null, sourceFile: ds.sourceFile })) {
+        if (isSessionBlocked(ignoreRules, { source: ds.source, sourceSessionId: ds.sourceSessionId, title: ds.title ?? null, sourceFile: ds.sourceFile })) {
           result.blocked++;
           opts.stats?.increment('blocked_by_ignore');
           continue;
         }
 
-        await ingestOne(db, ds, { mode, projectId, cfg, result, stats: opts.stats, ignoreRules, source, aConfig });
+        await ingestOne(db, ds, { mode, projectId, cfg, result, stats: opts.stats, ignoreRules, tombstones, source, aConfig });
       }
     }
   } finally {
@@ -110,18 +118,26 @@ export async function captureSessions(opts: {
   const cfg = opts.config;
   const result: SyncStats = { mode: 'manual', discovered: opts.sessions.length, newSessions: 0, newMessages: 0, resumed: 0, badLines: 0, blocked: 0, warnings: [] };
   const ignoreRules = loadIgnoreRules(opts.projectRoot);
+  const tombstones = loadTombstones(opts.db);
   const projectId = cfg.identity.project_id ?? projectIdOf(opts.projectRoot);
   ensureRegistered(opts.projectRoot);
 
   for (const ds of opts.sessions) {
-    if (isSessionBlocked(ignoreRules, { source: ds.source, title: ds.title ?? null, sourceFile: ds.sourceFile })) {
+    if (tombstones.has(`${ds.source}:${ds.sourceSessionId}`)) {
+      result.blocked++;
+      // C7：save 命中遗忘闸必须非静默（用户在场）；自动守护路径（runSync）只计数防刷屏
+      result.warnings.push(`会话「${ds.title ?? ds.sourceSessionId}」曾被 srelay forget，已拒绝重新收录（如确需恢复：删除墓碑表对应行与 .sessionrelayignore 的 session: 规则后 rebuild）`);
+      continue;
+    }
+    if (isSessionBlocked(ignoreRules, { source: ds.source, sourceSessionId: ds.sourceSessionId, title: ds.title ?? null, sourceFile: ds.sourceFile })) {
       result.blocked++;
       opts.stats?.increment('blocked_by_ignore');
+      result.warnings.push(`会话「${ds.title ?? ds.sourceSessionId}」被忽略规则拦截（.sessionrelayignore），未存储`);
       continue;
     }
     const adapter = get(ds.source);
     if (!adapter) { result.warnings.push(`未知源：${ds.source}`); continue; }
-    await ingestOne(opts.db, ds, { mode: 'full', projectId, cfg, result, stats: opts.stats, ignoreRules, source: ds.source, aConfig: adapterConfig(cfg, ds.source), origin: 'manual' });
+    await ingestOne(opts.db, ds, { mode: 'full', projectId, cfg, result, stats: opts.stats, ignoreRules, tombstones, source: ds.source, aConfig: adapterConfig(cfg, ds.source), origin: 'manual' });
   }
   return result;
 }
@@ -129,10 +145,16 @@ export async function captureSessions(opts: {
 async function ingestOne(
   db: DB,
   ds: DiscoveredSession,
-  ctx: { mode: string; projectId: string; cfg: RelayConfig; result: SyncStats; stats?: StatsCounter; ignoreRules: string[]; source: string; aConfig: import("../adapters/types.js").AdapterConfig; origin?: 'auto' | 'manual' },
+  ctx: { mode: string; projectId: string; cfg: RelayConfig; result: SyncStats; stats?: StatsCounter; ignoreRules: string[]; tombstones: Set<string>; source: string; aConfig: import("../adapters/types.js").AdapterConfig; origin?: 'auto' | 'manual' },
 ): Promise<void> {
   const adapter = get(ds.source);
   if (!adapter) return;
+
+  // 墓碑（forget 次级防线）：读都不读，直接丢弃（主防线 session: ignore 在入口已挡）
+  if (ctx.tombstones.has(`${ds.source}:${ds.sourceSessionId}`)) {
+    ctx.result.blocked++;
+    return;
+  }
 
   const cursorBefore = getCursor(db, ds.source, ds.sourceFile);
   const read = await adapter.readNew(ds, cursorBefore, ctx.aConfig);
@@ -164,7 +186,7 @@ async function ingestOne(
     : ds.updatedAt ?? new Date().toISOString();
 
   // 两层 ignore：入库前 title 复查（用已导入的 isSessionBlocked，不用动态 import）
-  if (isSessionBlocked(ctx.ignoreRules, { source: ds.source, title: ds.title ?? firstUserTitle, sourceFile: ds.sourceFile })) {
+  if (isSessionBlocked(ctx.ignoreRules, { source: ds.source, sourceSessionId: ds.sourceSessionId, title: ds.title ?? firstUserTitle, sourceFile: ds.sourceFile })) {
     ctx.result.blocked++;
     ctx.stats?.increment('blocked_by_ignore');
     db.transaction(() => recordCursor(db, ds.source, ds.sourceFile, read.cursor, { badLines: read.badLines }))();
