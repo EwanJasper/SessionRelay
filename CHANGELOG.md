@@ -3,6 +3,26 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.2.5] - 2026-09-03
+
+### 新增
+- **遗忘权 `srelay forget`**：删除权交还给人——整条会话（含决策）从本库彻底消失，AI/MCP 保持零删除能力（工具恒 15 个）
+  - 两阶段确认：无 `--yes` 仅预览（年龄/移除/保留/双向链接对方/imported 警示），`--yes` 单事务执行
+  - **双防复活闸**：`.sessionrelayignore` 新增 `session:<source>/<sid>` 精确规则（主防线，跨 rebuild 存活）+ 墓碑表（次级防线）——原始文件还在磁盘，但本库永不重新收录
+  - 前缀歧义防护：多命中时列出候选表格拒绝执行，绝不静默猜一个
+  - 乐观锁：预览到执行之间数据变化（如守护新捕消息）→ 重统计 diff 拒绝执行
+  - `--all` 整库重置：守护运行中拒绝 + `--confirm <projectId>` 逐字确认 + `forgot-at-<ts>.txt` 库外摘要
+  - `--history` / `--history --verbose`：遗忘审计永久可查
+- schema v3：`forget_tombstones` / `forget_log` / `forget_detail`（旧库打开自动迁移，降级打开明确报错）
+
+### 变更
+- `save_note` 返回话术补充"可由用户以 srelay forget 移除"；`archive --hard` 帮助引导 forget（防复活缺口明示）
+- README 新增「遗忘权」小节（含 archive 与 forget 选型口诀）
+- `srelay save` 命中遗忘闸时给出非静默提示（曾被 forget 的会话不会被静默吞掉）
+
+### 测试
+- 新增 `test/forget/` 43 用例（按三轮迭代的测试用例集 v3）：功能/检索不命中/误用防护/并发乐观锁/整库重置，以及**防复活对抗**——用真实源文件（JSONL 字节游标 + SQLite rowid 游标双源型）验证删后增量 sync、rebuild、手动 save 三条路径均不复活
+
 ## [0.2.4] - 2026-09-01
 
 ### 测试
