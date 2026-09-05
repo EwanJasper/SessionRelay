@@ -1,6 +1,6 @@
 {
   "name": "@ewanjasper/sessionrelay",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "会话接力 SessionRelay — 属于项目、不属于任何厂商的本地记忆层（跨 Agent 会话记忆 / 中文检索 / MCP / HOP 交接协议）",
   "type": "module",
   "engines": {
@@ -16,7 +16,7 @@
     "s3": "vitest run test/unit/state",
     "s4": "vitest run test/unit/scope",
     "s5": "vitest run test/integration/capture.spec.ts",
-    "build": "tsup",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "prepublishOnly": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
