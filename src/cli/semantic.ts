@@ -68,16 +68,22 @@ export async function cmdSemantic(f: SemanticFlags): Promise<void> {
     console.log(pc.dim(`  模型 ${embedder.model} 就绪，开始回填存量 confirmed 会话...`));
     const db = openExisting(dbFile(root));
     try {
-      let total = 0;
+      let total = 0, failedTotal = 0, idleRounds = 0;
       for (;;) {
-        const n = await digestSemantic(db, loadConfig(root), { projectId: cfg.identity.project_id, limit: 50 });
-        total += n;
-        if (n === 0) break;
+        const { embedded, failed } = await digestSemantic(db, loadConfig(root), { projectId: cfg.identity.project_id, limit: 50 });
+        total += embedded;
+        failedTotal += failed;
+        if (embedded === 0) {
+          // 连续两轮零产出（毒丸全部失败或全部完成）即收——不留死循环
+          if (++idleRounds >= 2) break;
+        } else {
+          idleRounds = 0;
+        }
         process.stdout.write(`\r  已嵌入 ${total} 个会话`);
       }
       console.log('');
       const backlog = countSemanticBacklog(db, embedder.model);
-      console.log(pc.green('✓') + ` 语义检索已启用：${total} 向量 · 待嵌 ${backlog}`);
+      console.log(pc.green('✓') + ` 语义检索已启用：${total} 向量 · 待嵌 ${backlog}` + (failedTotal > 0 ? pc.yellow(` · ${failedTotal} 个失败已跳过（下个 sync/守护周期或重启进程自动重试）`) : ''));
       console.log(pc.dim('  验证：srelay semantic test "换一种说法的查询"'));
     } finally { db.close(); }
     return;

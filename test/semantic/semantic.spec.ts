@@ -102,7 +102,7 @@ describe('semantic · 融合逻辑（手工向量注入）', () => {
     resetSemanticCaches();
     try {
       // digest：confirmed 且无向量 → FakeEmbedder 嵌入
-      const n = await digestSemantic(db, cfg, { projectId: PID, limit: 10 });
+      const n = (await digestSemantic(db, cfg, { projectId: PID, limit: 10 })).embedded;
       expect(n).toBe(2);
       expect(countSemanticBacklog(db, 'fake-ci')).toBe(0);
       // 同文本高余弦："登录一直转圈" 查 "登录一直转圈"（FakeEmbedder 字符 3-gram：字符重叠→余弦高）
@@ -157,7 +157,7 @@ describe('semantic · 生命周期联动', () => {
     const cfg = cfgWith({ enabled: true, model: 'fake-ci' });
     resetSemanticCaches();
     try {
-      const n = await digestSemantic(db, cfg, { projectId: PID, limit: 10 });
+      const n = (await digestSemantic(db, cfg, { projectId: PID, limit: 10 })).embedded;
       expect(n).toBe(1); // 只有 confirmed
       expect((db.prepare('SELECT session_id FROM session_vectors').get() as { session_id: string }).session_id).toBe('conf0000000000001');
     } finally { delete process.env.SRELAY_SEMANTIC_FAKE; resetSemanticCaches(); }
@@ -171,7 +171,7 @@ describe('semantic · 生命周期联动', () => {
     const cfg = cfgWith({ enabled: true, model: 'fake-ci' });
     resetSemanticCaches();
     try {
-      const n = await digestSemantic(db, cfg, { projectId: PID, limit: 10 });
+      const n = (await digestSemantic(db, cfg, { projectId: PID, limit: 10 })).embedded;
       expect(n).toBe(2); // old-model 行不算数（model 不匹配），A 视为待嵌
       const a = db.prepare('SELECT model FROM session_vectors WHERE session_id = ?').get('aaaa000000000001') as { model: string };
       expect(a.model).toBe('fake-ci'); // 覆盖重嵌：REPLACE 顶掉 old-model（R5）

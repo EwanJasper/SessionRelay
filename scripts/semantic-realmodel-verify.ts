@@ -57,7 +57,7 @@ console.log(`模型就绪（${((Date.now() - t0) / 1000).toFixed(1)}s），维�
 void l2; void semanticInputOf;
 
 const t1 = Date.now();
-const n = await digestSemantic(db, cfg, { projectId: PID, limit: 100 });
+const n = (await digestSemantic(db, cfg, { projectId: PID, limit: 100 })).embedded;
 console.log(`回填 ${n} 会话（${((Date.now() - t1) / 1000).toFixed(1)}s，均 ${(((Date.now() - t1) / n)).toFixed(0)}ms/条）`);
 
 console.log('\nkind\tquery\t\t\t期望\t融合命中（语义分）\t结果');

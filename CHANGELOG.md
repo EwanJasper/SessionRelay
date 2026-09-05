@@ -3,6 +3,23 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-09-05
+
+### 新增
+- **语义检索（可选，`srelay semantic`）**：换一种说法也能命中——"登录"↔"认证"、"很卡"↔"性能"这类换词查询不再落空
+  - 实测依据：12 个真实感技术会话语料上，同义查询 miss 率 33% → **0%**（12/12），字面命中不劣化（5/5）
+  - 本地 CPU 推理（bge-small-zh-v1.5，Q8 约 35MB），零云端依赖；依赖与模型装在用户缓存目录 `~/.sessionrelay-semantic`，npm 包体积不变
+  - `srelay semantic enable` 一条命令：自动装依赖（国内走 npmmirror）+ 模型就绪（`HF_ENDPOINT=https://hf-mirror.com`）+ 存量回填；`disable` / `status` / `test "查询"` 对比 FTS 与融合效果
+  - **融合原则：字面优先、语义补充**——FTS 命中永不被替换，语义命中以 `viaSemantic` 标注追加在后（top-5 限量 + 余弦阈值 0.4 可调）
+  - 检索性能：5000 会话级全量余弦 2.6ms/查询（暴力扫描，无 ANN 依赖）；嵌入约 20ms/条，守护每周期限量补嵌不抢 CPU
+  - 未启用时行为与 0.2.5 完全一致（可选参数注入，MCP 恒 15 工具）；schema v3→v4 自动迁移（`session_vectors` 表，启用前恒空）
+- 生命周期联动：resume 回滚/归档时删向量（正文变了语义即过期），forget 的 CASCADE 自动清向量，换模型自动全量重嵌
+- `srelay doctor` 新增语义检查项；`srelay status` 面板新增语义状态行
+
+### 修复
+- digest 正文拼接改为 SQLite 端限量截断（前 30 条 × 200 字）——大会话不再全量拼接
+- 嵌入失败的目标自动跳过并计数（防毒丸阻塞队列），进程重启后自动重试；enable 回填循环加双轮零产出退出保护
+
 ## [0.2.5] - 2026-09-03
 
 ### 新增

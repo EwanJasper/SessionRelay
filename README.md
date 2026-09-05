@@ -399,7 +399,7 @@ module.exports = {
 
 ## 质量与验证
 
-- **125 个测试**（单元 / 集成 / MCP stdio 真握手契约 / 端到端），`npm test` 一键
+- **185 个测试**（单元 / 集成 / MCP stdio 真握手契约 / 端到端），`npm test` 一键
 - **CI 三平台 × Node 22/24 常绿**（typecheck + test + build + dist 冒烟）
 - TypeScript strict，`npm run typecheck` 零错误
 - 每阶段实机验收（含用产品自身记录了自身的诞生过程）

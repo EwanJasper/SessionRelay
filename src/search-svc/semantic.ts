@@ -176,19 +176,36 @@ export function semanticInputOf(title: string | null, bodyText: string): string 
   return `${title ?? ''}\n${bodyText}`.slice(0, MAX_INPUT_CHARS);
 }
 
-export async function digestSemantic(db: DB, cfg: RelayConfig, opts: { projectId?: string; limit?: number; log?: (s: string) => void }): Promise<number> {
+/** 毒丸自愈：嵌入失败的目标跳过（防阻塞队列头部），进程重启后自动重试 */
+const failedSkip = new Set<string>();
+const FAILED_SKIP_MAX = 1000;
+
+export async function digestSemantic(db: DB, cfg: RelayConfig, opts: { projectId?: string; limit?: number; log?: (s: string) => void }): Promise<{ embedded: number; failed: number }> {
   const embedder = await getEmbedder(cfg);
-  if (!embedder) return 0;
+  if (!embedder) return { embedded: 0, failed: 0 };
   const limit = opts.limit ?? 20;
-  const targets = pendingSemanticTargets(db, embedder.model, limit, opts.projectId);
+  let targets = pendingSemanticTargets(db, embedder.model, limit, opts.projectId);
+  if (failedSkip.size > 0) targets = targets.filter((t) => !failedSkip.has(t.id));
+  let embedded = 0, failed = 0;
   for (const t of targets) {
-    const row = db.prepare(`
-      SELECT COALESCE((SELECT group_concat(content, ' ') FROM (SELECT content FROM messages WHERE session_id = ? ORDER BY seq_num LIMIT 200)), '') AS body,
-             title AS t FROM sessions WHERE id = ?
-    `).get(t.id, t.id) as { body: string; t: string | null };
-    const vec = await embedder.embed(semanticInputOf(row.t, row.body));
-    upsertSessionVector(db, t.id, embedder.model, vec);
-    opts.log?.(`${t.id} ✓`);
+    try {
+      // 正文在 SQLite 端限量截断（前 30 条 × 每条 200 字）：大会话不再全量拼接（内存审核 P1-1）
+      const row = db.prepare(`
+        SELECT
+          (SELECT title FROM sessions WHERE id = ?) AS t,
+          (SELECT group_concat(substr(content, 1, 200), ' ') FROM
+            (SELECT content FROM messages WHERE session_id = ? ORDER BY seq_num LIMIT 30)) AS body
+      `).get(t.id, t.id) as { t: string | null; body: string | null };
+      const vec = await embedder.embed(semanticInputOf(row.t, row.body ?? ''));
+      upsertSessionVector(db, t.id, embedder.model, vec);
+      failedSkip.delete(t.id); // 曾失败后成功 → 解除跳过
+      embedded++;
+      opts.log?.(`${t.id} ✓`);
+    } catch {
+      failed++;
+      if (failedSkip.size < FAILED_SKIP_MAX) failedSkip.add(t.id);
+      opts.log?.(`${t.id} ✗（跳过，重启后重试）`);
+    }
   }
-  return targets.length;
+  return { embedded, failed };
 }
