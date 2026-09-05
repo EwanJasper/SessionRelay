@@ -19,6 +19,7 @@ export interface SearchHit {
   viaMeta: boolean;
   coverage: number; // 覆盖的单元数 / 总单元数
   seq: number;      // 最佳命中消息序号（出处块的 msg#，D10）
+  viaSemantic?: boolean; // 语义补充命中（design-semantic §3.2：B−A 追加，排序在 FTS 之后）
 }
 
 interface UnitHits {
@@ -68,6 +69,8 @@ export interface SearchOptions {
   query: string;
   limit?: number;
   extraWhere?: ExtraWhere | null;
+  /** 语义补充命中（调用方经 semanticSearch 预计算注入；不传/空 = 与纯 FTS 行为等价） */
+  semanticHits?: Array<{ sessionId: string; score: number }> | null;
 }
 
 export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
@@ -129,6 +132,16 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
   if (viaFallback) {
     // 兜底模式下覆盖度高的排前（有更多关键词命中的更相关）
     hits.sort((a, b) => b.coverage - a.coverage || b.score - a.score);
+  }
+
+  // 语义补充（design-semantic §3.2：FTS 已命中的不重复计，B−A 追加在后，绝不替换/抑制 FTS 结果）
+  if (opts.semanticHits && opts.semanticHits.length > 0) {
+    const existing = new Set(hits.map((h) => h.sessionId));
+    for (const sh of opts.semanticHits) {
+      if (existing.has(sh.sessionId)) continue;
+      const title = (db.prepare('SELECT title FROM sessions WHERE id = ?').get(sh.sessionId) as { title: string | null } | undefined)?.title;
+      hits.push({ sessionId: sh.sessionId, score: sh.score, snippet: title ?? '', viaMeta: false, coverage: 0, seq: 0, viaSemantic: true });
+    }
   }
   return hits.slice(0, limit);
 }

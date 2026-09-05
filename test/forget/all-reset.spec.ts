@@ -62,9 +62,9 @@ describe('forget · --all 整库重置', () => {
     const { cmdForget } = await import('../../src/cli/forget.js');
     const r = await runCli(() => cmdForget({ all: true, confirm: PID }));
     expect(r.exitCode).toBeNull();
-    // 空库已重建（schema v3）
+    // 空库已重建（当前 schema 版本；v4 起含 session_vectors）
     const db = openExisting(dbFile(PROJECT));
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBeGreaterThanOrEqual(4);
     expect(Object.keys(countsByState(db, PID)).length).toBe(0);
     db.close();
     // ignore 保留（防复活关键：库没了规则还在）

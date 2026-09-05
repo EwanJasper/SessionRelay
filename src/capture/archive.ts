@@ -118,13 +118,15 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
 
     // 执行归档
     if (opts.hard) {
-      // 硬删除：删除 sessions 行（messages 级联删除）
+      // 硬删除：删除 sessions 行（messages/向量级联删除）
       db.prepare('DELETE FROM sessions WHERE id = ?').run(s.id);
     } else {
       // 归档：删除 messages，保留 sessions 行
       db.prepare('DELETE FROM messages WHERE session_id = ?').run(s.id);
       db.prepare('UPDATE sessions SET cleanup_at = ?, message_count = 0, original_message_count = ? WHERE id = ?')
         .run(now.toISOString(), msgCount, s.id);
+      // 语义联动（design-semantic §3.2）：正文删除=向量语义过期；标题/话题仍走 FTS meta 路
+      db.prepare('DELETE FROM session_vectors WHERE session_id = ?').run(s.id);
     }
 
     // 记录审计明细

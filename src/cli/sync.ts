@@ -25,6 +25,10 @@ export async function cmdSync(opts: { backfill?: string; json?: boolean }): Prom
     if (opts.json) { console.log(JSON.stringify({ ...s, judge: j }, null, 2)); return; }
     console.log(`同步完成：发现 ${s.discovered} · 新会话 ${s.newSessions} · 新消息 ${s.newMessages} · resumed ${s.resumed}${s.blocked ? pc.yellow(` · 拦截 ${s.blocked}`) : ''}`);
     if (j.toPending || j.confirmed) console.log(pc.dim(`判定：${j.toPending} 转 pending · ${j.confirmed} 确认`));
+    // 语义 digest（守护不在时的补嵌路径；未启用时零开销短路）
+    const { digestSemantic } = await import('../search-svc/semantic.js');
+    const embedded = await digestSemantic(db, cfg, { projectId: cfg.identity.project_id, limit: 100 });
+    if (embedded > 0) console.log(pc.dim(`语义：补嵌 ${embedded} 个会话`));
   } finally {
     db.close();
   }

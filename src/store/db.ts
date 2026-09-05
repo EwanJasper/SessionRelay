@@ -9,7 +9,7 @@ export { dbFile } from '../shared/paths.js';
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -177,6 +177,18 @@ CREATE TABLE IF NOT EXISTS forget_detail (
   created_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_forget_detail_log ON forget_detail(forget_log_id);
+
+-- ═══════════ v4：语义检索（设计 design-semantic §3.4） ═══════════
+-- model 列是向量版本键：换模型 = 旧行视为不存在（查询过滤 + digest 覆盖重嵌），杜绝跨维度混算。
+-- FK ON DELETE CASCADE：forget 删会话连带清向量（0.2.5 forget 代码零改动即联动）。
+CREATE TABLE IF NOT EXISTS session_vectors (
+  session_id  TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  model       TEXT NOT NULL,
+  dim         INTEGER NOT NULL,
+  vec         BLOB NOT NULL,        -- Float32Array little-endian，已 L2 归一化
+  embedded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_vectors_model ON session_vectors(model);
 `;
 
 export function createDb(file: string = ':memory:'): DB {
@@ -281,6 +293,8 @@ function require$sessionId(source: string, sid: string): string {
 
 export function rollbackSession(db: DB, id: string): void {
   db.prepare(`UPDATE sessions SET state = 'active', summary_rule = NULL, pending_at = NULL WHERE id = ?`).run(id);
+  // 语义联动（design-semantic §3.2）：resume 回滚=正文将增长，旧向量过期，待 confirm 后重嵌
+  db.prepare('DELETE FROM session_vectors WHERE session_id = ?').run(id);
 }
 
 export function markPending(db: DB, id: string, at: string): void {
@@ -604,6 +618,50 @@ export function getForgetHistory(db: DB, opts?: { verbose?: boolean; logId?: num
     ...l,
     details: db.prepare('SELECT session_id, title, source, message_count FROM forget_detail WHERE forget_log_id = ?').all(l.id),
   }));
+}
+
+// ── 语义检索向量（设计 v4 §3.4；未 enable 时表恒空——升级零影响的构造性保证） ──
+
+export function upsertSessionVector(db: DB, sessionId: string, model: string, vec: Float32Array): void {
+  db.prepare('INSERT OR REPLACE INTO session_vectors (session_id, model, dim, vec, embedded_at) VALUES (?,?,?,?,?)')
+    .run(sessionId, model, vec.length, Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength), new Date().toISOString());
+}
+
+export function deleteSessionVector(db: DB, sessionId: string): void {
+  db.prepare('DELETE FROM session_vectors WHERE session_id = ?').run(sessionId);
+}
+
+/** 向量库签名（R1：进程内缓存失效检测——COUNT+MAX 变化才重载） */
+export function vectorSignature(db: DB, model: string): string {
+  const r = db.prepare('SELECT COUNT(*) n, COALESCE(MAX(embedded_at),\'\') mx FROM session_vectors WHERE model = ?').get(model) as { n: number; mx: string };
+  return `${r.n}:${r.mx}`;
+}
+
+export function loadSessionVectors(db: DB, model: string): Map<string, Float32Array> {
+  const out = new Map<string, Float32Array>();
+  const rows = db.prepare('SELECT session_id, vec FROM session_vectors WHERE model = ?').all(model) as Array<{ session_id: string; vec: Uint8Array }>;
+  for (const r of rows) out.set(r.session_id, new Float32Array(r.vec.buffer, r.vec.byteOffset, r.vec.byteLength / 4));
+  return out;
+}
+
+/** digest 候选：confirmed 且（无向量行 OR model 不匹配）——imported（直插 confirmed）天然覆盖（R9） */
+export function pendingSemanticTargets(db: DB, model: string, limit: number, projectId?: string): Array<{ id: string; title: string | null }> {
+  const rows = db.prepare(`
+    SELECT s.id AS id, s.title AS title FROM sessions s
+    WHERE s.state = 'confirmed'
+      AND NOT EXISTS (SELECT 1 FROM session_vectors v WHERE v.session_id = s.id AND v.model = ?)
+      ${projectId ? 'AND s.project_id = ?' : ''}
+    ORDER BY COALESCE(s.last_event_at, s.created_at) DESC LIMIT ?
+  `).all(...(projectId ? [model, projectId, limit] : [model, limit])) as Array<{ id: string; title: string | null }>;
+  return rows;
+}
+
+export function countSemanticBacklog(db: DB, model: string): number {
+  return (db.prepare(`
+    SELECT COUNT(*) n FROM sessions s
+    WHERE s.state = 'confirmed'
+      AND NOT EXISTS (SELECT 1 FROM session_vectors v WHERE v.session_id = s.id AND v.model = ?)
+  `).get(model) as { n: number }).n;
 }
 
 // ── 会话关联（P3-A 提前落地：link/get_linked 由 MCP 工具驱动） ──

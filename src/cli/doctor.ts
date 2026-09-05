@@ -140,6 +140,20 @@ export async function cmdDoctor(): Promise<void> {
     }
   }
 
+  // 语义检索（R7 条件项：未启用=可选提示；启用后查依赖，回填进度在 srelay semantic status）
+  if (root) {
+    const cfg = loadConfig(root);
+    if (cfg.semantic?.enabled === true) {
+      const { resolveTransformersEntry, semanticModelOf } = await import('../search-svc/semantic.js');
+      const entry = resolveTransformersEntry();
+      checks.push(entry
+        ? c('语义检索', 'ok', `已启用（${semanticModelOf(cfg)}）`)
+        : c('语义检索', 'err', '已启用但 transformers.js 缺失（检索已自动降级纯字面）', 'npm i --prefix ~/.sessionrelay/semantic @huggingface/transformers@3'));
+    } else {
+      checks.push(c('语义检索', 'warn', '未启用（可选增强：换词查询也能命中，srelay semantic enable）'));
+    }
+  }
+
   for (const k of checks) {
     const icon = k.level === 'ok' ? pc.green('✅') : k.level === 'warn' ? pc.yellow('⚠️ ') : pc.red('❌');
     console.log(`${icon} ${k.name.padEnd(18)} ${k.detail}${k.fix ? pc.dim(`  → ${k.fix}`) : ''}`);

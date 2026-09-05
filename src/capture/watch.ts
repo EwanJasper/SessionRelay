@@ -41,6 +41,9 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
         if (s.newMessages > 0 || s.resumed > 0 || j.confirmed > 0 || spool.endSignals > 0 || why !== 'tick') {
           log(`${why}: +${s.newMessages} 消息 · resumed ${s.resumed} · pending ${j.toPending} · confirmed ${j.confirmed}${spool.endSignals ? ` · hook信号 ${spool.endSignals}` : ''}`);
         }
+        // 语义 digest（design-semantic §3.2）：confirmed 且无向量的会话限量补嵌，CPU 友好
+        const { digestSemantic } = await import('../search-svc/semantic.js');
+        await digestSemantic(db, opts.config, { projectId, limit: 20 });
       } catch (e) {
         log(`周期失败（不退出）: ${(e as Error).message}`);
       }

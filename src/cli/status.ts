@@ -56,6 +56,14 @@ export async function cmdStatus(opts?: { json?: boolean }): Promise<void> {
     console.log(`会话    ${stText}${noteAdj}`);
     console.log(`来源    ${Object.entries(convSources).map(([k, v]) => `${k} ${v}`).join(' · ') || pc.dim('（空）')}`);
     console.log(`拦截    ignore 规则累计拦截 ${blocked} 次${cfg.capture.mode !== 'full' ? pc.yellow(` · 当前模式 ${cfg.capture.mode}（不落正文）`) : ''}`);
+    // R8：语义一行（未启用也显示，保持可发现性）
+    if (cfg.semantic?.enabled === true) {
+      const model = cfg.semantic?.model ?? 'Xenova/bge-small-zh-v1.5';
+      const vecN = (db.prepare('SELECT COUNT(*) n FROM session_vectors WHERE model = ?').get(model) as { n: number }).n;
+      console.log(`语义    ${pc.green('开')} · ${vecN} 向量${pc.dim('（srelay semantic status 详情）')}`);
+    } else {
+      console.log(`语义    ${pc.dim('关（可选：srelay semantic enable）')}`);
+    }
     console.log(`体积    relay.sqlite ${(size / 1024 / 1024).toFixed(1)} MB`);
     if (recent.length > 0) {
       console.log('最近');

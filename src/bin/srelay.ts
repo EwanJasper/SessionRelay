@@ -66,6 +66,15 @@ program
   .action(async (id: string | undefined, f) => { const { cmdForget } = await import('../cli/forget.js'); await cmdForget(f, id); });
 
 program
+  .command('semantic')
+  .description('语义检索（可选）：换一种说法也能命中历史会话——本地 CPU 推理，显式启用')
+  .option('--enable', '启用：安装依赖（用户缓存目录）+ 模型就绪 + 存量回填')
+  .option('--disable', '停用（向量数据保留，检索立即回退纯字面匹配）')
+  .option('--status', '状态（默认）')
+  .option('--test <query>', '对比模式：FTS-only vs 融合命中')
+  .action(async (f) => { const { cmdSemantic } = await import('../cli/semantic.js'); await cmdSemantic(f); });
+
+program
   .command('status')
   .description('透明度面板：模式/守护/计数/拦截/体积')
   .option('--json')

@@ -28,11 +28,15 @@ export async function cmdSearch(query: string, flags: SearchFlags): Promise<void
     };
     // B 档 scope 契约对 CLI 生效（交集只能收窄；CLI 不吃 A 档 auto-scope——人自己管时间窗）
     const asm = assembleScope({ root, cfg, callPred: pred, includeAuto: false });
+    // 语义补充命中（未启用 → null → 与纯 FTS 行为等价）
+    const { semanticSearch } = await import('../search-svc/semantic.js');
+    const semHits = await semanticSearch(db, cfg, query, { project: cfg.identity.project_id ?? root, extraWhere: asm.where });
     const hits = searchSessions(db, {
       project: cfg.identity.project_id ?? root,
       query,
       limit: flags.limit ?? 10,
       extraWhere: asm.where,
+      semanticHits: semHits,
     });
     if (flags.json) {
       const rows = hits.map((h) => {
@@ -41,6 +45,7 @@ export async function cmdSearch(query: string, flags: SearchFlags): Promise<void
           sessionId: h.sessionId, title: s?.title ?? null, source: s?.source ?? null,
           createdAt: s?.created_at ?? null, state: s?.state ?? null,
           score: Number(h.score.toFixed(3)), coverage: h.coverage, viaMeta: h.viaMeta,
+          viaSemantic: h.viaSemantic ?? false,
           snippet: h.snippet, provenance: { sessionId: h.sessionId },
         };
       });

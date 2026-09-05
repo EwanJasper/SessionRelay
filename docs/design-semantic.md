@@ -194,3 +194,13 @@ srelay semantic test "查询词"  # 对比模式：FTS 命中 vs 语义命中 vs
 | 8 | doctor/status 不感知语义，故障不可发现 | doctor.ts 14 项清单 | R7：doctor 条件项；R8：status 一行 |
 | 9 | enable 时自动 npm install 在 Windows 的 .cmd spawn 会 EINVAL | pack-e2e 既有教训（Node ≥22.12 CVE 防护） | 实现注意点：spawn npm 必须 shell:true（R10） |
 | 10 | CI 若触发模型下载则断网即红 | transformers.js 惰性下载 | §5 已定：CI 全 FakeEmbedder 零模型；真模型验收为本地手动项并回填 §0 |
+---
+
+## §9 实现落地备注（实现完成后回填；正文 v4 保持原样，以下为代码事实）
+
+1. **§0 验收结果（2026-09-05 实测，bge-small-zh-v1.5 Q8）**：对照组 5/5 不劣化；同义组 **12/12**（纯字面 8/12，miss 率 33%→0%），余弦分数区间 0.4-0.75，阈值 0.4 有效过滤。回填脚本 `scripts/semantic-realmodel-verify.ts`（复用 §0 同语料同查询，可复跑）。
+2. **§3.1 缓存目录名修正（实现期抓到的真 bug）**：`~/.sessionrelay/semantic` 会在用户家目录创建 `.sessionrelay` 目录——findRelayRoot 向上探测同名即把**用户主目录误判为已初始化项目**，污染所有子目录 init。已改为 `~/.sessionrelay-semantic`（绝不与项目标记目录重名，代码注释钉死此教训）。
+3. **transformers.js v3 两处实测行为**：pipeline 返回 Tensor（`.data` 取扁平向量，非嵌套数组）；`normalized:true` 选项未生效（分数呈点积量级）→ 按 R2 在 embed() 内强制 L2 归一化。bge-small-zh 维度 512（384 是英文版）。
+4. **依赖安装实测**：`npm i --prefix ~/.sessionrelay-semantic @huggingface/transformers@3` 走 npmmirror 14s 装完（含 onnxruntime-node 二进制）；模型经 `HF_ENDPOINT=https://hf-mirror.com` 首次下载约 5s、后续缓存命中 0.3s 加载；嵌入均速 ~20ms/条（CPU）。
+5. **top-K 与 limit 的关系**：语义 top-5 在 engine 内追加于 FTS 命中之后，最终统一 `slice(limit)`——FTS 满额时语义被截属预期（语义价值在 FTS 稀结果场景）。
+6. **归档会话的 digest 语义**：软归档删向量后，会话仍为 confirmed 且无向量 → digest 会以纯标题重嵌（标题向量，无害且与 FTS meta 路一致）。

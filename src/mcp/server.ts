@@ -80,12 +80,16 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
     const callPred = predFrom(args);
     // T28：每次调用重新装配（scope.json 热更新）
     const asm = assembleScope({ root, cfg, callPred, includeAuto: true });
-    const hits = searchSessions(db, { project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where });
+    // 语义补充命中（design-semantic：未启用返回 null = 纯 FTS，行为与 0.2.5 等价）
+    const { semanticSearch } = await import('../search-svc/semantic.js');
+    const semHits = await semanticSearch(db, cfg, args.query, { project, extraWhere: asm.where });
+    const hits = searchSessions(db, { project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits });
     const out = hits.map((h) => ({
       ...sessionBrief(db, h.sessionId),
       score: Number(h.score.toFixed(3)),
       coverage: h.coverage,
       viaMeta: h.viaMeta,
+      viaSemantic: h.viaSemantic ?? false,
       snippet: h.snippet,
       provenance: { ...sessionBrief(db, h.sessionId), msg: h.seq, note: `get_session_detail 可取全文` },
     }));

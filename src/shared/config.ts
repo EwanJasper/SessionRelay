@@ -23,6 +23,8 @@ export interface RelayConfig {
   search: { tokenizer: 'jieba' | 'bigram'; min_hits_hint: number; auto_days: number };
   privacy: { ignore_file: string; export_redact: boolean };
   identity: { project_id?: string; author?: string };
+  /** 语义检索（可选增强，v4 设计：未启用=行为与纯 FTS 逐字节等价） */
+  semantic?: { enabled?: boolean; model?: string; threshold?: number };
 }
 
 export function defaultConfig(): RelayConfig {
@@ -83,6 +85,7 @@ export function loadConfig(root: string): RelayConfig {
     search: { ...def.search, ...(raw.search ?? {}) },
     privacy: { ...def.privacy, ...(raw.privacy ?? {}) },
     identity: { ...def.identity, ...(raw.identity ?? {}) },
+    semantic: { ...(raw.semantic ?? {}) },
   };
 }
 
