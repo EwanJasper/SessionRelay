@@ -183,12 +183,21 @@ export function semanticInputOf(title: string | null, bodyText: string): string 
 const failedSkip = new Set<string>();
 const FAILED_SKIP_MAX = 1000;
 
+/** 测试/运维钩子：手动把某会话标记为跳过（如内容稳定触发推理崩溃的目标） */
+export function markSemanticFailed(sessionId: string): void {
+  if (failedSkip.size < FAILED_SKIP_MAX) failedSkip.add(sessionId);
+}
+
 export async function digestSemantic(db: DB, cfg: RelayConfig, opts: { projectId?: string; limit?: number; log?: (s: string) => void }): Promise<{ embedded: number; failed: number }> {
   const embedder = await getEmbedder(cfg);
   if (!embedder) return { embedded: 0, failed: 0 };
   const limit = opts.limit ?? 20;
-  let targets = pendingSemanticTargets(db, embedder.model, limit, opts.projectId);
-  if (failedSkip.size > 0) targets = targets.filter((t) => !failedSkip.has(t.id));
+  // 毒丸不占名额（自审修复）：failedSkip 过滤若发生在 SQL 之后，排前的毒丸会吃光
+  // 本周期 limit——新 confirmed 会话永远排不上。改为多取 2×limit 再过滤截断；
+  // 毒丸占比超一半时本轮提前收工（下周期重试，重启清空后全量重试）。
+  let targets = pendingSemanticTargets(db, embedder.model, failedSkip.size > 0 ? limit * 2 : limit, opts.projectId)
+    .filter((t) => !failedSkip.has(t.id))
+    .slice(0, limit);
   let embedded = 0, failed = 0;
   for (const t of targets) {
     try {

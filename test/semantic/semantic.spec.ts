@@ -230,6 +230,25 @@ describe('semantic · 兼容与降级', () => {
     db.close();
   });
 
+  it('C6 毒丸不占名额：失败目标排最前时，本周期其余目标仍全部嵌上（自审修复回归）', async () => {
+    const db = createDb();
+    // poison 最近事件排最前；修复前 SQL limit=2 会取出 poison+fresh1，过滤后仅 1 条产出
+    insertSession(db, { id: 'poison0000000001', source: 'zcode', sourceSessionId: 'p1', projectId: PID, createdAt: '2026-08-26T08:00:00Z', title: '毒丸', state: 'confirmed' });
+    db.prepare('UPDATE sessions SET last_event_at = ? WHERE id = ?').run('2026-08-26T12:00:00Z', 'poison0000000001');
+    insertSession(db, { id: 'fresh10000000001', source: 'zcode', sourceSessionId: 'f1', projectId: PID, createdAt: '2026-08-25T08:00:00Z', title: '新会话一', state: 'confirmed' });
+    insertSession(db, { id: 'fresh20000000001', source: 'zcode', sourceSessionId: 'f2', projectId: PID, createdAt: '2026-08-25T08:00:00Z', title: '新会话二', state: 'confirmed' });
+    process.env.SRELAY_SEMANTIC_FAKE = '1';
+    const cfg = cfgWith({ enabled: true, model: 'fake-ci' });
+    resetSemanticCaches();
+    const { markSemanticFailed } = await import('../../src/search-svc/semantic.js');
+    markSemanticFailed('poison0000000001');
+    try {
+      const { embedded } = await digestSemantic(db, cfg, { projectId: PID, limit: 2 });
+      expect(embedded).toBe(2); // 修复前是 1（poison 吃掉一个名额）
+    } finally { delete process.env.SRELAY_SEMANTIC_FAKE; resetSemanticCaches(); }
+    db.close();
+  });
+
   it('C5 CLI 文案钉子：semantic 命令注册与 README 联动', () => {
     const bin = fs.readFileSync(path.resolve('src/bin/srelay.ts'), 'utf8');
     expect(bin).toContain("command('semantic')");
