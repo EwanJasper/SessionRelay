@@ -301,8 +301,8 @@ timeline
 ### 安装
 
 ```bash
-srelay watch --install-service   # Windows 注册表自启动（无需管理员）
-srelay watch --foreground        # macOS/Linux 前台运行
+srelay watch --install-service   # 注册登录自启动（Windows 注册表 / macOS launchd / Linux systemd user）
+srelay watch --foreground        # 前台运行（调试或不想注册服务时）
 ```
 
 ### 资源开销（实测）

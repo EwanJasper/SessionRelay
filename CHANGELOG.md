@@ -3,7 +3,7 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.4.0] - 2026-09-06
 
 ### 新增
 - **相关会话推荐 `suggest_related_sessions`（MCP 第 16 个工具）+ `srelay related <id>`**：搜索是你带着词去找，推荐是库主动告诉你"这几个和手头这个是一伙的"——记不清关键词时以会话为锚找线索
@@ -12,6 +12,13 @@
   - 导航辅助定位：不过 scope 契约（条目仅 brief 元数据）；输出明示"内容以 get_session_detail 为准"
   - 真模型验收 4/4（top1 合理性）；小语料下 bge 短文本 cos 挤在 0.6-0.7 的 tail 噪音如实登记于设计文档 §9
 - **MCP 契约不变量升级**："恒 15 工具"（现为 16）的真正意图是删除类工具永远为 0——契约测试新增**名称黑名单扫描**（工具名含 delete/remove/forget/purge 即 fail），比计数更强且不随工具数增长失效
+- **守护服务注册覆盖三平台**：`srelay watch --install-service` 此前仅 Windows（注册表 Run 键），现新增 macOS（launchd LaunchAgent）与 Linux（systemd user unit，附带 linger 尝试）——三平台同为"登录自启动"，卸载/状态对称（`--uninstall` / `--status`）
+  - CI 验证策略：macOS runner 真装真卸（已注册→卸载→文件移除断言），Linux 因 runner 用户 systemd 不可靠只做内容断言，欢迎实机反馈
+  - 行为对齐：不做崩溃自动重启（KeepAlive/Restart 关闭）——守护自带 30s 周期与懒启动兜底
+- **产物断言脚本（`npm run check:artifacts`，已挂 CI 与 prepublishOnly）**：MCP 工具名在文档全覆盖、无旧工具计数残留、CHANGELOG 顶部版本与 package.json 一致——固化发版审核两轮事故（文档静默漏改 / 包体积膨胀）的防线
+
+### 变更
+- 服务注册实现收敛到 `cli/service.ts`（Windows 原逻辑不变），`watch.ts` 只保留守护入口
 
 ## [0.3.1] - 2026-09-05
 

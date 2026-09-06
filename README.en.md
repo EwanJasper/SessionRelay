@@ -352,7 +352,7 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 ## Known limitations (honest list)
 
 - Rule-based extraction precision is ~60-70% (provenance blocks let you verify item by item; `--ai` enhancement is Phase 4)
-- Daemon service registration is Windows-only (registry run key); macOS / Linux run `srelay watch` in the foreground
+- Daemon service registration on all three platforms (Windows registry run key / macOS launchd / Linux systemd user, all login-autostart)
 - "Auto-attach important sessions to new ones" needs session identity (branch/PID), landing in Phase 4; for now use manual `attach`
 - Concurrent multi-agent sessions on one project scope by project+cwd
 - Historical sessions under renamed/moved directories are not auto-discovered (use a handoff package to migrate)

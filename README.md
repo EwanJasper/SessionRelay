@@ -409,7 +409,7 @@ module.exports = {
 ## 已知限制（诚实清单）
 
 - 规则提取精度约 60-70%（出处块让你逐条回跳核验；`--ai` 增强在 Phase 4）
-- 守护服务注册仅 Windows（计划任务）；macOS / Linux 用 `srelay watch` 前台运行
+- 守护服务注册三平台可用（Windows 注册表 Run 键 / macOS launchd / Linux systemd user，均登录自启动）
 - 开新会话的"自动关联重要会话"需要会话身份（branch/PID），Phase 4 落地；当前用 `attach` 手动挂载
 - 多 agent 同项目并发时 Scope 按 project+cwd 归属
 - Trae 仅部分支持：用户提问可读，AI 回复端到端加密（可用 `save_note` 补记结论）
@@ -418,7 +418,7 @@ module.exports = {
 
 ## 路线图（Phase 4）
 
-`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · `suggest_related_sessions`（语义向量就绪后顺手可做） · DSH / Cursor 官方适配 · macOS / Linux 守护服务注册 · HOP 协议第三方推广
+`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · DSH / Cursor 官方适配 · HOP 协议第三方推广
 
 ## 文档
 

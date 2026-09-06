@@ -31,6 +31,8 @@ jobs:
       # 先构建再测试：dist 冒烟套件（test/smoke）必须看到发布产物才有意义
       - run: npm run build
       - run: npm test
+      # 产物断言：文档工具覆盖/计数残留/CHANGELOG 版本一致（发版审核事故固化防线）
+      - run: npm run check:artifacts
 
   # 真实安装端到端：npm pack 出 tarball → 全新目录安装 → bin → init/status → MCP 握手。
   # 覆盖 files 清单、bin 链接、依赖解析、原生模块预编译下载这条用户完整路径。
