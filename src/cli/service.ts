@@ -176,8 +176,9 @@ export async function uninstallWatchService(root: string): Promise<void> {
 }
 
 export async function watchServiceStatus(root: string): Promise<string> {
-  // 测试环境跳过子进程（CI 沙箱冷启动可能超时）
-  if (process.env.VITEST) return '（测试跳过）';
+  // VITEST 跳过仅限 Windows：PowerShell 子进程在 CI 沙箱冷启动可能超时（历史教训）；
+  // darwin/linux 子进程轻量，S6 真装循环依赖真实状态，不跳
+  if (process.env.VITEST && process.platform === 'win32') return '（测试跳过）';
   try {
     if (process.platform === 'win32') {
       const { REG_PATH, REG_NAME } = await import('./winregistry.js');
