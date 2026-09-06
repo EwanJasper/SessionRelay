@@ -120,6 +120,20 @@ stateDiagram-v2
 - jieba tokenization + SQLite FTS5 dual indexes (gated by six Chinese acceptance cases)
 - Session-level AND coverage with OR fallback: compound words split ("认证方案" → 认证 + 方案), quoted phrases match exactly (`"按月分区"`)
 - Every result **carries a mandatory provenance block** (session ID / source tool / date / message numbers / snippet)
+- **Semantic search (optional)**: `srelay semantic enable` — paraphrased queries now hit ("登录" ↔ "authentication", "很卡" ↔ "performance"). Local CPU inference (bge-small-zh), zero cloud; literal hits always rank first and are never replaced — semantic only appends, flagged `viaSemantic`, capped at top-5. Not enabled = byte-identical behavior to pure literal search. Measured: synonym-query miss rate 33% → **0%**
+
+### 🧹 Right to be forgotten (`srelay forget`)
+Deletion belongs to humans — **AI / MCP tools have zero delete power** (tool list stays at 15, forever):
+
+```bash
+srelay forget a3f8c2d1        # preview (what gets removed vs kept)
+srelay forget a3f8c2d1 --yes  # execute (irreversible)
+srelay forget --history       # audit of what was forgotten when
+```
+
+- Rule of thumb: aging & disk space → `archive`; make one conversation disappear forever → `forget`
+- Dual anti-resurrection barriers: a precise `.sessionrelayignore` rule (survives rebuild) + a tombstone table — the raw file stays on disk but is never re-ingested
+- Prefix ambiguity guard: multiple matches are listed and rejected, never silently picking one
 
 ### 🤖 MCP Server (15 tools: 8 read + 7 write-domain)
 Once your AI agent connects via MCP, it stops being amnesiac in this project:
@@ -329,7 +343,7 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 
 ## Quality & verification
 
-- **125 tests** (unit / integration / MCP stdio real-handshake contract / end-to-end), one `npm test`
+- **185 tests** (unit / integration / MCP stdio real-handshake contract / end-to-end), one `npm test`
 - **CI green across 3 platforms × Node 22/24** (typecheck + test + build + dist smoke)
 - TypeScript strict, `npm run typecheck` clean
 - Real-machine acceptance at every phase (including the product recording its own birth)
@@ -346,7 +360,7 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 
 ## Roadmap (Phase 4)
 
-`--ai` summary/extraction enhancement · session identity (branch/PID) and auto-attach · `suggest_related_sessions` (topic-overlap recommendations) · official DSH / Cursor adapters · macOS/Linux daemon service registration · semantic search (optional local embeddings) · third-party adoption of the HOP protocol
+`--ai` summary/extraction enhancement · session identity (branch/PID) and auto-attach · `suggest_related_sessions` (now cheap: session vectors from semantic search already encode topic similarity) · official DSH / Cursor adapters · macOS/Linux daemon service registration · third-party adoption of the HOP protocol
 
 ## Documentation
 

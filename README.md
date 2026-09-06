@@ -416,7 +416,7 @@ module.exports = {
 
 ## 路线图（Phase 4）
 
-`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · `suggest_related_sessions`（话题重叠推荐） · DSH / Cursor 官方适配 · macOS / Linux 守护服务注册 · 语义检索（可选本地嵌入） · HOP 协议第三方推广
+`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · `suggest_related_sessions`（语义向量就绪后顺手可做） · DSH / Cursor 官方适配 · macOS / Linux 守护服务注册 · HOP 协议第三方推广
 
 ## 文档
 

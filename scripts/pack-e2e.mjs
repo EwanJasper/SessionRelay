@@ -4,7 +4,7 @@
 // 依赖解析、原生模块预编译下载这条完整链路。
 // 用法：node scripts/pack-e2e.mjs  （需要先 npm run build）
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -43,6 +43,12 @@ try {
   const pkgDir = path.join(installedRoot, 'node_modules', pkg.name);
   const entry = path.join(pkgDir, 'dist', 'srelay.js');
   if (!existsSync(entry)) fail(`安装产物缺入口：${entry}（files 清单或打包有问题）`);
+
+  // 门禁：dist 文件数上限（防孤儿 chunk 复发——0.3.0 曾带 94 个死代码文件上线）。
+  // tsup chunk 改名后旧文件静默残留，功能测试全绿也拦不住包膨胀；包本身必须是被测对象。
+  const distFiles = readdirSync(path.join(pkgDir, 'dist'));
+  if (distFiles.length > 60) fail(`dist 文件数 ${distFiles.length} > 60 —— 疑似孤儿 chunk 残留（build 应先清空 dist）。样例：${distFiles.slice(0, 5).join(', ')}`);
+  log(`dist 文件数 ${distFiles.length}（门禁 ≤60）✓`);
 
   // 3) 用户路径①：bin 链接 + --version
   const bin = process.platform === 'win32'

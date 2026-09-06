@@ -264,6 +264,25 @@ srelay unresolved               # 讨论过但没定论的
 srelay history src/db/schema.sql # 某文件的跨会话讨论史
 ```
 
+### 语义检索（可选增强）
+
+字面检索搜不到换过说法的讨论——搜「认证」找不到只说了「登录」的会话。语义检索补上这条路：把每个已确认会话嵌入成向量，查询时按语义相似度**补充**召回（本地 CPU 推理，零云端依赖）。
+
+```bash
+srelay semantic enable                 # 一键启用：装依赖 + 下载模型 + 存量回填
+srelay semantic test "换一种说法的查询"  # 对比：纯字面 vs 字面+语义 的命中差异
+srelay semantic status                 # 向量数 / 待嵌积压 / 模型状态
+srelay semantic disable                # 停用（向量保留，检索立即回退纯字面）
+```
+
+**启用前你需要知道的**：
+
+- 依赖（transformers.js）与模型（bge-small-zh，Q8 约 35MB）装在用户目录 `~/.sessionrelay-semantic`，**不进 npm 包**；模型下载国内可设 `HF_ENDPOINT=https://hf-mirror.com`
+- **未启用 = 行为与过去版本完全一致**（MCP 工具恒 15 个）；启用后也只是补充——字面命中永远优先且不被替换，语义命中以 `viaSemantic: true` 标注、限量 top-5、余弦阈值默认 0.40（`config.json` 的 `semantic.threshold` 可调）
+- 何时嵌入：只嵌 confirmed 会话（记忆层服务"过去的会话"）；resume 回滚 / 归档 / forget 会自动清理对应向量；新确认的会话由守护周期自动补嵌（每周期限量，不抢 CPU）
+- 实测开销：5000 会话级全量相似度扫描 2.6ms/查询；嵌入约 20ms/条；模型常驻内存约 50MB（enable 后的守护进程）
+- 实测效果（12 个技术会话语料）：换词查询的未命中率从 33% 降到 **0%**（12/12），字面命中不劣化
+
 ---
 
 ## 六、守护进程
@@ -443,6 +462,26 @@ srelay archive --history --verbose    # 逐会话明细
 srelay rebuild --force    # 从源文件重建（归档/删除的数据恢复）
 ```
 
+### 遗忘权（srelay forget）——与 archive 的分工
+
+一句话选型：**空间与老化用 `archive`；让一条对话彻底消失、永不回来，用 `forget`。**
+
+| | `archive` | `archive --hard` | `forget` |
+|---|---|---|---|
+| 意图 | 降级省空间 | 批量清理 | **抹除**（隐私/纠错/单点） |
+| 结果 | 决策/话题/标题保留，正文清空 | 全部删除 | **整条会话消失（含决策）** |
+| 防复活 | 不需要 | 无 | **双闸**（ignore 精确规则 + 墓碑），原始文件不再被收录 |
+| 粒度 | 按时间/体积批量 | 批量 | 单会话 / 单笔记 / 整库 |
+
+```bash
+srelay forget a3f8c2d1        # 预览（将删什么/保留什么/年龄/链接对方）
+srelay forget a3f8c2d1 --yes  # 执行（不可逆）
+srelay forget --history       # 遗忘审计（何时删了什么）
+srelay forget --all --confirm <projectId>   # 整库重置（守护运行中会拒绝）
+```
+
+要点：删除权只在人手里——**AI/MCP 永远没有删除工具**（15 个工具恒定不变）；前缀命中多个会话时会列出候选拒绝执行，绝不静默猜一个；预览后数据有变化（如守护新捕消息）会拒绝执行并要求重新预览；forget 是项目级操作，已随 `.hop` 交接包交出的记忆不在管辖内。
+
 ---
 
 ## 十、隐私控制
@@ -591,6 +630,17 @@ srelay archive --days 90 --dry-run       # 预览
 srelay archive --days 90                 # 归档
 srelay archive --history --verbose       # 审计历史
 srelay rebuild --force                   # 从源恢复
+
+# ═══ 遗忘（删除权在人，AI 无删除工具） ═══
+srelay forget <id|前缀>                  # 预览
+srelay forget <id|前缀> --yes            # 执行（不可逆）
+srelay forget --history                  # 遗忘审计
+srelay forget --all --confirm <项目id>   # 整库重置
+
+# ═══ 语义检索（可选） ═══
+srelay semantic enable                   # 启用（装依赖+模型+回填）
+srelay semantic test "查询"              # 对比效果
+srelay semantic status                   # 状态
 
 # ═══ 隐私 ═══
 srelay mode <full|meta|off>              # 捕获模式
