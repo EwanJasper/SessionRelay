@@ -148,6 +148,7 @@ Once your AI agent connects via MCP, it stops being amnesiac in this project:
 | `list_sessions` | "What topics has this project covered?" |
 | `get_decisions` | "Why X instead of Y?" (all confirmed decisions, with provenance) |
 | `get_file_history` | "Why is this file written this way?" (cross-session file discussion history) |
+| `suggest_related_sessions` | "What else relates to this discussion?" (algorithmically discovered, explainable reasons) |
 | `get_unresolved` | "What's still undecided?" (open questions) |
 | `get_stats` | "How big is the memory?" (sessions/sources/size) |
 | `set_scope` | Retrieval-boundary escape hatch |

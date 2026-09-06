@@ -638,6 +638,9 @@ srelay forget <id|前缀> --yes            # 执行（不可逆）
 srelay forget --history                  # 遗忘审计
 srelay forget --all --confirm <项目id>   # 整库重置
 
+# ═══ 相关推荐 ═══
+srelay related <id|前缀>                  # 以会话为锚找相关讨论
+
 # ═══ 语义检索（可选） ═══
 srelay semantic enable                   # 启用（装依赖+模型+回填）
 srelay semantic test "查询"              # 对比效果

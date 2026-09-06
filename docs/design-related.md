@@ -122,3 +122,5 @@ srelay related <id|前缀>          # 人用：表格输出（分数/理由/标�
 3. R6 钉死"即时嵌入不入库"——active 锚的向量只存在于本次调用内存，随 confirm 后由 digest 正常落库。
 4. 契约测试新增 scope 不拦截推荐用例（写收窄 scope.json → 推荐 ≥1 → **清理还原**，防污染后续 get_stats 断言——第一版实现时踩过，测试自证）。
 
+
+5. **score 尺度双轨注记（自审补记）**：输出 score 在 viaVector=true 时是余弦（0-1），viaVector=false 时是重叠点数（整数）。排序不受影响（向量组在前由构造保证，组内同尺度）；跨组比较无意义——消费方（AI/人）应读 reason 而非跨组比 score。V2 若要统一可归一化，当前不做。

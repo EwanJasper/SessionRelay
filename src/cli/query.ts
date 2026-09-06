@@ -161,9 +161,14 @@ export async function cmdRelated(idPrefix: string, opts?: { limit?: string; json
     const anchor = findSessionByPrefix(db, idPrefix, cfg.identity.project_id ?? root) ?? getSession(db, idPrefix);
     if (!anchor) { console.log(pc.yellow('未找到锚会话。') + pc.dim('用 srelay list 查看可用会话')); return; }
     const { suggestRelated, RELATED_HARD_CAP } = await import('../search-svc/related.js');
+    let limit: number | undefined;
+    if (opts?.limit !== undefined) {
+      limit = Number(opts.limit);
+      if (!Number.isFinite(limit)) { console.log(pc.yellow('--limit 需要数字')); process.exit(2); }
+      limit = Math.min(limit, RELATED_HARD_CAP);
+    }
     const { items } = await suggestRelated(db, cfg, {
-      projectId: cfg.identity.project_id ?? root, anchorId: anchor.id,
-      limit: opts?.limit ? Math.min(Number(opts.limit), RELATED_HARD_CAP) : undefined,
+      projectId: cfg.identity.project_id ?? root, anchorId: anchor.id, limit,
     });
     if (opts?.json) { console.log(JSON.stringify({ anchor: { sessionId: anchor.id, title: anchor.title }, count: items.length, suggestions: items }, null, 2)); return; }
     console.log(`与「${(anchor.title ?? anchor.id).slice(0, 36)}」相关的会话：`);

@@ -329,6 +329,7 @@ claude mcp add sessionrelay --scope user -- srelay serve
 | `list_sessions` | "这个项目都聊过哪些话题？" |
 | `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
 | `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
+| `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现，可解释理由） |
 | `get_unresolved` | "还有什么没定的？"（未决问题清单） |
 | `get_stats` | "记忆库什么状态？"（会话数/来源/体积） |
 | `set_scope` | 检索边界逃生口 |
