@@ -24,7 +24,7 @@ graph TB
 
     subgraph Consumers["👥 谁来查询记忆"]
         YOU["你（CLI）<br/>search · decisions · history"]
-        AGENT["AI Agent（MCP）<br/>15 个工具"]
+        AGENT["AI Agent（MCP）<br/>16 个工具"]
         TEAM["同事（HOP 交接包）<br/>export → import"]
     end
 
@@ -358,10 +358,10 @@ AI 依据**工具描述**和**响应提示**决策。推荐把下面这段加进
 6. **省 token**：先 search 定位 → 再按需深入。响应里有 estimated_tokens 和 hint 跟随引导。
 ```
 
-### 15 个工具速览
+### 16 个工具速览
 
 <details>
-<summary><b>读工具（8 个）</b></summary>
+<summary><b>读工具（9 个）</b></summary>
 
 | 工具 | 何时用 |
 |------|--------|
@@ -372,6 +372,7 @@ AI 依据**工具描述**和**响应提示**决策。推荐把下面这段加进
 | `get_file_history` | 某文件的跨会话讨论史 |
 | `get_unresolved` | 未决问题清单 |
 | `get_stats` | 记忆库规模 |
+| `suggest_related_sessions` | 以会话为锚找相关讨论（导航线索，不过 scope） |
 | `set_scope` | 检索边界逃生口 |
 
 </details>
@@ -480,7 +481,7 @@ srelay forget --history       # 遗忘审计（何时删了什么）
 srelay forget --all --confirm <projectId>   # 整库重置（守护运行中会拒绝）
 ```
 
-要点：删除权只在人手里——**AI/MCP 永远没有删除工具**（15 个工具恒定不变）；前缀命中多个会话时会列出候选拒绝执行，绝不静默猜一个；预览后数据有变化（如守护新捕消息）会拒绝执行并要求重新预览；forget 是项目级操作，已随 `.hop` 交接包交出的记忆不在管辖内。
+要点：删除权只在人手里——**AI/MCP 永远没有删除工具**（删除类工具恒为 0，数量只增不减）；前缀命中多个会话时会列出候选拒绝执行，绝不静默猜一个；预览后数据有变化（如守护新捕消息）会拒绝执行并要求重新预览；forget 是项目级操作，已随 `.hop` 交接包交出的记忆不在管辖内。
 
 ---
 

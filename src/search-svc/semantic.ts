@@ -129,6 +129,9 @@ function vectorsOf(db: DB, model: string): Map<string, Float32Array> {
   return vectors;
 }
 
+/** related 推荐（design-related）复用同一签名缓存——重复调用不重载向量 */
+export const cachedSessionVectors = vectorsOf;
+
 /** 测试辅助：清进程级缓存（向量直插后强制重载） */
 export function resetSemanticCaches(): void {
   vectorCache = null;

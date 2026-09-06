@@ -67,6 +67,6 @@ const run = (args: string[], cwd: string, env: Record<string, string> = {}) =>
     await client.connect(transport);
     expect(client.getServerVersion()).toEqual({ name: 'sessionrelay', version: pkg.version });
     const tools = await client.listTools();
-    expect(tools.tools).toHaveLength(15);
+    expect(tools.tools).toHaveLength(16);
   }, 30000);
 });

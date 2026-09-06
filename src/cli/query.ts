@@ -151,3 +151,28 @@ function parseRange(r: string | undefined, total: number): [number, number] {
   if (!m) return [1, Math.max(total, 1)];
   return [Number(m[1] || 1), Number(m[2] || Math.max(total, 1))];
 }
+
+// srelay related（design-related）：以会话为锚推荐相关历史——人用的导航入口
+export async function cmdRelated(idPrefix: string, opts?: { limit?: string; json?: boolean }): Promise<void> {
+  const root = requireRoot();
+  const cfg = loadConfig(root);
+  const db = openRelayDb(root);
+  try {
+    const anchor = findSessionByPrefix(db, idPrefix, cfg.identity.project_id ?? root) ?? getSession(db, idPrefix);
+    if (!anchor) { console.log(pc.yellow('未找到锚会话。') + pc.dim('用 srelay list 查看可用会话')); return; }
+    const { suggestRelated, RELATED_HARD_CAP } = await import('../search-svc/related.js');
+    const { items } = await suggestRelated(db, cfg, {
+      projectId: cfg.identity.project_id ?? root, anchorId: anchor.id,
+      limit: opts?.limit ? Math.min(Number(opts.limit), RELATED_HARD_CAP) : undefined,
+    });
+    if (opts?.json) { console.log(JSON.stringify({ anchor: { sessionId: anchor.id, title: anchor.title }, count: items.length, suggestions: items }, null, 2)); return; }
+    console.log(`与「${(anchor.title ?? anchor.id).slice(0, 36)}」相关的会话：`);
+    if (items.length === 0) { console.log(pc.dim('（无——共享话题/文件/向量相似度都不够；语义未启用时可 srelay semantic enable 增强）')); return; }
+    for (const it of items) {
+      console.log(`  ${String(it.score).padEnd(6)} 「${(it.title ?? '').slice(0, 32)}」 ${pc.dim(`${it.source} · ${it.state} · ${it.reason}`)} ${pc.dim(it.sessionId)}`);
+    }
+    console.log(pc.dim('  推荐仅为导航线索；srelay show <id> 看原文'));
+  } finally {
+    db.close();
+  }
+}

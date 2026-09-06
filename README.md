@@ -60,7 +60,7 @@ graph TB
 
     subgraph Consumers["👥 谁来查询记忆"]
         YOU["你（CLI）<br/>search · decisions · history"]
-        AGENT["AI Agent（MCP）<br/>15 个工具"]
+        AGENT["AI Agent（MCP）<br/>16 个工具"]
         TEAM["同事（HOP 交接包）<br/>export → import"]
     end
 
@@ -124,11 +124,11 @@ stateDiagram-v2
 - 会话级 AND 覆盖 + OR 兜底：连写词拆分（"认证方案"→ 认证+方案）、短语精确匹配（`"按月分区"`）
 - 每条结果**强制携带出处块**（会话 ID / 来源 agent / 日期 / 消息序号 / 摘要片段）
 
-### 🤖 MCP Server（15 个工具，8 读 + 7 写域）
+### 🤖 MCP Server（16 个工具，9 读 + 7 写域）
 任何支持 MCP 的 AI agent 接入后，从此在这个项目里不再是失忆的：
 
 <details>
-<summary><b>8 个读工具</b>——AI 从此能回答的问题</summary>
+<summary><b>9 个读工具</b>——AI 从此能回答的问题</summary>
 
 | 工具 | 回答的问题 |
 | ---- | ---------- |
@@ -137,6 +137,7 @@ stateDiagram-v2
 | `list_sessions` | "这个项目都聊过哪些话题？" |
 | `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
 | `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
+| `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现的同主题会话，可解释理由） |
 | `get_unresolved` | "还有什么没定的？"（未决问题清单） |
 | `get_stats` | "记忆库什么状态？"（会话数/来源分布/体积） |
 | `set_scope` | 检索边界逃生口 |
@@ -280,7 +281,7 @@ timeline
 claude mcp add sessionrelay --scope user -- srelay serve
 ```
 
-注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、15 个工具就绪。
+注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、16 个工具就绪。
 
 ### ZCode / 其他 MCP 客户端
 
@@ -316,7 +317,7 @@ claude mcp add sessionrelay --scope user -- srelay serve
 
 正确的样子：AI 调用 `get_decisions` 或 `search_sessions`，回答里带出处（日期、来源 agent、会话 ID、消息序号）。如果它说"不知道"，说明 MCP 未接通——检查 `srelay doctor`。
 
-### 15 个工具能回答什么
+### 16 个工具能回答什么
 
 <details>
 <summary><b>读工具（8 个）</b>——点击展开</summary>

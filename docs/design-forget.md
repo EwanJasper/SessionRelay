@@ -277,3 +277,8 @@ forget_log 无限增长问题：单条审计 <200B，个人项目删除频率极
 4. **C7 非静默提示（补充设计）**：`srelay save`（captureSessions 手动入口）命中墓碑/ignore 时向 warnings 推提示文案（"曾被 srelay forget，已拒绝重新收录"+ 恢复路径说明）；自动守护路径（runSync）保持静默计数防刷屏。
 5. **§3.7 stats.json**：--all 不动 stats.json（纯事件计数无内容泄漏）——钉死于测试 D11。
 6. **跨进程守护语义**：forget 不走 requireRoot 的懒启动守护（否则 --all 会被自己拉起的守护永久阻塞）；写命令与守护并发靠单事务 + busy_timeout。
+
+### 不变量演进（related 落地时登记）
+
+§4 的“MCP 契约测试断言工具清单恒 15 个”已随 suggest_related_sessions（第 16 个只读工具，design-related）演进：
+不变量的本质是**删除类工具永远为 0**，不是计数本身。契约测试现为双断言：精确名单（16 项）+ 名称黑名单扫描（delete/remove/forget/purge 即 fail）。forget 的防线不受影响。

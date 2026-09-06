@@ -59,7 +59,7 @@ graph TB
 
     subgraph Consumers["👥 Who queries the memory"]
         YOU["You (CLI)<br/>search · decisions · history"]
-        AGENT["AI agents (MCP)<br/>15 tools"]
+        AGENT["AI agents (MCP)<br/>16 tools"]
         TEAM["Teammates (.hop handoff)<br/>export → import"]
     end
 
@@ -135,11 +135,11 @@ srelay forget --history       # audit of what was forgotten when
 - Dual anti-resurrection barriers: a precise `.sessionrelayignore` rule (survives rebuild) + a tombstone table — the raw file stays on disk but is never re-ingested
 - Prefix ambiguity guard: multiple matches are listed and rejected, never silently picking one
 
-### 🤖 MCP Server (15 tools: 8 read + 7 write-domain)
+### 🤖 MCP Server (16 tools: 9 read + 7 write-domain)
 Once your AI agent connects via MCP, it stops being amnesiac in this project:
 
 <details>
-<summary><b>8 read tools</b> — questions your AI can finally answer</summary>
+<summary><b>9 read tools</b> — questions your AI can finally answer</summary>
 
 | Tool | Question it answers |
 | ---- | ------------------- |
@@ -257,7 +257,7 @@ timeline
 claude mcp add sessionrelay --scope user -- srelay serve
 ```
 
-Run `/mcp` in Claude Code — `sessionrelay` should show as connected with 15 tools ready.
+Run `/mcp` in Claude Code — `sessionrelay` should show as connected with 16 tools ready.
 
 ### ZCode / other MCP clients
 

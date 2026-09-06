@@ -3,6 +3,16 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- **相关会话推荐 `suggest_related_sessions`（MCP 第 16 个工具）+ `srelay related <id>`**：搜索是你带着词去找，推荐是库主动告诉你"这几个和手头这个是一伙的"——记不清关键词时以会话为锚找线索
+  - 双轨：语义向量相似（semantic 已启用时，active 锚即时嵌入不入库）+ 话题/标签/文件重叠打分（未启用语义时的降级），融合输出且每条带**可解释理由**（`向量相似 0.72` / `共享话题：数据库`）
+  - 完全无状态：无新表无新配置；推荐不写入 session_links（防 A→B→A 回音室固化）
+  - 导航辅助定位：不过 scope 契约（条目仅 brief 元数据）；输出明示"内容以 get_session_detail 为准"
+  - 真模型验收 4/4（top1 合理性）；小语料下 bge 短文本 cos 挤在 0.6-0.7 的 tail 噪音如实登记于设计文档 §9
+- **MCP 契约不变量升级**："恒 15 工具"（现为 16）的真正意图是删除类工具永远为 0——契约测试新增**名称黑名单扫描**（工具名含 delete/remove/forget/purge 即 fail），比计数更强且不随工具数增长失效
+
 ## [0.3.1] - 2026-09-05
 
 ### 修复

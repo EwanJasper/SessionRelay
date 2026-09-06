@@ -89,7 +89,7 @@ try {
   const si = client.getServerVersion();
   if (si.name !== 'sessionrelay' || si.version !== pkg.version) fail(`serverInfo=${JSON.stringify(si)} ≠ ${pkg.version}`);
   const tools = await client.listTools();
-  if (tools.tools.length !== 15) fail(`工具数 ${tools.tools.length} ≠ 15`);
+  if (tools.tools.length !== 16) fail(`工具数 ${tools.tools.length} ≠ 16`);
   const call = async (name, args = {}) => {
     const res = await client.callTool({ name, arguments: args });
     const text = res.content?.[0]?.text ?? '{}';
@@ -99,7 +99,7 @@ try {
   const note = await call('save_note', { title: 'pack-e2e 遗忘验证', content: '决定验证 forget 真实安装路径后删除本笔记。' });
   if (!note.ok) fail(`save_note 失败：${JSON.stringify(note)}`);
   await client.close();
-  log(`MCP 握手 ✓ (serverInfo ${si.name}@${si.version}, 15 tools)`);
+  log(`MCP 握手 ✓ (serverInfo ${si.name}@${si.version}, 16 tools)`);
 
   const pv = runBin(['forget', note.sessionId, '--json'], { cwd: proj, stdio: 'pipe' });
   const preview = JSON.parse(pv);

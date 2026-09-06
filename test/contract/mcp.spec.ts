@@ -4,6 +4,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { createDb, insertSession, insertMessage, confirmSession } from '../../src/store/db.js';
@@ -77,15 +78,52 @@ const call = async (name: string, args: Record<string, unknown> = {}) => {
 };
 
 describe('P3 · MCP 契约（stdio 真握手）', () => {
-  it('initialize + tools/list：15 个工具全部注册（8 读 + 7 写域）', async () => {
+  it('initialize + tools/list：16 个工具全部注册（9 读 + 7 写域）+ 删除类名称黑名单扫描', async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'annotate_session', 'export_handoff', 'get_decisions', 'get_file_history',
       'get_linked_sessions', 'get_session_detail', 'get_stats', 'get_unresolved',
       'import_handoff', 'link_sessions', 'list_sessions', 'release_quarantine',
-      'save_note', 'search_sessions', 'set_scope',
+      'save_note', 'search_sessions', 'set_scope', 'suggest_related_sessions',
     ]);
+    // 不变量（forget 设计 §2 的真正意图）：删除是人的特权——工具名含删除语义即 fail，
+    // 这条不随工具数增长失效（比"恒 N 个"计数更强）
+    for (const n of names) {
+      expect(n).not.toMatch(/delete|remove|forget|purge/i);
+    }
+  });
+
+  it('suggest_related_sessions：锚会话推荐 + 可解释 reason + viaVector 标注', async () => {
+    // 夹具的 confirmed 会话 topics 已被 confirmSession 提取覆写——自足造一对重叠信号（active 不覆写）
+    const w = new Database(path.join(PROJECT, '.sessionrelay', 'relay.sqlite'));
+    w.prepare(`INSERT OR REPLACE INTO sessions (id, source, source_session_id, project_id, state, title, created_at, topics) VALUES ('rel0000000000001','zcode','rel1',?,'active','向量索引调优','2026-08-28T00:00:00Z','["db"]')`).run(PID);
+    w.prepare(`INSERT OR REPLACE INTO sessions (id, source, source_session_id, project_id, state, title, created_at, topics) VALUES ('rel0000000000002','zcode','rel2',?,'active','分区表设计','2026-08-28T00:00:00Z','["db"]')`).run(PID);
+    w.close();
+    const out = (await call('suggest_related_sessions', { session_id: 'rel0000000000001' })) as {
+      found: boolean; anchor: { sessionId: string }; count: number;
+      suggestions: Array<{ sessionId: string; score: number; reason: string; viaVector: boolean }>;
+      hint?: string;
+    };
+    expect(out.found).toBe(true);
+    expect(out.count).toBeGreaterThanOrEqual(1); // rel2 共享话题 db
+    for (const s of out.suggestions) {
+      expect(s.reason).toBeTruthy(); // 每条推荐说得出为什么（可解释性）
+      expect(typeof s.viaVector).toBe('boolean');
+    }
+    expect(out.hint).toContain('get_session_detail');
+  });
+
+  it('suggest_related_sessions：scope 收窄不拦截推荐（导航辅助，钉住 design-related §4 裁决）', async () => {
+    try {
+      fs.writeFileSync(path.join(PROJECT, '.sessionrelay', 'scope.json'),
+        JSON.stringify({ version: '1.0', mode: 'predicate', filters: { topics: ['不存在的话题'] }, issued_at: new Date().toISOString() }));
+      const out = (await call('suggest_related_sessions', { session_id: 'rel0000000000001' })) as { found: boolean; count: number };
+      expect(out.found).toBe(true);
+      expect(out.count).toBeGreaterThanOrEqual(1); // scope 收窄不影响导航推荐
+    } finally {
+      fs.rmSync(path.join(PROJECT, '.sessionrelay', 'scope.json'), { force: true }); // 必须还原：断言失败也不污染后续用例
+    }
   });
 
   it('search_sessions：A 档 auto-scope 生效（老会话被裁剪）+ 出处块 + 命中不足 hint', async () => {

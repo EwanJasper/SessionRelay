@@ -386,6 +386,28 @@ export function buildServer(root: string, db: DB, cfg: RelayConfig): McpServer {
     return toolOut({ ok: true, sessionId: s.id, count: links.length, links });
   });
 
+  // 第 16 个工具（design-related）：算法发现的相关会话——与 get_linked_sessions（显式建立）语义不同
+  server.registerTool('suggest_related_sessions', {
+    title: '相关会话推荐',
+    description: '推荐与某会话主题相关的其他历史会话（算法发现，非显式关联）。何时用：正在看一个会话想知道"还有哪些相关讨论"、开新会话前想找可 attach 的历史、记不清关键词搜不到时以会话为锚找线索。注意：推荐仅为导航线索，内容以 get_session_detail 为准',
+    inputSchema: {
+      session_id: z.string().describe('锚会话 ID（支持前缀）'),
+      limit: z.number().optional().describe('默认 5，上限 10'),
+    },
+  }, async (args) => {
+    const s = findSessionByPrefix(db, args.session_id, project) ?? getSession(db, args.session_id);
+    if (!s) return toolOut({ found: false, hint: '未找到锚会话；用 list_sessions 查看可用会话' });
+    const { suggestRelated } = await import('../search-svc/related.js');
+    const { items } = await suggestRelated(db, cfg, { projectId: project, anchorId: s.id, limit: args.limit });
+    return toolOut({
+      found: true,
+      anchor: sessionBrief(db, s.id),
+      count: items.length,
+      suggestions: items.map((it) => ({ ...it, provenance: { sessionId: it.sessionId, source: it.source, createdAt: it.createdAt } })),
+      hint: '推荐仅为导航线索（不过 scope 契约）；深入内容用 get_session_detail，检索仍用 search_sessions',
+    });
+  });
+
   return server;
 }
 

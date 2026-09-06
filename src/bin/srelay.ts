@@ -230,6 +230,13 @@ program
   .action(async (f: string, o) => { const { cmdHistory } = await import('../cli/meta.js'); await cmdHistory(f, o); });
 
 program
+  .command('related <sessionIdPrefix>')
+  .description('以会话为锚推荐相关历史会话（向量相似 / 话题文件重叠，算法发现）')
+  .option('--limit <n>', '默认 5，上限 10')
+  .option('--json')
+  .action(async (id: string, opts) => { const { cmdRelated } = await import('../cli/query.js'); await cmdRelated(id, opts); });
+
+program
   .command('hook <event>')
   .description('（内部）Agent 生命周期钩子入口：写 spool 事件')
   .option('--id <sessionId>', '源会话 ID')
