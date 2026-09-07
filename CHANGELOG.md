@@ -3,6 +3,13 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.1] - 2026-09-07
+
+### 修复
+- **Windows 开机守护脚本失效（用户实报）**：服务注册此前把带 hash 的 chunk 文件名写死进启动脚本，srelay 升级重建 dist 后旧 chunk 消失，开机即报 `Cannot find module`。现解析稳定入口 `dist/srelay.js`，并在安装时预检入口存在性
+- **开机闪黑框**：注册表 Run 键现指向 wscript 静默启动器（.vbs 隐藏窗口运行）——登录不再弹出 cmd 窗口
+- **Windows 用户需重装一次服务**：`srelay watch --uninstall && srelay watch --install-service`
+
 ## [0.4.0] - 2026-09-06
 
 ### 新增

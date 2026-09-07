@@ -21,15 +21,40 @@ export function serviceId(root: string): string {
   return pathSlug(root).slice(-40).replace(/-+/g, '-').replace(/^-/, '').slice(-30) || 'default';
 }
 
-/** 守护启动命令参数（dev=tsx loader / prod=dist 入口） */
+/**
+ * 守护 CLI 入口（自审事故修复：绝不使用 import.meta.url）。
+ * 打包后 import.meta.url 是带 hash 的 chunk 文件名——写入服务脚本后，
+ * dist 一经重建（0.3.1 起构建先清空 dist）旧 chunk 即消失，开机脚本必然
+ * MODULE_NOT_FOUND。必须解析稳定文件名 dist/srelay.js。
+ */
+export function resolveWatchEntry(): { entry: string; exists: boolean } {
+  const isDev = import.meta.url.endsWith('.ts');
+  if (isDev) {
+    const entry = path.join(repoRoot(), 'src', 'bin', 'srelay.ts');
+    return { entry, exists: fs.existsSync(entry) };
+  }
+  return resolveWatchEntryFrom(import.meta.url);
+}
+
+/**
+ * prod 分支（参数化以便单测覆盖——本机 dev 形态永远走不到 prod，S7 盲区教训）：
+ * chunk 与 srelay.js 同在 <pkg>/dist/ 下，稳定入口 = chunk 同目录的 srelay.js
+ */
+export function resolveWatchEntryFrom(moduleUrl: string): { entry: string; exists: boolean } {
+  const chunkDir = path.dirname(fileURLToPath(moduleUrl));
+  const entry = path.join(chunkDir, 'srelay.js');
+  return { entry, exists: fs.existsSync(entry) };
+}
+
+/** 守护启动命令参数（dev=tsx loader / prod=dist/srelay.js 稳定入口） */
 export function buildWatchArgs(root: string): string[] {
   const isDev = import.meta.url.endsWith('.ts');
   if (isDev) {
     const loader = path.join(repoRoot(), 'node_modules', 'tsx', 'dist', 'loader.mjs');
-    const cli = path.join(repoRoot(), 'src', 'bin', 'srelay.ts');
-    return ['--import', pathToFileURLSafe(loader), cli, 'watch', '--foreground'];
+    const { entry } = resolveWatchEntry();
+    return ['--import', pathToFileURLSafe(loader), entry, 'watch', '--foreground'];
   }
-  return [fileURLToPath(import.meta.url), 'watch', '--foreground'];
+  return [resolveWatchEntry().entry, 'watch', '--foreground'];
 }
 
 function pathToFileURLSafe(p: string): string {
@@ -93,16 +118,31 @@ function windowsRunScript(root: string): string {
   return ['@echo off', `cd /d "${root}"`, `${nodeAbs} ${args}`, ''].join('\r\n');
 }
 
+/** 静默启动器：Run 键指向 vbs（wscript 无窗），cmd 以隐藏窗口运行——消除开机闪黑框 */
+export function windowsSilentVbs(cmdPath: string): string {
+  return `CreateObject("Wscript.Shell").Run """${cmdPath}""", 0, False\r\n`;
+}
+
 export async function installWatchService(root: string): Promise<void> {
   fs.mkdirSync(relayDir(root), { recursive: true });
+  // 入口预检（chunk-hash 事故防线）：守护入口必须是稳定存在文件——
+  // 0.4.0 前这里写入带 hash 的 chunk 路径，dist 重建后开机即 MODULE_NOT_FOUND
+  const { entry, exists } = resolveWatchEntry();
+  if (!exists) {
+    console.log(pc.red('✗ 守护入口不存在：') + entry);
+    console.log(pc.dim('  先运行 srelay build（开发）或重装 npm 包（用户），再 install-service'));
+    process.exit(1);
+  }
   if (process.platform === 'win32') {
     const { REG_PATH, REG_NAME } = await import('./winregistry.js');
     const cmdPath = path.join(relayDir(root), 'watch-task.cmd');
     fs.writeFileSync(cmdPath, windowsRunScript(root), 'utf8');
+    const vbsPath = path.join(relayDir(root), 'watch-task.vbs');
+    fs.writeFileSync(vbsPath, windowsSilentVbs(cmdPath), 'utf8');
     try {
       await execFileP('powershell', ['-Command',
-        `Set-ItemProperty -Path '${REG_PATH}' -Name '${REG_NAME}' -Value '${cmdPath}'`]);
-      console.log(pc.green('✓') + ' 守护已注册（登录自启动，无需管理员）');
+        `Set-ItemProperty -Path '${REG_PATH}' -Name '${REG_NAME}' -Value 'wscript.exe "${vbsPath}"'`]);
+      console.log(pc.green('✓') + ' 守护已注册（登录自启动，静默无窗口，无需管理员）');
       console.log(pc.dim(`  脚本：${cmdPath} · 取消：srelay watch --uninstall`));
     } catch (e) {
       console.log(pc.red('✗ 注册失败：') + (e as Error).message);

@@ -74,3 +74,38 @@ describe.skipIf(process.platform !== 'darwin')('daemon service · macOS 真装�
   }, 30000);
 });
 
+
+describe('daemon service · 守护入口稳定性（chunk-hash 事故回归）', () => {
+  it('S7 入口解析：绝不指向带 hash 的 chunk 文件（dist 重建后失效的根因）', async () => {
+    const { resolveWatchEntry } = await import('../../src/cli/service.js');
+    const { entry } = resolveWatchEntry();
+    // chunk 文件名模式：name-HASH.js（tsup 产物）——入口若匹配此模式即回归
+    expect(path.basename(entry)).not.toMatch(/-[A-Z0-9]{8}\.js$/);
+    // dev 模式指向源码入口；prod 模式必须是稳定的 dist/srelay.js
+    const isDev = entry.endsWith('.ts');
+    if (isDev) {
+      expect(entry.endsWith(path.join('src', 'bin', 'srelay.ts'))).toBe(true);
+    } else {
+      expect(entry.endsWith(path.join('dist', 'srelay.js'))).toBe(true);
+    }
+    expect(fs.existsSync(entry)).toBe(true);
+  });
+
+  it('S8 windowsSilentVbs：引用 cmd 且以隐藏窗口启动（参数 0 = 闪黑框修复）', async () => {
+    const { windowsSilentVbs } = await import('../../src/cli/service.js');
+    const vbs = windowsSilentVbs('C:\\x\\watch-task.cmd');
+    expect(vbs).toContain(', 0, False'); // 0 = 隐藏窗口
+    expect(vbs).toContain('watch-task.cmd');
+    expect(vbs).toContain('Wscript.Shell');
+  });
+
+  it('S9 prod 分支：假 chunk URL 解析出同目录稳定 srelay.js（dev 形态测不到的路径）', async () => {
+    const { resolveWatchEntryFrom } = await import('../../src/cli/service.js');
+    // 模拟打包形态：import.meta.url 是 <pkg>/dist/chunk-HASH.js
+    const fakeChunkUrl = new URL(`file:///${path.join(path.resolve('dist'), 'chunk-ABCD1234.js').replace(/\\/g, '/')}`).href;
+    const r = resolveWatchEntryFrom(fakeChunkUrl);
+    expect(r.entry.endsWith(path.join('dist', 'srelay.js'))).toBe(true); // 与 chunk 同目录，稳定文件名
+    expect(r.entry).not.toContain('chunk-');
+    expect(r.exists).toBe(true); // 本仓库 dist 刚构建过，srelay.js 真实存在
+  });
+});
