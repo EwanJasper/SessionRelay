@@ -3,6 +3,15 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.2] - 2026-09-07
+
+### 新增
+- **守护日志落盘与可诊断性**（0.4.1 静默启动的补全——用户反馈："下次报错我可能都看不到了"）：
+  - 三平台服务化运行输出统一落 `.sessionrelay/watch.log`（cmd 重定向 / launchd StandardOut-ErrorPath / systemd append）
+  - 日志自轮转：超 1MB 启动时截断保留尾部 100KB，不自转就会慢慢吃盘
+  - `srelay watch --status` 直接展示日志尾部；`srelay doctor` 在"服务已注册但守护未运行 + 日志含错误"时提示疑似异常退出
+- 原则落定：静默启动换来的不是"没有信号"，而是"信号换了个地方"——平时零打扰，出错必有处可查
+
 ## [0.4.1] - 2026-09-07
 
 ### 修复

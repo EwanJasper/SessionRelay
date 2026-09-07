@@ -109,3 +109,45 @@ describe('daemon service · 守护入口稳定性（chunk-hash 事故回归）',
     expect(r.exists).toBe(true); // 本仓库 dist 刚构建过，srelay.js 真实存在
   });
 });
+
+describe('daemon service · 日志可见性（0.4.2：静默启动必须有诊断出口）', () => {
+  it('S10 vbs 引用 cmd + 日志路径约定', async () => {
+    const { windowsSilentVbs, watchLogPath } = await import('../../src/cli/service.js');
+    const vbs = windowsSilentVbs('C:\\x\\watch-task.cmd');
+    expect(vbs).toContain('watch-task.cmd');
+    expect(watchLogPath('/tmp/proj')).toMatch(/watch\.log$/);
+  });
+
+  it('S10b launchd plist / systemd unit 均指向 watch.log', async () => {
+    const { buildLaunchdPlist, buildSystemdUnit, watchLogPath } = await import('../../src/cli/service.js');
+    const log = watchLogPath(ROOT);
+    const plist = buildLaunchdPlist(ROOT, NODE, ARGS);
+    expect(plist).toContain('StandardOutPath');
+    expect(plist).toContain('StandardErrorPath');
+    expect(plist).toContain(log.replace(/&/g, '&amp;'));
+    const unit = buildSystemdUnit(ROOT, NODE, ARGS);
+    expect(unit).toContain(`StandardOutput=append:${log}`);
+    expect(unit).toContain(`StandardError=append:${log}`);
+  });
+
+  it('S11 rotateWatchLog：超 1MB 截断留尾 100KB，未超不动', async () => {
+    const { rotateWatchLog, watchLogPath } = await import('../../src/cli/service.js');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'srelay-log-'));
+    fs.mkdirSync(path.join(tmp, '.sessionrelay'), { recursive: true });
+    try {
+      const log = watchLogPath(tmp);
+      // 未超阈值：不轮转
+      fs.writeFileSync(log, 'x'.repeat(1000));
+      expect(rotateWatchLog(tmp)).toBe(false);
+      // 超 1MB：截断保留尾部
+      fs.writeFileSync(log, 'HEAD-MARKER' + 'y'.repeat(2_000_000) + 'TAIL-MARKER');
+      expect(rotateWatchLog(tmp)).toBe(true);
+      const after = fs.readFileSync(log, 'utf8');
+      expect(after.length).toBeLessThan(200_000);
+      expect(after).toContain('TAIL-MARKER'); // 尾部保留
+      expect(after).not.toContain('HEAD-MARKER'); // 头部丢弃
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
