@@ -8,7 +8,7 @@
 git clone https://github.com/EwanJasper/SessionRelay.git
 cd SessionRelay
 npm install
-npm test          # 125+ 测试
+npm test          # 207 测试
 npm run build     # 构建 dist/
 npm run typecheck # tsc --noEmit
 ```

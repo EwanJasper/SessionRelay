@@ -95,10 +95,10 @@ npm link          # 之后全局可用 srelay 命令
 
 ```bash
 srelay --version   # 0.1.0
-srelay doctor      # 14 项环境自检
+srelay doctor      # 环境自检（含语义检索、守护日志等条件项）
 ```
 
-doctor 检查项：Node 版本 · FTS5 可用 · 中文分词 · 五个 AI 工具的源目录 · config · 数据库完整性 · 归档表 · 自定义适配器 · 守护进程。任何 ❌ 都带修复建议。
+doctor 检查项：Node 版本 · FTS5 可用 · 中文分词 · 五个 AI 工具的源目录 · config · 数据库完整性 · 归档表 · 自定义适配器 · 守护进程（含守护日志异常检测）· 语义检索（启用后查依赖）。任何 ❌ 都带修复建议。
 
 ---
 
@@ -278,7 +278,7 @@ srelay semantic disable                # 停用（向量保留，检索立即回
 **启用前你需要知道的**：
 
 - 依赖（transformers.js）与模型（bge-small-zh，Q8 约 35MB）装在用户目录 `~/.sessionrelay-semantic`，**不进 npm 包**；模型下载国内可设 `HF_ENDPOINT=https://hf-mirror.com`
-- **未启用 = 行为与过去版本完全一致**（MCP 工具恒 15 个）；启用后也只是补充——字面命中永远优先且不被替换，语义命中以 `viaSemantic: true` 标注、限量 top-5、余弦阈值默认 0.40（`config.json` 的 `semantic.threshold` 可调）
+- **未启用 = 行为与过去版本完全一致**（MCP 只读工具集不受影响，删除类工具恒为 0）；启用后也只是补充——字面命中永远优先且不被替换，语义命中以 `viaSemantic: true` 标注、限量 top-5、余弦阈值默认 0.40（`config.json` 的 `semantic.threshold` 可调）
 - 何时嵌入：只嵌 confirmed 会话（记忆层服务"过去的会话"）；resume 回滚 / 归档 / forget 会自动清理对应向量；新确认的会话由守护周期自动补嵌（每周期限量，不抢 CPU）
 - 实测开销：5000 会话级全量相似度扫描 2.6ms/查询；嵌入约 20ms/条；模型常驻内存约 50MB（enable 后的守护进程）
 - 实测效果（12 个技术会话语料）：换词查询的未命中率从 33% 降到 **0%**（12/12），字面命中不劣化
@@ -296,6 +296,15 @@ timeline
     title 不开守护 vs 开守护
     不开守护 : 你聊天（消息进 ZCode 库） : AI 触发上下文压缩 : 💥 消息被 ZCode 物理删除 : 你想起来跑 sync : ❌ 只能拿到压缩摘要，原文永久丢失
     开守护 : 你聊天（消息进 ZCode 库） : 守护 30 秒内自动入库 : AI 触发压缩 : ZCode 删除消息 : 😌 没关系，原文已在记忆库 : 压缩摘要也被捕获
+```
+
+### 安装与日志
+
+服务化运行时守护输出全部落盘到 `.sessionrelay/watch.log`（三平台一致，自动轮转防膨胀）。**开机静默无窗口，出错看日志**：
+
+```bash
+srelay watch --status    # 显示守护/服务状态 + 日志尾部
+srelay doctor            # 服务在但守护死了 + 日志有错 → 提示疑似异常退出
 ```
 
 ### 安装
@@ -618,7 +627,7 @@ srelay doctor                            # 环境自检
 
 # ═══ 守护 ═══
 srelay watch --install-service           # 注册自启动
-srelay watch --status                    # 状态检查
+srelay watch --status                    # 状态 + 守护日志尾部
 
 # ═══ 交接 ═══
 srelay export --all                      # 导出交接包

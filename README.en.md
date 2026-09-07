@@ -344,7 +344,7 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 
 ## Quality & verification
 
-- **185 tests** (unit / integration / MCP stdio real-handshake contract / end-to-end), one `npm test`
+- **207 tests** (unit / integration / MCP stdio real-handshake contract / live daemon-service install / end-to-end), one `npm test`
 - **CI green across 3 platforms × Node 22/24** (typecheck + test + build + dist smoke)
 - TypeScript strict, `npm run typecheck` clean
 - Real-machine acceptance at every phase (including the product recording its own birth)
