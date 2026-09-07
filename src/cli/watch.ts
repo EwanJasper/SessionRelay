@@ -5,7 +5,7 @@ import { isDaemonAlive } from '../shared/lock.js';
 import { runWatch } from '../capture/watch.js';
 import { findRelayRoot } from '../shared/paths.js';
 import { pc } from './ui.js';
-import { installWatchService, uninstallWatchService, watchServiceStatus, watchLogPath, rotateWatchLog } from './service.js';
+import { installWatchService, uninstallWatchService, watchServiceStatus, watchLogPath, rotateWatchLog, readLogTail } from './service.js';
 
 export async function cmdWatch(opts: { foreground?: boolean; installService?: boolean; uninstall?: boolean; status?: boolean }): Promise<void> {
   // watch 默认前台运行（服务与手动皆同路径）
@@ -15,11 +15,13 @@ export async function cmdWatch(opts: { foreground?: boolean; installService?: bo
     const alive = isDaemonAlive(root);
     console.log(`守护：${alive.alive ? pc.green(`运行中 (pid ${alive.pid})`) : pc.red('未运行')} · 服务：${await watchServiceStatus(root)}`);
     // 静默启动后报错的可诊断出口：日志尾部（用户教训——闪框有信号，纯静默=故障不可见）
-    const logFile = findRelayRoot(root) ? watchLogPath(findRelayRoot(root)!) : null;
-    if (logFile && fs.existsSync(logFile)) {
-      const tail = fs.readFileSync(logFile, 'utf8').trimEnd().split('\n').slice(-3);
-      console.log(pc.dim('日志尾部（' + logFile.replace(/\\/g, '/') + '）：'));
-      for (const line of tail) console.log(pc.dim('  ' + line));
+    const rr = findRelayRoot(root);
+    if (rr) {
+      const tail = readLogTail(rr, 2048).trimEnd().split('\n').slice(-3);
+      if (tail.some((l) => l.trim())) {
+        console.log(pc.dim('日志尾部（' + watchLogPath(rr).replace(/\\/g, '/') + '）：'));
+        for (const line of tail) console.log(pc.dim('  ' + line));
+      }
     }
     return;
   }
@@ -30,7 +32,10 @@ export async function cmdWatch(opts: { foreground?: boolean; installService?: bo
     console.log(pc.red('✗ 未找到 .sessionrelay，请先 srelay init'));
     process.exit(1);
   }
-  rotateWatchLog(rr); // 服务化输出无限追加，启动时自轮转（三平台统一由 node 自理）
+  rotateWatchLog(rr); // 启动时轮转
+  // 长驻不重启也要轮转（内存评估修复：启动时轮转挡不住开机到关机的堆积）——每小时一查
+  const rotator = setInterval(() => rotateWatchLog(rr), 3_600_000);
+  rotator.unref(); // 不阻塞进程退出
   await runWatch({ projectRoot: rr, config: loadConfig(rr) });
 }
 

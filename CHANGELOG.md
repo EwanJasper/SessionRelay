@@ -3,6 +3,12 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.3] - 2026-09-07
+
+### 修复（内存评估驱动）
+- **watch --status / doctor 不再全量读日志**：此前 readFileSync 整文件进堆再取尾部，大日志=内存尖峰；现 readLogTail 只 seek 读尾部（实测 5MB 日志堆增量 0.01MB）
+- **轮转周期化**：此前仅守护启动时轮转，开机到关机不重启则持续堆积（实测本机增速约 60KB/小时 ≈ 1.4MB/天）；现守护内每小时检查一次，文件稳定在 1.1MB 峰值→截断保留尾部 100KB
+
 ## [0.4.2] - 2026-09-07
 
 ### 新增

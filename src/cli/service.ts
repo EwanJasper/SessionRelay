@@ -66,6 +66,25 @@ export function watchLogPath(root: string): string {
   return path.join(relayDir(root), 'watch.log');
 }
 
+/**
+ * 只读日志尾部（内存评估修复）：绝不 readFileSync 全量——5MB 日志全读进堆
+ * 换 3 行输出是内存事故。seek 到 size-bytes 处读取，堆占用 O(bytes) 与文件大小无关。
+ */
+export function readLogTail(root: string, bytes = 2048): string {
+  try {
+    const f = watchLogPath(root);
+    if (!fs.existsSync(f)) return '';
+    const size = fs.statSync(f).size;
+    const start = Math.max(0, size - bytes);
+    const fh = fs.openSync(f, 'r');
+    try {
+      const buf = Buffer.alloc(Math.min(size, bytes));
+      fs.readSync(fh, buf, 0, buf.length, start);
+      return buf.toString('utf8');
+    } finally { fs.closeSync(fh); }
+  } catch { return ''; }
+}
+
 // ── macOS launchd ──
 
 export function launchdPlistPath(root: string): string {

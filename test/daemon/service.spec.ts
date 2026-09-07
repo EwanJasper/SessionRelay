@@ -150,4 +150,28 @@ describe('daemon service · 日志可见性（0.4.2：静默启动必须有诊�
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it('S12 readLogTail：只读尾部——大文件堆占用 O(bytes) 与文件大小无关（内存评估回归）', async () => {
+    const { readLogTail, watchLogPath } = await import('../../src/cli/service.js');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'srelay-tail-'));
+    fs.mkdirSync(path.join(tmp, '.sessionrelay'), { recursive: true });
+    try {
+      const log = watchLogPath(tmp);
+      // 不存在：空串不抛
+      expect(readLogTail(tmp)).toBe('');
+      // 5MB 日志：读 2KB 尾部，堆增量应远小于文件大小
+      fs.writeFileSync(log, 'z'.repeat(5_000_000) + '\nTAIL-LINE-1\nTAIL-LINE-2\n');
+      const before = process.memoryUsage().heapUsed;
+      const tail = readLogTail(tmp, 2048);
+      const delta = process.memoryUsage().heapUsed - before;
+      expect(tail).toContain('TAIL-LINE-2'); // 尾部内容正确
+      expect(tail.length).toBeLessThanOrEqual(4096); // 读取量受控（全量读会是 5MB 字符串）
+      expect(delta).toBeLessThan(1024 * 1024); // 堆增量 <1MB（旧实现全量读 ≈ 5MB+）
+      // 小于 bytes 的文件：全文返回
+      fs.writeFileSync(log, 'short');
+      expect(readLogTail(tmp, 2048)).toBe('short');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

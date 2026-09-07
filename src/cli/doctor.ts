@@ -89,13 +89,11 @@ export async function cmdDoctor(): Promise<void> {
       checks.push(c('守护进程', 'warn', '未运行', 'srelay watch --install-service 或 srelay sync 兜底'));
       // 静默启动时代的可诊断性（0.4.2）：服务在但守护死了 + 日志有 Error = 上次异常退出
       try {
-        const { watchLogPath } = await import('./service.js');
-        const f = watchLogPath(root);
-        if (fs.existsSync(f)) {
-          const tail = fs.readFileSync(f, 'utf8').slice(-4000);
-          if (/Error|错误|failed/i.test(tail)) {
-            checks.push(c('守护日志', 'warn', '尾部含错误（服务已注册但守护未运行=疑似异常退出）', 'srelay watch --status 看日志尾部'));
-          }
+        const { readLogTail } = await import('./service.js');
+        // 内存评估修复：readLogTail 只读尾部 4KB，不再全量 readFileSync
+        const tail = readLogTail(root, 4000);
+        if (/Error|错误|failed/i.test(tail)) {
+          checks.push(c('守护日志', 'warn', '尾部含错误（服务已注册但守护未运行=疑似异常退出）', 'srelay watch --status 看日志尾部'));
         }
       } catch { /* 日志读取失败不阻塞 doctor */ }
     } else {
