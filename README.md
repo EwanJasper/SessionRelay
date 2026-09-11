@@ -2,6 +2,15 @@
 
 简体中文 | [English](./README.en.md)
 
+[![CI](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml/badge.svg)](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
+[![downloads](https://img.shields.io/npm/dm/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
+![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933)
+![MCP](https://img.shields.io/badge/MCP-16%E5%B7%A5%E5%85%B7-6C5CE7)
+![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows_%7C_macOS_%7C_Linux-2D7DD2)
+![语义检索](https://img.shields.io/badge/%E8%AF%AD%E4%B9%89%E6%A3%80%E7%B4%A2-%E5%8F%AF%E9%80%89-F4A261)
+![License](https://img.shields.io/badge/License-MIT-EAC435)
+
 > **属于项目、不属于任何厂商的本地记忆层。**
 > Memory is always complete. Retrieval is always yours to shape.
 > 记忆始终完整收录；检索边界由你划定。

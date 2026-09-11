@@ -1,5 +1,14 @@
 # SessionRelay 会话接力
 
+[![CI](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml/badge.svg)](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
+[![downloads](https://img.shields.io/npm/dm/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
+![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933)
+![MCP](https://img.shields.io/badge/MCP-16_tools-6C5CE7)
+![Platform](https://img.shields.io/badge/Platform-Windows_%7C_macOS_%7C_Linux-2D7DD2)
+![Semantic](https://img.shields.io/badge/Semantic_Search-optional-F4A261)
+![License](https://img.shields.io/badge/License-MIT-EAC435)
+
 > **A local memory layer that belongs to your project — not to any vendor.**
 > Memory is always complete. Retrieval is always yours to shape.
 
