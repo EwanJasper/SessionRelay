@@ -3,6 +3,14 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.4] - 2026-09-07
+
+### 修复
+- **npm 页面 License 显示 "Proprietary"**：package.json 缺 license 字段（npm 缺省行为），而 LICENSE 文件实为 MIT——显式声明，npm 页面现已正确显示
+
+### 文档
+- README（中/英）头部新增 shields.io 徽章行：CI 实时状态 / npm 版本 / 月下载量（实时）+ Node ≥22 / MCP 16 工具 / 三平台 / 语义检索可选 / MIT
+
 ## [0.4.3] - 2026-09-07
 
 ### 修复（内存评估驱动）
