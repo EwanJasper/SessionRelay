@@ -72,7 +72,17 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
 
     const messages: ReadResult['messages'] = [];
     let maxSeq = 0;
+    // 游标竞态防线（用户实测 assistant 消息整批丢失的根因）：
+    // ZCode 先写 message 行、text part 流式后到。读到"无正文"的行时若游标照样
+    // 越过，正文落库后永远不会再被扫描（rowid > cursor）。对策：宽限期内
+    // （10 分钟）游标停在第一个空正文行之前，等下一轮重扫；过宽限的空行
+    // （已删除/中断的消息）不再拖住游标。重扫靠 messages (session_id, seq_num)
+    // 唯一键幂等，不会重复插入。
+    const EMPTY_GRACE_MS = 10 * 60_000;
+    let firstRecentEmpty: number | null = null; // 宽限期内空正文行的最小 rowid
+    let examined = cur.rowid ?? 0;
     for (const r of rows) {
+      examined = r.mrowid;
       let role: string;
       try {
         role = JSON.parse(r.data).role;
@@ -84,7 +94,12 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
         .map((p) => { try { return (JSON.parse(p.data).text ?? '') as string; } catch { return ''; } })
         .join('\n')
         .trim();
-      if (!content) continue;
+      if (!content) {
+        if (r.time_created >= Date.now() - EMPTY_GRACE_MS && firstRecentEmpty === null) {
+          firstRecentEmpty = r.mrowid;
+        }
+        continue;
+      }
       const seq = r.sequence ?? r.mrowid;
       messages.push({
         role: role === 'user' ? 'user' : 'assistant',
@@ -124,7 +139,10 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
       } catch { /* 坏 compaction part 跳过 */ }
     }
 
-    const maxRowid = rows.length > 0 ? rows[rows.length - 1].mrowid : cur.rowid ?? 0;
+    // 游标结算：宽限期内有空正文行 → 停在它之前（下一轮从这行重扫）；
+    // 否则推进到本次扫描末尾（现行为）。取 max 防回退。
+    const safeRowid = firstRecentEmpty !== null ? firstRecentEmpty - 1 : examined;
+    const maxRowid = Math.max(cur.rowid ?? 0, rows.length > 0 ? safeRowid : cur.rowid ?? 0);
     const lastComp = compParts.length > 0 ? compParts[compParts.length - 1].time_created : (cursorObj.lastCompaction ?? 0);
     return { messages, badLines: 0, cursor: { rowid: maxRowid, lastCompaction: lastComp } };
   } finally {

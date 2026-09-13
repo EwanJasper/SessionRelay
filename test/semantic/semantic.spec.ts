@@ -189,7 +189,7 @@ describe('semantic · 兼容与降级', () => {
     db.exec('DROP TABLE session_vectors');
     db.close();
     const db2 = createDb(':memory:'); // openExisting 同源迁移逻辑
-    expect(db2.pragma('user_version', { simple: true })).toBe(4);
+    expect(db2.pragma('user_version', { simple: true })).toBe(5);
     expect((db2.prepare('SELECT COUNT(*) n FROM session_vectors').get() as { n: number }).n).toBe(0);
     db2.close();
     void db;

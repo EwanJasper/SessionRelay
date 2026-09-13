@@ -3,6 +3,15 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+- **assistant 消息整批丢失（用户实报，另一 AI 交叉诊断确认）**：ZCode 先写 message 行、正文 part 流式后到；守护同步恰逢窗口期读到"无正文"行时跳过该行、游标却照常越过——正文落库后永久失扫。实测某会话 2167 条 assistant 全部丢失（user 完好：user 消息原子写入不踩竞态）。修复：宽限期（10 分钟）内游标停在空正文行之前，下轮重扫追回（seq_num 唯一键幂等）；过宽限的空行不拖死游标
+- **历史缺口自愈**：schema v5 迁移自动清空 zcode 源游标，升级后首次 sync 全量重扫，丢失的 assistant 消息自动补回（已捕获的不重复）；claude-code 源不受影响（JSONL 行内原子写入无此竞态）
+
+### 测试
+- 新增竞态回归 4 例（R1 跳过不越界/追回、R2 幂等、R3 宽限防停滞、R4 全周期）+ v5 迁移 1 例，破坏性验证通过（回退修复 R1 即红）
+
 ## [0.4.4] - 2026-09-07
 
 ### 修复

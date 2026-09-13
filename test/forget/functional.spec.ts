@@ -335,7 +335,7 @@ describe('forget · F 边界', () => {
 // ══════════ G 组：兼容性回归 ══════════
 
 describe('forget · G 兼容性', () => {
-  it('G1 v2 老库升级：user_version 2→当前（4）自动迁移，语义向量表一并就位', () => {
+  it('G1 v2 老库升级：user_version 2→当前（5）自动迁移，语义向量表一并就位', () => {
     const old = path.join(TMP, 'v2db', 'relay.sqlite');
     fs.mkdirSync(path.dirname(old), { recursive: true });
     const db = createDb(old);
@@ -343,7 +343,7 @@ describe('forget · G 兼容性', () => {
     db.exec('DROP TABLE forget_tombstones; DROP TABLE forget_log; DROP TABLE forget_detail; DROP TABLE IF EXISTS session_vectors;');
     db.close();
     const db2 = openExisting(old);
-    expect(db2.pragma('user_version', { simple: true })).toBe(4);
+    expect(db2.pragma('user_version', { simple: true })).toBe(5);
     for (const t of ['forget_tombstones', 'forget_log', 'forget_detail', 'session_vectors']) {
       expect(db2.prepare(`SELECT COUNT(*) n FROM ${t}`).get()).toBeTruthy();
     }
@@ -354,7 +354,7 @@ describe('forget · G 兼容性', () => {
     const fut = path.join(TMP, 'v5db', 'relay.sqlite');
     fs.mkdirSync(path.dirname(fut), { recursive: true });
     const db = createDb(fut);
-    db.pragma('user_version = 5'); // 模拟未来版本创建的库
+    db.pragma('user_version = 6'); // 模拟未来版本创建的库
     db.close();
     expect(() => openExisting(fut)).toThrow(/更新版本的 srelay/);
   });

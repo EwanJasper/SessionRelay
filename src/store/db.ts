@@ -9,7 +9,7 @@ export { dbFile } from '../shared/paths.js';
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -211,6 +211,12 @@ export function createDb(file: string = ':memory:'): DB {
       db.exec('ALTER TABLE sessions ADD COLUMN original_message_count INTEGER DEFAULT 0');
     }
   }
+  // v5 迁移（游标竞态修复的自愈）：清空 zcode 源游标，下次 sync 全量重扫。
+  // 0.4.4 及之前 assistant 消息可能因 part 流式延迟被跳过且游标越过——重扫按
+  // messages (session_id, seq_num) 唯一键幂等，已捕获的不会重复，缺失的被补齐。
+  if (v < 5) {
+    db.prepare("DELETE FROM source_files WHERE source = 'zcode'").run();
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
   return db;
 }
@@ -234,6 +240,9 @@ export function openExisting(file: string): DB {
         db.exec('ALTER TABLE sessions ADD COLUMN cleanup_at TEXT');
         db.exec('ALTER TABLE sessions ADD COLUMN original_message_count INTEGER DEFAULT 0');
       }
+    }
+    if (v < 5) {
+      db.prepare("DELETE FROM source_files WHERE source = 'zcode'").run();
     }
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
