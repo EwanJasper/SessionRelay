@@ -51,10 +51,15 @@ if (arg === 'resume') {
 }
 if (target === pkg0.version && !isDone('bump')) die(`目标版本 ${target} 与 package.json 相同`);
 
-// ── 2) 预检：工作区干净（resume 除外）──
+// ── 2) 预检：工作区干净（resume 除外）——必须在写 state 之前，否则 state 文件自己弄脏树 ──
 if (!isDone('commit')) {
   const dirty = sh('git status --porcelain', { quiet: true }).trim();
   if (dirty) die('工作区有未提交改动，先提交或 stash（发版应从干净树开始）');
+}
+
+// ── 1b) 确定目标版本后才落 state（clean 检查已过）──
+if (arg !== 'resume' && !state.done?.length) {
+  writeFileSync(statePath, JSON.stringify(state, null, 2));
 }
 
 // ── 3) CHANGELOG：顶部条目必须是目标版本或 Unreleased（改名），否则拒绝 ──
