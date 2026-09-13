@@ -62,16 +62,19 @@ if (arg !== 'resume' && !state.done?.length) {
   writeFileSync(statePath, JSON.stringify(state, null, 2));
 }
 
-// ── 3) CHANGELOG：顶部条目必须是目标版本或 Unreleased（改名），否则拒绝 ──
+// ── 3) CHANGELOG：顶部条目必须是目标版本或 Unreleased（改名+补日期），否则拒绝 ──
 const cl = readFileSync(clPath, 'utf-8');
-const topM = /^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})/m.exec(cl);
-if (!topM) die('CHANGELOG 找不到版本条目（## [x.y.z] - 日期）');
+const topM = /^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?/m.exec(cl);
+if (!topM) die('CHANGELOG 找不到版本条目（## [x.y.z] 或 ## [Unreleased]）');
 if (topM[1] !== target && topM[1] !== 'Unreleased') {
   die(`CHANGELOG 顶部是 [${topM[1]}]，既不是目标 ${target} 也不是 Unreleased——先写好发版条目再跑`);
 }
 if (!isDone('changelog')) {
   if (topM[1] === 'Unreleased') {
-    writeFileSync(clPath, cl.replace('## [Unreleased]', `## [${target}] - ${today()}`));
+    // 标准写法 Unreleased 无日期——补日期 + 改名（带 MISS 检测，不再静默）
+    const patched = cl.replace('## [Unreleased]', `## [${target}] - ${today()}`);
+    if (patched === cl) die('Unreleased 条目替换失败（不应发生）');
+    writeFileSync(clPath, patched);
     log(`CHANGELOG：Unreleased → [${target}] - ${today()}`);
   } else {
     log(`CHANGELOG：顶部已是 [${target}] ✓`);
