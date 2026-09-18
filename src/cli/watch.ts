@@ -4,6 +4,7 @@ import { loadConfig } from '../shared/config.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { runWatch } from '../capture/watch.js';
 import { findRelayRoot } from '../shared/paths.js';
+import { touchRegistry } from '../shared/registry.js';
 import { pc } from './ui.js';
 import { installWatchService, uninstallWatchService, watchServiceStatus, watchLogPath, rotateWatchLog, readLogTail } from './service.js';
 
@@ -36,6 +37,10 @@ export async function cmdWatch(opts: { foreground?: boolean; installService?: bo
   // 长驻不重启也要轮转（内存评估修复：启动时轮转挡不住开机到关机的堆积）——每小时一查
   const rotator = setInterval(() => rotateWatchLog(rr), 3_600_000);
   rotator.unref(); // 不阻塞进程退出
+  // 注册表心跳（design-serve-resolve §5）：告诉 serve"这个项目的守护活着"——多项目自动选择的唯一自动信号
+  touchRegistry(rr);
+  const heartbeat = setInterval(() => touchRegistry(rr), 10 * 60_000);
+  heartbeat.unref();
   await runWatch({ projectRoot: rr, config: loadConfig(rr) });
 }
 

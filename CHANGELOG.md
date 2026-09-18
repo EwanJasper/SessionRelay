@@ -3,6 +3,23 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- **serve 根解析信号链（design-serve-resolve，0.5.0）**：环境变量 → cwd 向上探测 → **MCP roots 协议**（自动问客户端"工作区在哪"；仅当客户端声明 roots 能力才发请求，避免超时挂起）→ **全局项目注册表**（`~/.sessionrelay-registry/projects.json`，恰好一个存活守护时自动选中）。新信号只插在原有"找不到项目即退出"的失败路径上——现有 env / cwd 行为零改动（回归用例钉死）
+- **解析失败不再 exit(1)**：MCP 连接照常建立、16 工具照常列出，工具调用返回 `unresolved_project` 指导载荷（各信号下场 tried + 候选项目列表 + howTo）。红线不变：候选多个时绝不静默猜项目（串库比连不上更糟），AI 带 `project` 参数选一次、本连接记住、可随时切换
+- 全部 16 个工具新增可选 `project` 参数（项目根绝对路径），用于未解析 / 多项目场景的显式选择与连接内切换
+- 全局项目注册表：`srelay init` 登记、守护每 10 分钟心跳、serve 任何成功解析也登记（目录名刻意避开 `~/.sessionrelay`——findRelayRoot 向上探测的就是该名字，语义目录 `~/.sessionrelay-semantic` 同款规避）；测试用 `SRELAY_REGISTRY_DIR` 重定向
+- `srelay doctor` 新增"项目注册表"检查项：预先回答"无配置时 serve 会自动选中谁"
+
+### 修复
+- **Qoder 连 MCP 报 `MCP_STDIO_PROCESS_EXITED_BEFORE_READY · exit 1`**（用户实报，Qoder 侧 AI 交叉诊断、我方源码核实）：根因是 Qoder 启动 MCP 子进程不把 cwd 设为项目根，serve 找不到 `.sessionrelay` 起手退出且 GUI 客户端不透传 stderr。现按上述信号链 + deferred 模式根治；README（中/英）与 user-guide 接入文档同步
+- `SRELAY_PROJECT_ROOT` 指向打不开的库：从未捕获异常堆栈改为干净 stderr 报错 + exit 1（退出时机与非零码不变）
+- R3 测试抓出并修复：客户端真实能力在 MCP initialize 握手完成后才可查，connect 返回后立即读恒为 undefined——生产上 roots 会永远被判"不支持"
+
+### 测试
+- 新增 serve 根解析回归 9 例（R1/R2 钉死 env/cwd 旧行为、R3 roots 自动选中、R4 注册表单存活自动选中、R5 多候选指导+选择+记住+切换、R6 零候选指导、R7 注册表损坏降级、R1b 坏库干净报错、R9 显式切换），含"仓库根自带 .sessionrelay（dogfood）导致仓库内 cwd 全部误命中"的环境预检；全量 222 例
+
 ## [0.4.5] - 2026-09-13
 
 ### 修复

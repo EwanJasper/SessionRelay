@@ -281,7 +281,7 @@ Add to your project's MCP config (`.mcp.json` or client settings):
 }
 ```
 
-> **Qoder users**: Qoder launches MCP subprocesses without setting the working directory to the project root, so the minimal config above makes the process exit at startup (`MCP_STDIO_PROCESS_EXITED_BEFORE_READY · exit 1`). Use the fallback below with `SRELAY_PROJECT_ROOT` pointing at your project root.
+> **Qoder users**: Qoder launches MCP subprocesses without setting the working directory to the project root. **Since 0.5.0 this needs no config**: serve tries the MCP roots protocol (asks the client "which workspace") first, then the global project registry (auto-selects when exactly one project is alive); if neither resolves, the connection stays up and the first tool call returns a candidate list — the AI passes `project` once to pick (remembered for the connection). The env var below remains the most robust explicit pin.
 
 ### Most robust fallback (any MCP client, bypasses PATH / cwd issues)
 
@@ -357,7 +357,7 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 
 ## Quality & verification
 
-- **207 tests** (unit / integration / MCP stdio real-handshake contract / live daemon-service install / end-to-end), one `npm test`
+- **222 tests** (unit / integration / MCP stdio real-handshake contract / serve root resolution / live daemon-service install / end-to-end), one `npm test`
 - **CI green across 3 platforms × Node 22/24** (typecheck + test + build + dist smoke)
 - TypeScript strict, `npm run typecheck` clean
 - Real-machine acceptance at every phase (including the product recording its own birth)

@@ -7,6 +7,7 @@ import { segment } from '../core/tokenize/tokenizer.js';
 import { loadConfig, claudeProjectsDir, zcodeDbPath } from '../shared/config.js';
 import { dbFile, findRelayRoot, ignoreFile } from '../shared/paths.js';
 import { isDaemonAlive } from '../shared/lock.js';
+import { registryCandidates } from '../shared/registry.js';
 import { watchServiceStatus } from './watch.js';
 import { pc } from './ui.js';
 
@@ -147,6 +148,20 @@ export async function cmdDoctor(): Promise<void> {
     } else {
       checks.push(c('Custom 适配器', 'ok', '无（可在 .sessionrelay/adapters/ 添加）'));
     }
+  }
+
+  // 全局项目注册表（design-serve-resolve §5）：预演 serve 多项目解析会选中谁（C6 可诊断闭环）
+  try {
+    const cands = registryCandidates();
+    const alive = cands.filter((x) => x.daemonAlive);
+    checks.push(cands.length === 0
+      ? c('项目注册表', 'ok', '空（init / 守护运行后自动登记）')
+      : alive.length === 1
+        ? c('项目注册表', 'ok', `${cands.length} 个候选 · 无配置时 serve 会自动选中「${alive[0].name}」（唯一存活守护）`)
+        : c('项目注册表', alive.length > 1 ? 'warn' : 'ok',
+            `${cands.length} 个候选 · ${alive.length === 0 ? '无存活守护，serve 不会自动选择' : `${alive.length} 个存活，serve 不会自动猜，需 project 参数显式选`}`));
+  } catch (e) {
+    checks.push(c('项目注册表', 'warn', (e as Error).message));
   }
 
   // 语义检索（R7 条件项：未启用=可选提示；启用后查依赖，回填进度在 srelay semantic status）

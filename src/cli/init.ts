@@ -5,6 +5,7 @@ import os from 'node:os';
 import readline from 'node:readline/promises';
 import { defaultConfig, saveConfig, IGNORE_TEMPLATE, loadConfig } from '../shared/config.js';
 import { inferProjectRoot, relayDir, dbFile, ignoreFile, projectIdOf } from '../shared/paths.js';
+import { touchRegistry } from '../shared/registry.js';
 import { createDb, getSession, countsByState, openExisting } from '../store/db.js';
 import { runSync } from '../capture/sync.js';
 import { runJudge } from '../capture/judge.js';
@@ -152,6 +153,8 @@ export async function cmdInit(opts: { backfill?: string; yes?: boolean; installS
     console.log(pc.dim(`  来源: ${sourcesList}`));
     console.log(pc.dim('  模式: full (可用 srelay mode 调整)'));
   }
+
+  touchRegistry(root); // 全局注册表（design-serve-resolve §5）：serve 多项目解析的候选来源
 
   const cfg = loadConfig(root);
   const backfill = parseBackfill(opts.backfill ?? '30d');

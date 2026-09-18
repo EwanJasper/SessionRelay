@@ -304,11 +304,11 @@ claude mcp add sessionrelay --scope user -- srelay serve
 }
 ```
 
-> **Qoder 用户注意**：Qoder 启动 MCP 子进程时不把工作目录设为项目根，上面的极简配置会让进程起手就退出（客户端报 `MCP_STDIO_PROCESS_EXITED_BEFORE_READY · exit 1`）。请改用下面的兜底配置，`SRELAY_PROJECT_ROOT` 显式指向项目根。
+> **Qoder 用户注意**：Qoder 启动 MCP 子进程时不把工作目录设为项目根。**0.5.0 起免配置**：serve 依次尝试 MCP roots 协议（自动问客户端"工作区在哪"）→ 全局项目注册表（恰好一个活跃项目时自动选中）；都无法确定时连接照常保持，首次工具调用返回候选项目列表，AI 带 `project` 参数选一次即可（本连接记住）。下面的环境变量仍是最稳的显式钉法。
 
 ### 最稳兜底（任何 MCP 客户端通吃，绕过 PATH / cwd 问题）
 
-`SRELAY_PROJECT_ROOT` 显式指定项目根，不依赖子进程的工作目录——PATH 解析不到 `srelay`、或客户端不设 cwd（Qoder 实测如此）时都能救。
+`SRELAY_PROJECT_ROOT` 显式指定项目根，不依赖子进程的工作目录——PATH 解析不到 `srelay`、客户端不设 cwd、或多项目并行想钉死某一个时都能救。
 
 ```json
 {
@@ -414,7 +414,7 @@ module.exports = {
 
 ## 质量与验证
 
-- **207 个测试**（单元 / 集成 / MCP stdio 真握手契约 / 守护服务真装 / 端到端），`npm test` 一键
+- **222 个测试**（单元 / 集成 / MCP stdio 真握手契约 / serve 根解析 / 守护服务真装 / 端到端），`npm test` 一键
 - **CI 三平台 × Node 22/24 常绿**（typecheck + test + build + dist 冒烟）
 - TypeScript strict，`npm run typecheck` 零错误
 - 每阶段实机验收（含用产品自身记录了自身的诞生过程）

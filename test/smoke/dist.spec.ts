@@ -52,7 +52,7 @@ const run = (args: string[], cwd: string, env: Record<string, string> = {}) =>
     expect(fs.existsSync(path.join(tmp, '.sessionrelay', 'relay.sqlite'))).toBe(true);
   });
 
-  it('MCP 握手：serverInfo 与 package.json 一致 + 15 工具全部注册', async () => {
+  it('MCP 握手：serverInfo 与 package.json 一致 + 16 工具全部注册', async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [DIST, 'serve'],
