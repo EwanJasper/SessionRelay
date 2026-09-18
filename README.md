@@ -304,7 +304,11 @@ claude mcp add sessionrelay --scope user -- srelay serve
 }
 ```
 
-### 最稳兜底（任何 MCP 客户端通吃，绕过 PATH 问题）
+> **Qoder 用户注意**：Qoder 启动 MCP 子进程时不把工作目录设为项目根，上面的极简配置会让进程起手就退出（客户端报 `MCP_STDIO_PROCESS_EXITED_BEFORE_READY · exit 1`）。请改用下面的兜底配置，`SRELAY_PROJECT_ROOT` 显式指向项目根。
+
+### 最稳兜底（任何 MCP 客户端通吃，绕过 PATH / cwd 问题）
+
+`SRELAY_PROJECT_ROOT` 显式指定项目根，不依赖子进程的工作目录——PATH 解析不到 `srelay`、或客户端不设 cwd（Qoder 实测如此）时都能救。
 
 ```json
 {

@@ -348,6 +348,8 @@ claude mcp add sessionrelay --scope user -- srelay serve
 }
 ```
 
+> **提示**：极简配置依赖客户端把子进程工作目录设在项目根（Claude Code / ZCode 都是这么做的）。Qoder 等不设 cwd 的客户端会让 `srelay serve` 起手就退出（客户端报 `MCP_STDIO_PROCESS_EXITED_BEFORE_READY · exit 1`）——在配置里加 `"env": { "SRELAY_PROJECT_ROOT": "D:\\你的项目路径" }` 即可，或换用 README 里的 node 绝对路径兜底写法。
+
 ### AI 什么时候会调用记忆？
 
 AI 依据**工具描述**和**响应提示**决策。推荐把下面这段加进你 agent 的 CLAUDE.md / AGENTS.md（复制即用）：

@@ -281,7 +281,11 @@ Add to your project's MCP config (`.mcp.json` or client settings):
 }
 ```
 
-### Most robust fallback (any MCP client, bypasses PATH issues)
+> **Qoder users**: Qoder launches MCP subprocesses without setting the working directory to the project root, so the minimal config above makes the process exit at startup (`MCP_STDIO_PROCESS_EXITED_BEFORE_READY · exit 1`). Use the fallback below with `SRELAY_PROJECT_ROOT` pointing at your project root.
+
+### Most robust fallback (any MCP client, bypasses PATH / cwd issues)
+
+`SRELAY_PROJECT_ROOT` pins the project root regardless of the subprocess working directory — it saves you when PATH cannot resolve `srelay` or when the client does not set cwd (Qoder, in practice).
 
 ```json
 {
