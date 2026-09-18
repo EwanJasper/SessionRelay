@@ -18,12 +18,16 @@ const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf-8')
 
 // 注意：CLI 子命令按 cwd 推断项目根（SRELAY_PROJECT_ROOT 仅 serve 支持），
 // 所以这里必须用 cwd 而非 env 控制目标目录——这本身就是被本测试抓住的一个约定。
+// SRELAY_REGISTRY_DIR 必须重定向：init 会登记全局注册表，不重定向会把临时路径写进真实家目录
+// （0.5.0 真实事故：三次全量测试 = 三条 Temp 垃圾条目）。
 const run = (args: string[], cwd: string, env: Record<string, string> = {}) =>
   execFileSync(process.execPath, [DIST, ...args], {
     encoding: 'utf-8',
     cwd,
-    env: { ...process.env, CI: '1', ...env },
+    env: { ...process.env, CI: '1', ...(registryDir ? { SRELAY_REGISTRY_DIR: registryDir } : {}), ...env },
   }).trim();
+
+let registryDir = ''; // beforeAll 指向临时目录：init 会登记全局注册表，不重定向会污染真实家目录
 
 (fs.existsSync(DIST) ? describe : describe.skip)('P4 · 发布产物冒烟（dist/srelay.js）', () => {
   let tmp: string;
@@ -31,6 +35,7 @@ const run = (args: string[], cwd: string, env: Record<string, string> = {}) =>
 
   beforeAll(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'srelay-smoke-'));
+    registryDir = path.join(tmp, '.registry');
     // 用户第一步：在全新目录 init（非交互、不回填、不拉起守护进程）
     run(['init', '--backfill', 'none'], tmp, { SRELAY_NO_DAEMON_SPAWN: '1' });
     // 用户第二步：status —— 兼作惰性建库触发（init 不建库，库在首个数据命令时创建）

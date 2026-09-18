@@ -544,6 +544,7 @@ class RootHolder {
         try { return fileURLToPath(r.uri); } catch { return null; }
       }).filter((x): x is string => !!x);
       const valid = dirs.filter((d) => fs.existsSync(relayDir(d)));
+      process.stderr.write(`[srelay-serve] roots 回报 ${dirs.length} 个目录，有效 ${valid.length} 个\n`);
       if (valid.length === 1) {
         this.tried.roots = 'single';
         await this.adopt(valid[0], 'roots');

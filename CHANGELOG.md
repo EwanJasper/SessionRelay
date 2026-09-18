@@ -3,6 +3,12 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 修复
+- **测试套件污染真实注册表**：dist 冒烟测试以生产环境子进程跑真实 `srelay init`，而 init 的登记（0.5.0 新增）会把项目根写进全局注册表——实测三次全量测试留下三条 Temp 垃圾条目。修复：测试子进程统一以 `SRELAY_REGISTRY_DIR` 重定向到临时目录（读侧剪枝本就会剔除已消失路径，现在从源头不写）
+- serve 根解析诊断补一行：deferred 模式下把 roots 回报数/有效数落到 stderr（本机验证 roots 链路时发现排障缺现场）
+
 ## [0.5.0] - 2026-09-18
 
 ### 新增
