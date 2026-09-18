@@ -3,7 +3,7 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.5.0] - 2026-09-18
 
 ### 新增
 - **serve 根解析信号链（design-serve-resolve，0.5.0）**：环境变量 → cwd 向上探测 → **MCP roots 协议**（自动问客户端"工作区在哪"；仅当客户端声明 roots 能力才发请求，避免超时挂起）→ **全局项目注册表**（`~/.sessionrelay-registry/projects.json`，恰好一个存活守护时自动选中）。新信号只插在原有"找不到项目即退出"的失败路径上——现有 env / cwd 行为零改动（回归用例钉死）
