@@ -10,8 +10,10 @@ export async function cmdDecisions(opts: { topic?: string; source?: string; limi
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
-    const rows = listDecisions(db, cfg.identity.project_id ?? root, { topic: opts.topic, source: opts.source })
-      .slice(0, opts.limit ?? 20);
+    // [fork] listDecisions 升序返回（全列表"按时间"语义）；但 limit 语义应取"最近 N 条"——
+    // 原实现 slice(0, limit) 取的是最老的 N 条，简报/CLI 的"最近决策"永远显示陈年旧账
+    const all = listDecisions(db, cfg.identity.project_id ?? root, { topic: opts.topic, source: opts.source });
+    const rows = all.slice(-(opts.limit ?? 20)).reverse();
     if (opts.json) { console.log(JSON.stringify({ count: rows.length, decisions: rows }, null, 2)); return; }
     if (rows.length === 0) {
       console.log(pc.dim('（暂无已确认决策。会话 confirmed 后自动提取——见 srelay list --state pending）'));
