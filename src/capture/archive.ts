@@ -46,7 +46,10 @@ function isProtected(s: SessionRow): string | null {
 export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
   const result: ArchiveResult = { archived: 0, skipped: 0, bytesFreed: 0, details: [] };
   const now = new Date();
-  const cutoff = opts.days
+  // [fork 0922] days/sizeMb 为 0 是合法值（"归档 0 天前"="全归档"边界语义由调用方定），
+  // 原实现的 truthy 判断把 0 当"未提供"→ cutoff 退化成 9999-12-31、预算退化成无限——
+  // 用户要 0 条实际归档全部（配 --hard 即灾难）。改显式 != null 判定。
+  const cutoff = opts.days != null && Number.isFinite(opts.days)
     ? new Date(now.getTime() - opts.days * 86400_000).toISOString()
     : opts.before ?? '9999-12-31';
 
@@ -83,8 +86,8 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
     });
   }
 
-  // 按体积限制（如果指定了 sizeMb）
-  let bytesBudget = opts.sizeMb ? opts.sizeMb * 1024 * 1024 : Infinity;
+  // 按体积限制（如果指定了 sizeMb；0 也按 0 尊重，同上）
+  let bytesBudget = opts.sizeMb != null && Number.isFinite(opts.sizeMb) ? opts.sizeMb * 1024 * 1024 : Infinity;
 
   for (const s of candidates) {
     // 保护规则
