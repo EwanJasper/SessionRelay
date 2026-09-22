@@ -9,7 +9,8 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import { openExisting } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
-import { projectIdOf, dbFile } from '../shared/paths.js';
+import { projectIdOf, dbFile, statsFile } from '../shared/paths.js';
+import { StatsCounter } from '../core/stats/counter.js';
 import { acquireLock, touchLock, releaseLock, isDaemonAlive } from '../shared/lock.js';
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
@@ -83,10 +84,13 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
   const projectId = opts.config.identity.project_id ?? projectIdOf(root);
 
   let chain: Promise<void> = Promise.resolve(); // 串行化所有写周期（T23 的进程内体现）
+  // [fork 0922] 接通本地匿名计数器：守护侧的 ignore 拦截/resumed/confirmed 原来从不计数，
+  // status 面板"拦截 0 次"与实际不符
+  const stats = new StatsCounter(statsFile(root));
   const cycle = (why: string) => {
     chain = chain.then(async () => {
       try {
-        const s = await runSync({ projectRoot: root, config: opts.config, db });
+        const s = await runSync({ projectRoot: root, config: opts.config, db, stats });
         const spool = consumeHookEvents(root, db, new Date()); // R4：hook 事件 → 立即转 pending
         const j = runJudge(db, { projectId, now: new Date(), idleMin: opts.config.capture.idle_threshold_min, cooldownH: opts.config.capture.cooldown_hours });
         if (s.newMessages > 0 || s.resumed > 0 || j.confirmed > 0 || spool.endSignals > 0 || why !== 'tick') {

@@ -781,10 +781,13 @@ export function insertMessage(
   db: DB,
   m: { sessionId: string; role: string; content: string; seqNum: number; createdAt?: string },
 ): number {
+  // [fork 0922] 索引文本截断 100KB：jieba 对超大消息（工具输出转储）同步分词会卡事件循环秒级；
+  // 100KB 内检索召回完整，超出部分正文仍全量入库、只是不进全文索引
+  const idxSource = m.content.length > 100_000 ? m.content.slice(0, 100_000) : m.content;
   const info = db.prepare(`
     INSERT OR IGNORE INTO messages (session_id, role, content, search_text, seq_num, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(m.sessionId, m.role, m.content, toSearchText(m.content), m.seqNum, m.createdAt ?? null);
+  `).run(m.sessionId, m.role, m.content, toSearchText(idxSource), m.seqNum, m.createdAt ?? null);
   return info.changes;
 }
 

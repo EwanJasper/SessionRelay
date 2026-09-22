@@ -27,14 +27,21 @@ export function resetConn(): void {
   cachedPath = null;
 }
 
+// [fork 0922] discover 结果缓存：源库未被写入（文件 mtime 未变）时直接复用上一轮结果，
+// 空闲周期 0 SQL。原实现每周期对 ZCode 库全表 lower(directory) 扫描（无索引），
+// 全局守护 N 个 worker × 每个事件都各扫一遍。
+let discoverCache: { mtimeMs: number; rows: DiscoveredSession[] } | null = null;
+
 export function discover(projectRoot: string, dbPath: string): DiscoveredSession[] {
   if (!fs.existsSync(dbPath)) return [];
+  const st = fs.statSync(dbPath);
+  if (discoverCache && discoverCache.mtimeMs === st.mtimeMs) return discoverCache.rows;
   const z = getConn(dbPath);
   try {
     const rows = z
       .prepare('SELECT id, title, time_created, time_updated FROM session WHERE lower(directory) = lower(?)')
       .all(path.resolve(projectRoot)) as Array<{ id: string; title: string; time_created: number; time_updated: number }>;
-    return rows.map((r) => ({
+    const out = rows.map((r) => ({
       source: SOURCE_ID,
       sourceSessionId: r.id,
       sourceFile: `zcode:${r.id}`,
@@ -44,6 +51,8 @@ export function discover(projectRoot: string, dbPath: string): DiscoveredSession
       sizeBytes: 0,
       mtimeMs: r.time_updated,
     }));
+    discoverCache = { mtimeMs: st.mtimeMs, rows: out };
+    return out;
   } finally {
     // 使用缓存连接，不关闭（由 resetConn 或进程退出时关闭）
   }
