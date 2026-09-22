@@ -69,6 +69,19 @@ function sentences(text: string): string[] {
   return text.split(/(?<=[。！？!?\n])/).map((s) => s.trim()).filter(Boolean);
 }
 
+// [fork 0922] 决策合理性守卫：正则只管"句首有触发词"，不管句子长什么样——
+// 实测垃圾三来源：看板表格行（| 分隔）、Markdown 粗体残片（**）、消息内嵌 JSON 转义串。
+// 在抽取端拒收，比事后清洗数据治本。
+function plausibleDecision(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 6) return false; // 纯碎片（"决定装哪些："）
+  if (/[:：|]\s*$/.test(t)) return false; // 半句：以冒号/竖线收尾
+  if (/\*\*\s*$/.test(t) || /^\*\*/.test(t)) return false; // Markdown 粗体残片
+  if ((t.match(/\|/g) ?? []).length >= 2) return false; // 表格行
+  if (/"(?:confirmed|title|session_id)"\s*:/.test(t) || /\}\s*,\s*\{/.test(t)) return false; // 内嵌 JSON 残片
+  return true;
+}
+
 export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
   const out: ExtractedMeta['decisions'] = [];
   const seen = new Set<string>();
@@ -78,6 +91,7 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         const hit = s.match(re);
         if (!hit) continue;
         const text = hit[0].replace(/\s+/g, ' ').trim().slice(0, 90);
+        if (!plausibleDecision(text)) break; // [fork 0922] 残片拒收
         const key = text.slice(0, 20);
         if (seen.has(key)) break;
         seen.add(key);

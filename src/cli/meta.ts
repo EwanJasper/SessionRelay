@@ -34,7 +34,10 @@ export async function cmdUnresolved(opts: { limit?: number; json?: boolean }): P
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
-    const rows = listUnresolved(db, cfg.identity.project_id ?? root, opts.limit ?? 20);
+    const cutoff = Date.now() - 14 * 86_400_000; // [fork 0922] 未解决有保质期：14 天自动淡出（老问题没被再问起就该沉底）
+    const rows = listUnresolved(db, cfg.identity.project_id ?? root, 100)
+      .filter((r) => new Date(r.at).getTime() >= cutoff)
+      .slice(0, opts.limit ?? 20);
     if (opts.json) { console.log(JSON.stringify({ count: rows.length, unresolved: rows }, null, 2)); return; }
     if (rows.length === 0) { console.log(pc.dim('（暂无未决问题）')); return; }
     for (const r of rows) {
