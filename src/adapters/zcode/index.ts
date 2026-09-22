@@ -30,12 +30,16 @@ export function resetConn(): void {
 // [fork 0922] discover 结果缓存：源库未被写入（文件 mtime 未变）时直接复用上一轮结果，
 // 空闲周期 0 SQL。原实现每周期对 ZCode 库全表 lower(directory) 扫描（无索引），
 // 全局守护 N 个 worker × 每个事件都各扫一遍。
-let discoverCache: { mtimeMs: number; rows: DiscoveredSession[] } | null = null;
+// ⚠️ 键必须含项目根：多个项目共享同一源库，只按 mtime 键会让 B 项目拿到 A 项目的
+// 会话列表并错误入库（0922 晚实测污染：music 42→559、novel 15→495）。
+const discoverCache = new Map<string, { mtimeMs: number; rows: DiscoveredSession[] }>();
 
 export function discover(projectRoot: string, dbPath: string): DiscoveredSession[] {
   if (!fs.existsSync(dbPath)) return [];
   const st = fs.statSync(dbPath);
-  if (discoverCache && discoverCache.mtimeMs === st.mtimeMs) return discoverCache.rows;
+  const cacheKey = `${path.resolve(projectRoot).toLowerCase()}\u0000${path.resolve(dbPath).toLowerCase()}`;
+  const hit = discoverCache.get(cacheKey);
+  if (hit && hit.mtimeMs === st.mtimeMs) return hit.rows;
   const z = getConn(dbPath);
   try {
     const rows = z
@@ -51,7 +55,7 @@ export function discover(projectRoot: string, dbPath: string): DiscoveredSession
       sizeBytes: 0,
       mtimeMs: r.time_updated,
     }));
-    discoverCache = { mtimeMs: st.mtimeMs, rows: out };
+    discoverCache.set(cacheKey, { mtimeMs: st.mtimeMs, rows: out });
     return out;
   } finally {
     // 使用缓存连接，不关闭（由 resetConn 或进程退出时关闭）
