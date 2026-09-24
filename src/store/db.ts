@@ -415,7 +415,7 @@ export function getMessageRange(db: DB, sessionId: string, fromSeq: number, toSe
 
 // ───────────────────── Phase 2：confirmed 副作用与元数据查询 ─────────────────────
 
-import { extractMessages, summaryRule, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
+import { extractMessages, extractDecisions, extractQuestions, summaryRule, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
 
 export function getSessionMessages(db: DB, sessionId: string): Msg[] {
   return (db.prepare('SELECT role, content, seq_num, created_at FROM messages WHERE session_id = ? ORDER BY seq_num')
@@ -446,6 +446,38 @@ export function confirmSession(db: DB, id: string, at: string): boolean {
   if (!s) return false;
   if (!refreshExtraction(db, id)) return false;
   db.prepare(`UPDATE sessions SET state = 'confirmed', confirmed_at = ?, pending_at = NULL WHERE id = ?`).run(at, id);
+  return true;
+}
+
+/** [fork 0924b] 决策/问题增量刷新（pending 转换用，O(增量)）：
+ *  水位 = 决策列里已有的最大 seq；只对新消息跑提取并追加（键去重）。
+ *  topics/summary/meta_text 的全量重建留给 confirm（6h 一次，成本可摊）。
+ *  没有水位的会话（从未提取过）退化为全量——与旧行为一致。 */
+export function refreshDecisionsIncremental(db: DB, id: string): boolean {
+  const s = getSession(db, id);
+  if (!s) return false;
+  let existing: Array<{ text: string; seq: number; at?: string }> = [];
+  try { existing = JSON.parse((db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(id) as { decisions?: string } | undefined)?.decisions ?? '[]'); } catch { existing = []; }
+  const lastSeq = existing.reduce((m, d) => Math.max(m, d.seq ?? 0), 0);
+  const msgs = (db.prepare('SELECT role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? AND seq_num > ? ORDER BY seq_num')
+    .all(id, lastSeq) as Msg[]).map((m) => ({ ...m, role: m.role === 'user' ? 'user' as const : 'assistant' as const }));
+  const newDecs = extractDecisions(msgs).filter((d) => !existing.some((e) => e.text === d.text));
+  const newQs = extractQuestions(msgs);
+  if (newDecs.length === 0 && newQs.length === 0) return true;
+  const mergedDecs = [...existing, ...newDecs];
+  let questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }> = [];
+  try { questions = JSON.parse((db.prepare('SELECT key_questions FROM sessions WHERE id = ?').get(id) as { key_questions?: string } | undefined)?.key_questions ?? '[]'); } catch { questions = []; }
+  const qKeys = new Set(questions.map((q) => (q.q ?? '').slice(0, 40)));
+  const mergedQs = [...questions, ...newQs.filter((q) => !qKeys.has((q.q ?? '').slice(0, 40)))];
+  const existingTags = (() => {
+    const row = db.prepare('SELECT user_tags, topics FROM sessions WHERE id = ?').get(id) as { user_tags?: string | null; topics?: string | null } | undefined;
+    try { return JSON.parse(row?.user_tags ?? '[]') as string[]; } catch { return []; }
+  })();
+  let existingTopics: string[] = [];
+  try { existingTopics = JSON.parse((db.prepare('SELECT topics FROM sessions WHERE id = ?').get(id) as { topics?: string | null } | undefined)?.topics ?? '[]') as string[]; } catch { existingTopics = []; }
+  const topicsAndDecisions = [...existingTopics, ...mergedDecs.map((d) => d.text.slice(0, 30)), ...existingTags];
+  db.prepare('UPDATE sessions SET decisions = ?, key_questions = ?, meta_text = ? WHERE id = ?')
+    .run(JSON.stringify(mergedDecs), JSON.stringify(mergedQs), metaTextOf(s.title, topicsAndDecisions), id);
   return true;
 }
 
