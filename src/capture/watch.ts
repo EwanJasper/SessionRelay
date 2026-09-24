@@ -92,7 +92,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
       try {
         const s = await runSync({ projectRoot: root, config: opts.config, db, stats });
         const spool = consumeHookEvents(root, db, new Date()); // R4：hook 事件 → 立即转 pending
-        const j = runJudge(db, { projectId, now: new Date(), idleMin: opts.config.capture.idle_threshold_min, cooldownH: opts.config.capture.cooldown_hours });
+        const j = runJudge(db, { projectId, now: new Date(), idleMin: opts.config.capture.idle_threshold_min, cooldownH: opts.config.capture.cooldown_hours, stats });
         if (s.newMessages > 0 || s.resumed > 0 || j.confirmed > 0 || spool.endSignals > 0 || why !== 'tick') {
           log(`${why}: +${s.newMessages} 消息 · resumed ${s.resumed} · pending ${j.toPending} · confirmed ${j.confirmed}${spool.endSignals ? ` · hook信号 ${spool.endSignals}` : ''}`);
         }
