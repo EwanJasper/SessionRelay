@@ -79,6 +79,7 @@ function plausibleDecision(text: string): boolean {
   if (/\*\*\s*$/.test(t) || /^\*\*/.test(t)) return false; // Markdown 粗体残片
   if ((t.match(/\|/g) ?? []).length >= 2) return false; // 表格行
   if (/"(?:confirmed|title|session_id)"\s*:/.test(t) || /\}\s*,\s*\{/.test(t)) return false; // 内嵌 JSON 残片
+  if (/^[）)】」"'、，。]/.test(t)) return false; // [fork 0924] 以闭括号/标点开头=句子中段截出的残片
   return true;
 }
 
@@ -90,7 +91,18 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
       for (const re of DECISION_RES) {
         const hit = s.match(re);
         if (!hit) continue;
-        const text = hit[0].replace(/\s+/g, ' ').trim().slice(0, 90);
+        // [fork 0924] 截断对齐（mc整合包反馈）：超长时在最近的停顿处切，再剥尾部括号/引号残片；
+        // 原 90 字符硬切会产生"石头船放大时质量爆炸增长"这类半句
+        let text = hit[0].replace(/\s+/g, ' ').trim();
+        if (text.length > 90) {
+          const w = text.slice(0, 90);
+          const i = Math.max(
+            w.lastIndexOf('，'), w.lastIndexOf('、'), w.lastIndexOf('；'),
+            w.lastIndexOf(','), w.lastIndexOf(';'), w.lastIndexOf(' '),
+          );
+          text = i > 40 ? w.slice(0, i) : w;
+        }
+        text = text.replace(/[）)】」"'、，]+$/u, '').trim();
         if (!plausibleDecision(text)) break; // [fork 0922] 残片拒收
         const key = text.slice(0, 20);
         if (seen.has(key)) break;

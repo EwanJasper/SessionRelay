@@ -263,7 +263,7 @@ export interface UpsertCapture {
   createdAt: string;
   lastEventAt: string;
   sourceFile: string;
-  origin?: 'auto' | 'manual';
+  origin?: 'auto' | 'manual' | 'workflow';
 }
 
 export function upsertCapturedSession(
@@ -424,7 +424,9 @@ export function getSessionMessages(db: DB, sessionId: string): Msg[] {
 }
 
 /** confirmed 统一入口（judge 与 srelay confirm 共用）：提取元数据 + summary_rule + meta_text 重算 */
-export function confirmSession(db: DB, id: string, at: string): boolean {
+/** [fork 0924] 提取刷新（不改变状态）：长活会话在 pending 转换时调用——
+ *  决策/话题/问题随消息增量对齐，不再冻结到 6h 确认（mc整合包实测：活跃会话决策滞后 20+ 小时） */
+export function refreshExtraction(db: DB, id: string): boolean {
   const s = getSession(db, id);
   if (!s) return false;
   const msgs = getSessionMessages(db, id); // meta 模式无正文 → 提取为空，摘要仅标题/计数
@@ -436,6 +438,13 @@ export function confirmSession(db: DB, id: string, at: string): boolean {
     lastAt: s.last_event_at,
   });
   applyExtraction(db, id, meta, summary);
+  return true;
+}
+
+export function confirmSession(db: DB, id: string, at: string): boolean {
+  const s = getSession(db, id);
+  if (!s) return false;
+  if (!refreshExtraction(db, id)) return false;
   db.prepare(`UPDATE sessions SET state = 'confirmed', confirmed_at = ?, pending_at = NULL WHERE id = ?`).run(at, id);
   return true;
 }
@@ -466,7 +475,8 @@ export interface DecisionRow {
 }
 
 export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string }): DecisionRow[] {
-  const conds = ['project_id = ?', "state = 'confirmed'", 'decisions IS NOT NULL'];
+  // [fork 0924] 默认排除 origin='workflow'（工作流子代理施工日志，mc整合包实测占决策碎片 88%）
+  const conds = ['project_id = ?', "state = 'confirmed'", 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')"];
   const params: unknown[] = [projectId];
   if (filter?.source) { conds.push('source = ?'); params.push(filter.source); }
   const rows = db.prepare(`SELECT id, source, title, created_at, decisions, topics FROM sessions WHERE ${conds.join(' AND ')} ORDER BY created_at DESC`).all(...params) as Array<{

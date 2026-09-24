@@ -73,6 +73,9 @@ export interface DiscoveredSession {
   updatedAt?: string;
   sizeBytes: number;
   mtimeMs: number;
+  /** [fork 0924] 会话来源提示：适配器识别出"非项目正主"的会话（如工作流子代理）时标注，
+   *  入库时写入 origin 列，决策检索默认排除——防施工碎片淹没项目决策 */
+  originHint?: 'workflow';
 }
 
 /** 读取结果 */

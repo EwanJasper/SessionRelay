@@ -54,6 +54,9 @@ export function discover(projectRoot: string, dbPath: string): DiscoveredSession
       updatedAt: new Date(r.time_updated).toISOString(),
       sizeBytes: 0,
       mtimeMs: r.time_updated,
+      // [fork 0924] 工作流子代理会话标注 origin=workflow：它们是施工日志不是项目会话，
+      // 决策提取/检索默认排除（mc整合包实测：88% 决策碎片来自它们）
+      originHint: /^workflow subagent/i.test(r.title ?? '') ? ('workflow' as const) : undefined,
     }));
     discoverCache.set(cacheKey, { mtimeMs: st.mtimeMs, rows: out });
     return out;

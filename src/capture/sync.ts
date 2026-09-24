@@ -231,7 +231,8 @@ async function ingestOne(
       createdAt: ds.createdAt ?? lastEventAt,
       lastEventAt,
       sourceFile: ds.sourceFile,
-      origin: ctx.origin,
+      // [fork 0924] 适配器的来源提示（如 zcode 工作流子代理→workflow）优先于默认 auto
+      origin: ds.originHint ?? ctx.origin,
     });
     if (up.isNew) ctx.result.newSessions++;
 
