@@ -139,6 +139,8 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
     if (m.role !== 'user') return;
     for (const s of sentences(m.content)) {
       if (!Q_MARK.test(s) || s.length < 8 || !Q_HINT.test(s)) continue;
+      // [fork 0924] 问题也要过碎片守卫：列表项/表格行/粗体残片不是真问题（mc 整合包反馈同族）
+      if (/^\s*([-*#>）)」]|&&)/.test(s) || /\|\s*-{2,}/.test(s) || /\*\*/.test(s)) continue;
       const tailAsked = idx >= Math.floor(total * 0.7); // 会话尾部提问，大概率未被回答
       out.push({
         q: s.replace(/\s+/g, ' ').trim().slice(0, 90),
