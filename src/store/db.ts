@@ -508,10 +508,15 @@ export function listUnresolved(db: DB, projectId: string, limit = 20): Unresolve
     id: string; source: string; title: string | null; created_at: string; key_questions: string;
   }>;
   const out: UnresolvedRow[] = [];
+  const seenQ = new Set<string>();
   for (const r of rows) {
     let qs: Array<{ q: string; at?: string; unresolved: boolean }> = [];
     try { qs = JSON.parse(r.key_questions); } catch { continue; }
     for (const q of qs.filter((x) => x.unresolved)) {
+      // [fork 0924] 同一问题在多个会话被捕获时去重（简报曾同条双显）
+      const key = (q.q ?? '').replace(/\s+/g, '').slice(0, 40);
+      if (key && seenQ.has(key)) continue;
+      if (key) seenQ.add(key);
       out.push({ q: q.q, at: q.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title });
     }
   }
