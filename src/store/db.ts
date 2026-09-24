@@ -451,7 +451,13 @@ export function confirmSession(db: DB, id: string, at: string): boolean {
 
 export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary: string): void {
   const s = getSession(db, id);
-  const topicsAndDecisions = [...meta.topics, ...meta.decisions.map((d) => d.text.slice(0, 30))];
+  // [fork 0924] meta_text 重写必须并回既有 user_tags（confirm/refresh 路径同 annotate/save——
+  // 否则刷新一次，用户标签就从检索索引里静默消失）
+  let existingTags: string[] = [];
+  try {
+    existingTags = JSON.parse((db.prepare('SELECT user_tags FROM sessions WHERE id = ?').get(id) as { user_tags?: string | null } | undefined)?.user_tags ?? '[]') as string[];
+  } catch { /* 空标签 */ }
+  const topicsAndDecisions = [...meta.topics, ...meta.decisions.map((d) => d.text.slice(0, 30)), ...existingTags];
   db.prepare(`
     UPDATE sessions SET
       files_mentioned = ?, topics = ?, decisions = ?, key_questions = ?, code_changes = ?,
