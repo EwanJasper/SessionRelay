@@ -481,8 +481,10 @@ export interface DecisionRow {
 }
 
 export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string }): DecisionRow[] {
-  // [fork 0924] 默认排除 origin='workflow'（工作流子代理施工日志，mc整合包实测占决策碎片 88%）
-  const conds = ['project_id = ?', "state = 'confirmed'", 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')"];
+  // [fork 0924b] 不再过滤 state='confirmed'——长活会话（一直 active）的决策也要可见，
+  // 否则决策列再新鲜也进不了简报（mc整合包 0924 实测：791 条消息的活跃会话 9 条决策不可见）。
+  // 未确认会话的"半成品"风险由抽取守卫+origin 排除+简报 48h 窗三层兜住。
+  const conds = ['project_id = ?', 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')"];
   const params: unknown[] = [projectId];
   if (filter?.source) { conds.push('source = ?'); params.push(filter.source); }
   const rows = db.prepare(`SELECT id, source, title, created_at, decisions, topics FROM sessions WHERE ${conds.join(' AND ')} ORDER BY created_at DESC`).all(...params) as Array<{
@@ -504,7 +506,8 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
 export interface UnresolvedRow { q: string; at: string; source: string; sessionId: string; title: string | null }
 
 export function listUnresolved(db: DB, projectId: string, limit = 20): UnresolvedRow[] {
-  const rows = db.prepare(`SELECT id, source, title, created_at, key_questions FROM sessions WHERE project_id = ? AND key_questions IS NOT NULL ORDER BY created_at DESC`).all(projectId) as Array<{
+  // [fork 0924] 同步排除 workflow 施工会话（与 listDecisions 同规，问题 4 的垃圾同源）
+  const rows = db.prepare(`SELECT id, source, title, created_at, key_questions FROM sessions WHERE project_id = ? AND key_questions IS NOT NULL AND (origin IS NULL OR origin != 'workflow') ORDER BY created_at DESC`).all(projectId) as Array<{
     id: string; source: string; title: string | null; created_at: string; key_questions: string;
   }>;
   const out: UnresolvedRow[] = [];

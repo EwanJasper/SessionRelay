@@ -60,13 +60,21 @@ export function extractTopics(msgs: Msg[]): string[] {
 }
 
 // ── decisions：句式匹配（方针 §6.6："决定/选择/采用/放弃/最终用"） ──
+// [fork 0924] 弱触发词（不用/直接用/优先用/统一用）只认句首附近——它们是高频连接词，
+// 句中出现时多为普通叙述（mc整合包实测：71% 决策碎片来自这类误命中）
+const DECISION_STRONG = /(决定|选择|采用|最终用|最终选|定下|敲定|改为|改用|换成|切换到|升级到|切换成|放弃|弃用)[^。！？!?\n]{2,80}/;
+const DECISION_WEAK_ANCHORED = /^[^。！？!?\n]{0,4}(?:不用|直接用|优先用|统一用|改为使用)[^。！？!?\n]{2,80}/;
 const DECISION_RES: RegExp[] = [
-  /(决定|选择|采用|最终用|最终选|优先用|直接用|定下|敲定|改为|改用|换成|切换到|升级到|切换成|统一用|改为使用|放弃|弃用|不用)[^。！？!?\n]{2,80}/,
+  DECISION_STRONG,
+  DECISION_WEAK_ANCHORED,
   /([^。！？!?\n]{2,30}(?:方案|选型|策略|架构|库|协议|格式|命名|引擎|分词|存储|模式)(?:定为|确定为|选定为|采用|敲定))[^。！？!?\n]{0,40}/,
 ];
 
 function sentences(text: string): string[] {
-  return text.split(/(?<=[。！？!?\n])/).map((s) => s.trim()).filter(Boolean);
+  // [fork 0924] 软换行合并：Markdown 段内硬换行不再腰斩句子——
+  // 只有"上一行以句末标点收尾"或"下一行是空行"时换行才是切分点
+  const merged = text.replace(/([^\n。！？!?])\n(?!\n)/gu, '$1');
+  return merged.split(/(?<=[。！？!?]|\n)/).map((s) => s.trim()).filter(Boolean);
 }
 
 // [fork 0922] 决策合理性守卫：正则只管"句首有触发词"，不管句子长什么样——
@@ -80,6 +88,9 @@ function plausibleDecision(text: string): boolean {
   if ((t.match(/\|/g) ?? []).length >= 2) return false; // 表格行
   if (/"(?:confirmed|title|session_id)"\s*:/.test(t) || /\}\s*,\s*\{/.test(t)) return false; // 内嵌 JSON 残片
   if (/^[）)】」"'、，。]/.test(t)) return false; // [fork 0924] 以闭括号/标点开头=句子中段截出的残片
+  if (/\*\*/.test(t)) return false; // [fork 0924] 任意位置的粗体残片（mid-text ** 也是格式污染）
+  const pairs = (t.match(/[（(「『【]/g) ?? []).length - (t.match(/[）)】」』】]/g) ?? []).length;
+  if (pairs !== 0) return false; // [fork 0924] 括号不配对=腰斩碎片
   return true;
 }
 
