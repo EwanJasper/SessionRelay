@@ -13,18 +13,26 @@ export interface RelayConfig {
     idle_threshold_min: number;
     cooldown_hours: number;
     sources: string[];
-    /** 覆盖各源的默认存储路径（自定义安装位置时设置）。支持环境变量：CLAUDE_PROJECTS_DIR / ZCODE_DB_PATH / CODEX_DIR / TRAE_DIR */
+    /** 覆盖各源的默认存储路径（自定义安装位置时设置）。支持环境变量：CLAUDE_PROJECTS_DIR / ZCODE_DB_PATH / CODEX_DIR / TRAE_DIR / DSH_SESSIONS_DIR */
     claude_projects_dir?: string;
     zcode_db_path?: string;
     codex_dir?: string;
     trae_dir?: string;
     qoder_dir?: string;
+    dsh_sessions_dir?: string;
   };
   search: { tokenizer: 'jieba' | 'bigram'; min_hits_hint: number; auto_days: number };
   privacy: { ignore_file: string; export_redact: boolean };
   identity: { project_id?: string; author?: string };
   /** 语义检索（可选增强，v4 设计：未启用=行为与纯 FTS 逐字节等价） */
   semantic?: { enabled?: boolean; model?: string; threshold?: number };
+  /** [fork 1011] D26 自动归档：守护按窗口把旧会话正文蒸发（决策/话题骨架保留），增量式 VACUUM 回收空页 */
+  archive?: {
+    enabled?: boolean;
+    hot_days?: number;
+    workflow_days?: number;
+    check_every_min?: number;
+  };
 }
 
 export function defaultConfig(): RelayConfig {
@@ -34,11 +42,12 @@ export function defaultConfig(): RelayConfig {
       mode: 'full',
       idle_threshold_min: 10,
       cooldown_hours: 6,
-      sources: ['claude-code', 'zcode', 'codex', 'qoder'],
+      sources: ['claude-code', 'zcode', 'codex', 'qoder', 'dsh'],
     },
     search: { tokenizer: 'jieba', min_hits_hint: 3, auto_days: 30 },
     privacy: { ignore_file: '.sessionrelayignore', export_redact: true },
     identity: {},
+    archive: { enabled: true, hot_days: 60, workflow_days: 7, check_every_min: 60 },
   };
 }
 
@@ -73,6 +82,12 @@ export function qoderDir(cfg: RelayConfig): string {
     ?? path.join(os.homedir(), '.qoder-cn');
 }
 
+export function dshSessionsDir(cfg: RelayConfig): string {
+  return process.env.DSH_SESSIONS_DIR
+    ?? cfg.capture.dsh_sessions_dir
+    ?? path.join(os.homedir(), '.dsh', 'sessions');
+}
+
 export function loadConfig(root: string): RelayConfig {
   const def = defaultConfig();
   const file = configFile(root);
@@ -93,6 +108,7 @@ export function loadConfig(root: string): RelayConfig {
     privacy: { ...def.privacy, ...(raw.privacy ?? {}) },
     identity: { ...def.identity, ...(raw.identity ?? {}) },
     semantic: { ...(raw.semantic ?? {}) },
+    archive: { ...def.archive, ...(raw.archive ?? {}) },
   };
 }
 

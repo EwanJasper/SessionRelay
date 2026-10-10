@@ -31,6 +31,8 @@ export const dbFile = (root: string) => path.join(relayDir(root), 'relay.sqlite'
 export const configFile = (root: string) => path.join(relayDir(root), 'config.json');
 export const lockFile = (root: string) => path.join(relayDir(root), 'lock');
 export const statsFile = (root: string) => path.join(relayDir(root), 'stats.json');
+// [fork 1011] 从 cli/service.ts 提升：capture 层（全局守护轮转）也要用，不许 cli←capture 反向依赖
+export const watchLogPath = (root: string) => path.join(relayDir(root), 'watch.log');
 export const ignoreFile = (root: string) => path.join(root, '.sessionrelayignore');
 export const quarantineDir = (root: string) => path.join(relayDir(root), 'quarantine');
 

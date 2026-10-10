@@ -35,7 +35,15 @@ export async function cmdWatch(opts: { foreground?: boolean; global?: boolean; i
       const rotator = setInterval(() => rotateWatchLog(rr), 3_600_000);
       rotator.unref();
     }
-    await runWatchGlobal();
+    // [fork 1011] 守护自写日志：watch-task.cmd 在 --global 下不再 >> 重定向
+    // （cmd 的追加句柄会锁死 watch.log，轮转的截断永远 EBUSY——实测 33.7MB 不轮转）。
+    // 全局层的消息由这里 appendFile 落盘；worker 层消息仍走 adopt 的双写。
+    await runWatchGlobal({
+      log: (m) => {
+        process.stderr.write(`[srelay-watch] ${m}\n`);
+        if (rr) fs.appendFile(watchLogPath(rr), `[srelay-watch] ${m}\n`, () => {});
+      },
+    });
     return;
   }
   // 前台守护：要求已初始化

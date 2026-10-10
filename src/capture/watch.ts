@@ -11,11 +11,13 @@ import crypto from 'node:crypto';
 import { openExisting } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
 import { loadConfig } from '../shared/config.js';
-import { projectIdOf, dbFile, statsFile } from '../shared/paths.js';
+import { projectIdOf, dbFile, statsFile, watchLogPath } from '../shared/paths.js';
+import { rotateLogFile } from '../shared/logrotate.js';
 import { StatsCounter } from '../core/stats/counter.js';
 import { acquireLock, touchLock, releaseLock, isDaemonAlive } from '../shared/lock.js';
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
+import { autoArchiveProject, autoArchivePolicyOf } from './archive.js';
 import { runJudge } from './judge.js';
 import { consumeHookEvents } from './hook-spool.js';
 import { ensureRegistered, get, adapterConfig } from '../adapters/registry.js';
@@ -25,6 +27,8 @@ export interface WatchOptions {
   projectRoot: string;
   config: RelayConfig;
   log?: (msg: string) => void;
+  /** [fork 1010] 由 runWatchGlobal 收编时为 true：跳过让位检查与防孤儿计时器 */
+  inGlobalDaemon?: boolean;
 }
 
 // ── [fork 0922] 每项目命名管道单实例锁 ──
@@ -39,7 +43,22 @@ function pipeLockName(root: string): string {
 
 function globalPipeName(): string {
   const BS = String.fromCharCode(92);
-  return BS + BS + '.' + BS + 'pipe' + BS + 'srelay-watch-global';
+  // SRELAY_GLOBAL_PIPE 仅供测试/调试隔离用，默认走固定名
+  const name = process.env.SRELAY_GLOBAL_PIPE ?? 'srelay-watch-global';
+  return BS + BS + '.' + BS + 'pipe' + BS + name;
+}
+
+// [fork 1010] 全局守护是否在跑：连它的固定名管道，连上即活（内核对象随进程死亡自动消失）。
+// project 模式启动前先问这个——有全局守护在跑还起 project 实例，只会抢走项目锁、
+// 让全局守护永远收编不了该项目（live: mc整合包 连续 30 次撞锁 + 孤儿实例无限期存活）。
+export function globalDaemonAlive(timeoutMs = 1000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = net.connect(globalPipeName());
+    const done = (ok: boolean) => { try { sock.destroy(); } catch { /* 已关 */ } resolve(ok); };
+    sock.once('connect', () => done(true));
+    sock.once('error', () => resolve(false));
+    setTimeout(() => done(false), timeoutMs).unref?.();
+  });
 }
 
 function acquirePipeLockByName(name: string, log: (m: string) => void, label: string): Promise<boolean> {
@@ -91,6 +110,12 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
   const root = opts.projectRoot;
   const log = opts.log ?? ((m: string) => process.stderr.write(`[srelay-watch] ${m}\n`));
 
+  // [fork 1010] 让位全局守护：--global 实例在跑时，project 模式实例只会抢锁+双重捕获
+  if (!opts.inGlobalDaemon && (await globalDaemonAlive())) {
+    log('全局守护已在运行，本项目模式实例退出（全局守护会自动收编本项目）');
+    return null;
+  }
+
   if (!(await acquirePipeLock(root, log))) return null; // [fork 0922] 同项目已有守护在跑
 
   const lock = acquireLock(root);
@@ -98,6 +123,24 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     const alive = isDaemonAlive(root);
     log(lock.reason + (alive.alive ? '' : '（锁已僵死，本次接管）'));
     if (alive.alive) { releasePipeLock(root); return null; }
+  }
+
+  // [fork 1010] 防孤儿：启动 shell 退出时本实例随之退出。agent 后台命令拉起的
+  // project 模式 watch 曾无限期存活（父 shell 早已不在），与全局守护抢锁。
+  let orphanTimer: NodeJS.Timeout | undefined;
+  if (!opts.inGlobalDaemon && process.ppid > 0) {
+    const launcher = process.ppid;
+    orphanTimer = setInterval(() => {
+      try {
+        process.kill(launcher, 0);
+      } catch {
+        log('启动器进程已退出，本实例退出（防孤儿）');
+        clearInterval(orphanTimer);
+        releaseLock(root);
+        releasePipeLock(root);
+        process.exit(0);
+      }
+    }, 15_000);
   }
 
   const heartbeat = setInterval(() => touchLock(root), 15_000);
@@ -130,6 +173,29 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
   const watchers: Array<{ close(): void }> = [];
   const judgeTimer = setInterval(() => cycle('tick'), 30_000);
   const safetyTimer = setInterval(() => cycle('safety'), 60_000);
+
+  // [fork 1011] D26 自动归档（用户拍板：默认启用/60d/7d/增量式 VACUUM）：
+  // 低频检查串行进写链；首次启动即跑一次——顺带完成 auto_vacuum 启用式 VACUUM，
+  // 回收既有 freelist 空洞（实测 56MB）。runArchive 的保护规则/复活/审计全复用。
+  const archivePolicy = autoArchivePolicyOf(opts.config);
+  let archiveTimer: NodeJS.Timeout | undefined;
+  if (archivePolicy) {
+    const runAuto = () => {
+      chain = chain.then(async () => {
+        try {
+          const r = autoArchiveProject(db, archivePolicy);
+          if (r.workflowArchived + r.hotArchived > 0 || r.vacuumEnabled) {
+            log(`自动归档：workflow ${r.workflowArchived} · 普通 ${r.hotArchived} · 释放 ${r.freedPages} 页${r.vacuumEnabled ? '（已启用增量式 VACUUM）' : ''}`);
+          }
+        } catch (e) {
+          log(`自动归档失败（不退出，下周期重试）: ${(e as Error).message}`);
+        }
+      });
+    };
+    runAuto();
+    archiveTimer = setInterval(runAuto, archivePolicy.checkEveryMin * 60_000);
+    archiveTimer.unref();
+  }
   let stopped = false;
 
   try {
@@ -154,6 +220,8 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     log(`守护运行中（pid ${process.pid}，项目 ${root}）`);
   } catch (e) {
     // [fork 0922] worker 初始化失败：释放已持资源并报告 null（全局模式下跳过该项目，不拖垮进程）
+    if (orphanTimer) clearInterval(orphanTimer);
+    if (archiveTimer) clearInterval(archiveTimer);
     clearInterval(heartbeat); clearInterval(judgeTimer); clearInterval(safetyTimer);
     releasePipeLock(root);
     log(`守护启动失败（${root}）: ${(e as Error).message}`);
@@ -165,6 +233,8 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     stop: async () => {
       if (stopped) return;
       stopped = true;
+      if (orphanTimer) clearInterval(orphanTimer);
+      if (archiveTimer) clearInterval(archiveTimer);
       for (const w of watchers) w.close();
       clearInterval(heartbeat); clearInterval(judgeTimer); clearInterval(safetyTimer);
       await chain.catch(() => {});
@@ -209,6 +279,7 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
         const w = await startWatchWorker({
           projectRoot: c.root,
           config: loadConfig(c.root),
+          inGlobalDaemon: true,
           log: (m) => {
             log(`[${c.name}] ${m}`);
             fs.appendFile(ownLog, `[srelay-watch] ${m}\n`, () => { /* 追加失败不影响运行 */ });
@@ -232,7 +303,15 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
   };
 
   await adopt('initial');
-  const adoptTimer = setInterval(() => { void adopt('sweep'); }, 10 * 60_000); // 与 runSync 全量清扫同频：新项目最迟 10 分钟被收编
+  // [fork 1011] 启动即轮转一次：双写让每个收编项目的 watch.log 都会增长，
+  // 原轮转只覆盖 cwd 根，其余项目日志无限堆积（实测 D 33.7MB / E 7.4MB）。
+  for (const w of workers.values()) rotateLogFile(watchLogPath(w.root));
+  const adoptTimer = setInterval(() => { void adopt('sweep'); }, 10 * 60_000);
+  // [fork 1011] 逐小时轮转全部收编项目的日志（含 sweep 新收编的）
+  const logRotator = setInterval(() => {
+    for (const w of workers.values()) rotateLogFile(watchLogPath(w.root));
+  }, 3_600_000);
+  logRotator.unref();
   log(`全局守护运行中（pid ${process.pid}，项目 ${workers.size}，Ctrl+C 退出）`);
   await new Promise<void>((resolve) => {
     const stop = () => resolve();
@@ -240,6 +319,7 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
     process.once('SIGTERM', stop);
   });
   clearInterval(adoptTimer);
+  clearInterval(logRotator);
   for (const w of workers.values()) await w.stop();
   releaseGlobalPipeLock();
   log('已退出');

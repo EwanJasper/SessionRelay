@@ -4,12 +4,15 @@
 import type { DB } from '../store/db.js';
 import { listSessions, getSessionFull, countMessages, insertCleanupLog, insertCleanupDetail } from '../store/db.js';
 import type { SessionRow } from '../store/db.js';
+import type { RelayConfig } from '../shared/config.js';
 
 export interface ArchiveCriteria {
   days?: number;
   before?: string;
   sizeMb?: number;
   source?: string;
+  /** [fork 1011] D26：按 origin 分窗（workflow 7d / 普通 60d）——runArchive 只支持精确匹配 */
+  origin?: string;
   sessionIds?: string[];
 }
 
@@ -17,6 +20,8 @@ export interface ArchiveOptions extends ArchiveCriteria {
   hard?: boolean;
   dryRun?: boolean;
   includeProtected?: boolean;
+  /** 审计署名：'manual'（CLI 默认）| 'auto'（D26 守护定期执行） */
+  triggeredBy?: string;
 }
 
 export interface ArchiveResult {
@@ -67,6 +72,10 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
       conds.push('source = ?');
       params.push(opts.source);
     }
+    if (opts.origin) {
+      conds.push('origin = ?');
+      params.push(opts.origin);
+    }
   }
 
   // 查询候选会话
@@ -80,9 +89,9 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
   let logId: number | null = null;
   if (!opts.dryRun && candidates.length > 0) {
     logId = insertCleanupLog(db, {
-      triggeredBy: 'manual',
+      triggeredBy: opts.triggeredBy ?? 'manual',
       mode: opts.hard ? 'hard' : 'archive',
-      criteria: JSON.stringify({ days: opts.days, before: opts.before, source: opts.source }),
+      criteria: JSON.stringify({ days: opts.days, before: opts.before, source: opts.source, origin: opts.origin }),
     });
   }
 
@@ -180,4 +189,65 @@ export function getArchiveHistory(db: DB, opts?: { verbose?: boolean; sessionId?
     return logs;
   }
   return db.prepare('SELECT * FROM cleanup_log ORDER BY created_at DESC LIMIT 20').all();
+}
+
+
+// ── D26 自动归档（[fork 1011] 守护定期执行；策略用户已拍板：默认启用/60d/7d/增量式 VACUUM） ──
+
+export interface AutoArchivePolicy {
+  /** 普通会话热窗（天） */
+  hotDays: number;
+  /** workflow 子代理会话热窗（天） */
+  workflowDays: number;
+  /** 守护检查节奏（分钟） */
+  checkEveryMin: number;
+}
+
+export interface AutoArchiveResult {
+  workflowArchived: number;
+  hotArchived: number;
+  /** 本次是否执行了启用式 VACUUM（auto_vacuum NONE → INCREMENTAL，一次性） */
+  vacuumEnabled: boolean;
+  /** incremental_vacuum 回收的空页数 */
+  freedPages: number;
+}
+
+/** 从 RelayConfig 归一化策略；archive.enabled === false 时返回 null（纯手动模式） */
+export function autoArchivePolicyOf(cfg: RelayConfig): AutoArchivePolicy | null {
+  const a = cfg.archive;
+  if (a?.enabled === false) return null;
+  return {
+    hotDays: a?.hot_days ?? 60,
+    workflowDays: a?.workflow_days ?? 7,
+    checkEveryMin: a?.check_every_min ?? 60,
+  };
+}
+
+/** 检查一次自动归档（守护按 checkEveryMin 调用；首次顺带启用增量式 VACUUM）。
+ * 双通道顺序关键：先 workflow（7d 窗）后普通（60d 窗）——workflow 会话的 7~60 天
+ * 区间在第一通道清零后，普通通道不会再提前蒸发它们。
+ * 保护规则/复活/审计全部复用 runArchive；triggered_by 记 'auto' 供 cleanup_log 区分。 */
+export function autoArchiveProject(db: DB, policy: AutoArchivePolicy): AutoArchiveResult {
+  const result: AutoArchiveResult = { workflowArchived: 0, hotArchived: 0, vacuumEnabled: false, freedPages: 0 };
+  // ① 增量式 VACUUM 启用（一次性）：auto_vacuum=NONE 时切 INCREMENTAL 并 VACUUM 重建
+  //    （71MB 库实测秒级）；之后 PRAGMA 持久生效，incremental_vacuum 小步回收即可
+  const mode = db.pragma('auto_vacuum', { simple: true }) as number;
+  if (mode === 0) {
+    db.pragma('auto_vacuum = INCREMENTAL');
+    db.exec('VACUUM');
+    result.vacuumEnabled = true;
+  }
+  // ② workflow 通道
+  if (policy.workflowDays > 0) {
+    result.workflowArchived = runArchive(db, { origin: 'workflow', days: policy.workflowDays, triggeredBy: 'auto' }).archived;
+  }
+  // ③ 普通通道（workflow 已清，剩余即普通/手动源）
+  if (policy.hotDays > 0) {
+    result.hotArchived = runArchive(db, { days: policy.hotDays, triggeredBy: 'auto' }).archived;
+  }
+  // ④ 增量回收空页
+  const before = db.pragma('freelist_count', { simple: true }) as number;
+  db.pragma('incremental_vacuum');
+  result.freedPages = Math.max(0, before - (db.pragma('freelist_count', { simple: true }) as number));
+  return result;
 }
