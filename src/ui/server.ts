@@ -5,7 +5,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { HTML } from './public.js';
-import { uiOverview, uiProject, uiSessions, uiGrowth, uiSession, uiSessionMessages, uiSessionSearch, uiProjectHealth, closeAllDbs, NotRegistered, SessionNotFound } from './api.js';
+import { uiOverview, uiProject, uiSessions, uiGrowth, uiSession, uiSessionMessages, uiSessionSearch, uiProjectHealth, uiForgetSession, closeAllDbs, NotRegistered, SessionNotFound } from './api.js';
 
 export interface UiServerHandle {
   server: http.Server;
@@ -46,8 +46,9 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
   // ① Host 校验——所有请求一律执行，防 DNS rebinding（外域解析到 127.0.0.1 后同源读取）
   const host = String(req.headers.host ?? '');
   if (!ctx.allowedHosts?.has(host)) return json(res, 403, { ok: false, error: 'forbidden host' });
-  // ② 只读：非 GET 一律 405
-  if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'read-only' });
+  // ② 只读为默认：唯一写路由是 POST /api/session/forget（U14），其余非 GET 一律 405
+  const isForget = u.pathname === '/api/session/forget';
+  if (req.method !== 'GET' && !(isForget && req.method === 'POST')) return json(res, 405, { ok: false, error: 'read-only' });
   // ③ HTML 外壳不含任何数据（数据全在令牌保护的 /api/*），免令牌放行：
   //    刷新/收藏/裸地址打开都能拿到页面，由前端按 sessionStorage 令牌决定渲染仪表盘还是引导页。
   //    曾经要求 / 也带令牌 → 页面为防历史泄露抹掉 ?token= 后刷新必死（实测翻车），故放开。
@@ -97,6 +98,22 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
     }
     if (u.pathname === '/api/session/search') {
       return json(res, 200, { ok: true, data: uiSessionSearch(u.searchParams.get('root') ?? '', u.searchParams.get('id') ?? '', u.searchParams.get('q') ?? '') });
+    }
+    if (isForget) {
+      // 首个写路由：读 JSON body（上限 64KB 防滥用），仍受 Host+token 双校验保护
+      let body = '';
+      req.on('data', (c: Buffer) => { body += c.toString('utf8'); if (body.length > 65_536) req.destroy(); });
+      req.on('end', () => {
+        try {
+          const b = JSON.parse(body || '{}') as { root?: string; id?: string };
+          json(res, 200, { ok: true, data: uiForgetSession(b.root ?? '', b.id ?? '') });
+        } catch (e) {
+          if (e instanceof NotRegistered) return json(res, 404, { ok: false, error: 'project not registered' });
+          if (e instanceof SessionNotFound) return json(res, 404, { ok: false, error: 'session not found' });
+          json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      });
+      return;
     }
     if (u.pathname === '/api/health') {
       return json(res, 200, { ok: true, data: { ok: true, uptimeSec: Math.round(process.uptime()) } });

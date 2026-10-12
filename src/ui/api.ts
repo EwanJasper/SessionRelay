@@ -6,12 +6,13 @@ import { registryCandidates } from '../shared/registry.js';
 import { loadConfig } from '../shared/config.js';
 import { dbFile, projectIdOf, relayDir } from '../shared/paths.js';
 import {
-  openReadonly, countsByState, countsBySource, projectSummary, growthByDay,
+  openReadonly, openExisting, countsByState, countsBySource, projectSummary, growthByDay,
   listSessions, getSession, getSessionFull, getMessageRange, searchInSession,
   listDecisions, listUnresolved, type DB,
 } from '../store/db.js';
 import { searchSessions } from '../search-svc/engine.js';
 import { openStats } from '../core/stats/counter.js';
+import { forgetSession } from '../core/forget.js';
 
 /** root 不在注册表（安全边界，server 层转 404） */
 export class NotRegistered extends Error {
@@ -237,4 +238,31 @@ export function uiProjectHealth(root: string) {
     } finally { fs.closeSync(fh); }
   } catch { /* 无日志 → 空 */ }
   return { logTail, stats: openStats(c.root).snapshot() };
+}
+
+// ── 遗忘（v1.4 · U14：首个写操作，与 CLI forget 同一核心路径）──
+
+/** 写后缓存失效：卡片与增长曲线立即反映删除 */
+function invalidateCaches(root: string): void {
+  cardCache.delete(root);
+  for (const k of [...growthCache.keys()]) if (k.startsWith(root + '|')) growthCache.delete(k);
+  const abs = path.resolve(root);
+  for (const k of [...conns.keys()]) {
+    if (path.resolve(k) === abs) { conns.get(k)!.db.close(); conns.delete(k); }
+  }
+}
+
+export function uiForgetSession(root: string, id: string) {
+  const c = mustRegistered(root);
+  // 写路径：独立读写连接（connOf 是只读缓存），单请求内重读最新数据后执行，用完即关
+  const db = openExisting(dbFile(c.root));
+  try {
+    const row = getSessionFull(db, id);
+    if (!row) throw new SessionNotFound(id);
+    const result = forgetSession(db, c.root, row, { triggeredBy: 'ui:forget', criteria: id });
+    invalidateCaches(c.root);
+    return result;
+  } finally {
+    db.close();
+  }
 }

@@ -3,11 +3,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createDb, insertSession, insertMessage } from '../../src/store/db.js';
-import { dbFile, projectIdOf } from '../../src/shared/paths.js';
+import { createDb, openExisting, insertSession, insertMessage } from '../../src/store/db.js';
+import { dbFile, projectIdOf, ignoreFile } from '../../src/shared/paths.js';
 import { touchRegistry } from '../../src/shared/registry.js';
 import { defaultConfig, saveConfig } from '../../src/shared/config.js';
-import { uiOverview, uiProject, uiSessions, uiGrowth, uiSession, uiSessionMessages, uiSessionSearch, uiProjectHealth, closeAllDbs, NotRegistered, SessionNotFound } from '../../src/ui/api.js';
+import { loadTombstones, getForgetHistory } from '../../src/store/db.js';
+import { uiOverview, uiProject, uiSessions, uiGrowth, uiSession, uiSessionMessages, uiSessionSearch, uiProjectHealth, uiForgetSession, closeAllDbs, NotRegistered, SessionNotFound } from '../../src/ui/api.js';
 
 const TMP = path.resolve('test/.tmp/ui-api');
 const REG = path.join(TMP, 'registry');
@@ -173,5 +174,41 @@ describe('ui · 会话详情（v1.2）', () => {
     expect(h.stats).toEqual({});
     const h2 = uiProjectHealth(PROJ_B); // 无日志 → 空
     expect(h2.logTail).toEqual([]);
+  });
+});
+
+describe('ui · 会话遗忘（v1.4 · U14：与 CLI forget 同核心）', () => {
+  const PROJ_D = path.join(TMP, 'proj-d');
+  const now = new Date().toISOString();
+
+  it('独立项目造会话并预热缓存', () => {
+    makeProj(PROJ_D);
+    const db = createDb(dbFile(PROJ_D));
+    const pid = projectIdOf(PROJ_D);
+    insertSession(db, { id: 'fd-1', source: 'zcode', sourceSessionId: 'zd-1', projectId: pid, createdAt: now, title: '待遗忘的会话', topics: [] });
+    insertMessage(db, { sessionId: 'fd-1', role: 'user', content: '内容', seqNum: 1, createdAt: now });
+    db.prepare(`UPDATE sessions SET state='confirmed', message_count=1, last_event_at=? WHERE id='fd-1'`).run(now);
+    db.close();
+    touchRegistry(PROJ_D);
+    uiOverview(); uiGrowth(PROJ_D, 7); // 预热卡片与增长缓存
+  });
+
+  it('forget：删除生效 + 墓碑 + ignore 规则 + 审计 + 缓存失效', () => {
+    const r = uiForgetSession(PROJ_D, 'fd-1');
+    expect(r.messageCount).toBe(1);
+    expect(r.barriers).toBe(true); // zcode 捕获会话 → 写防复活闸
+    // 会话已消失
+    expect(() => uiSession(PROJ_D, 'fd-1')).toThrow(SessionNotFound);
+    // 缓存立即失效：overview 反映 0 会话
+    const d = uiOverview().projects.find((p) => p.root === PROJ_D)!;
+    expect(Object.values(d.sessions).reduce((a, b) => a + b, 0)).toBe(0);
+    // 防复活双闸：墓碑 + ignore 规则
+    const db2 = openExisting(dbFile(PROJ_D));
+    expect(loadTombstones(db2).has('zcode:zd-1')).toBe(true);
+    expect(getForgetHistory(db2).length).toBe(1); // 审计
+    db2.close();
+    expect(fs.readFileSync(ignoreFile(PROJ_D), 'utf8')).toContain('session:zcode/zd-1');
+    // 幂等性：再删同一条 → SessionNotFound（不再报"已不存在"内部错误）
+    expect(() => uiForgetSession(PROJ_D, 'fd-1')).toThrow(SessionNotFound);
   });
 });

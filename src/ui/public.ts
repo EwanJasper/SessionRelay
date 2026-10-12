@@ -104,6 +104,16 @@ export const HTML: string = `<!doctype html>
   .chip { display:inline-flex; align-items:center; gap:4px; background:#eef2ff; color:var(--accent); border-radius:99px; padding:2px 4px 2px 12px; font-size:12px; font-family:Consolas,monospace; }
   .chip button { border:none; background:none; padding:1px 7px; color:var(--accent); cursor:pointer; font-size:12px; border-radius:99px; }
   .chip button:hover { background:#dbe4ff; }
+  .btn-danger { border-color:#ffc9c9; background:#fff5f5; color:#c92a2a; }
+  .btn-danger:hover { background:#ffe3e3; border-color:#ff8787; color:#a61e4d; }
+  .row-del { border:none; background:none; color:#adb5bd; cursor:pointer; padding:2px 8px; font-size:13px; border-radius:6px; }
+  .row-del:hover { color:#e03131; background:#ffe3e3; }
+  #modal { display:none; position:fixed; inset:0; background:rgba(31,36,48,.45); z-index:25; align-items:center; justify-content:center; }
+  #modal .box { background:var(--card); border-radius:12px; padding:20px 22px; width:min(500px, 92vw); box-shadow:0 20px 60px rgba(0,0,0,.25); }
+  #modal h4 { margin:0 0 8px; font-size:15px; }
+  #modal .warn { color:#c92a2a; font-size:13px; background:#fff5f5; border:1px solid #ffc9c9; border-radius:8px; padding:8px 12px; margin:10px 0; }
+  #modal .meta { color:var(--dim); font-size:12px; margin:4px 0; }
+  #modal .acts { display:flex; justify-content:flex-end; gap:10px; margin-top:14px; }
   footer { text-align:center; color:var(--dim); font-size:12px; padding:10px 0 24px; }
   @media (max-width:900px){ main{flex-direction:column} aside{width:100%} }
 </style>
@@ -119,6 +129,7 @@ export const HTML: string = `<!doctype html>
   <aside id="projects"></aside>
   <section class="detail" id="detail"><div class="card"><div class="empty">选择左侧项目查看详情</div></div></section>
 </main>
+<div id="modal"><div class="box" id="modal-box"></div></div>
 <footer>只读观察窗 · 仅本机 127.0.0.1 · 零外呼 · 数据来自各项目 .sessionrelay</footer>
 <script>
 (function () {
@@ -428,7 +439,8 @@ export const HTML: string = `<!doctype html>
       var rows = d.rows.map(function (r) {
         return '<tr class="clickable" data-sid="' + esc(r.id) + '"><td class="mono">' + esc(r.id.slice(0, 8)) + '</td><td>' + esc(r.source) + '</td><td>' + stateZh(r.state) +
           '</td><td class="title">' + esc(r.title || '（无标题）') + (r.snippet ? '<div class="snippet">' + esc(r.snippet) + '</div>' : '') +
-          '</td><td>' + r.messageCount + '</td><td style="color:var(--dim)">' + fmtAgo(r.lastEventAt) + '</td></tr>';
+          '</td><td>' + r.messageCount + '</td><td style="color:var(--dim)">' + fmtAgo(r.lastEventAt) +
+          '</td><td style="width:36px"><button class="row-del" data-sid="' + esc(r.id) + '" data-title="' + esc(r.title || '（无标题）') + '" data-source="' + esc(r.source) + '" data-count="' + r.messageCount + '" data-state="' + stateZh(r.state) + '" title="遗忘此会话">✕</button></td></tr>';
       }).join('');
       el.innerHTML =
         '<div class="filters">' +
@@ -438,7 +450,7 @@ export const HTML: string = `<!doctype html>
         '<button id="f-go">查询</button>' +
         (f.day ? '<span class="chip">当天 ' + esc(f.day) + '<button id="chip-x" title="清除日期过滤">✕</button></span>' : '') +
         '</div>' +
-        (rows ? '<table><tr><th>ID</th><th>来源</th><th>状态</th><th>标题</th><th>消息</th><th>最近活动</th></tr>' + rows + '</table>' : '<div class="empty">无匹配会话</div>') +
+        (rows ? '<table><tr><th>ID</th><th>来源</th><th>状态</th><th>标题</th><th>消息</th><th>最近活动</th><th></th></tr>' + rows + '</table>' : '<div class="empty">无匹配会话</div>') +
         '<div class="pager"><button id="pg-prev"' + (state.page <= 1 ? ' disabled' : '') + '>上一页</button>' +
         '<span>第 ' + d.page + ' 页' + (d.hasMore ? ' · 有更多' : '') + (f.day ? ' · 已按 ' + esc(f.day) + ' 过滤' : '') + '</span>' +
         '<button id="pg-next"' + (d.hasMore ? '' : ' disabled') + '>下一页</button>' +
@@ -462,8 +474,66 @@ export const HTML: string = `<!doctype html>
       Array.prototype.forEach.call(el.querySelectorAll('tr.clickable'), function (tr) {
         tr.onclick = function () { openSession(tr.getAttribute('data-sid')); };
       });
+      Array.prototype.forEach.call(el.querySelectorAll('.row-del'), function (b) {
+        b.onclick = function (e) {
+          e.stopPropagation();
+          openForget(b.getAttribute('data-sid'), {
+            title: b.getAttribute('data-title'), source: b.getAttribute('data-source'),
+            count: b.getAttribute('data-count'), state: b.getAttribute('data-state')
+          });
+        };
+      });
     }).catch(function () {});
   }
+
+  // ── 遗忘（U14：唯一写操作，与 CLI forget 同核心，带确认弹窗）──
+  var pendingForget = null;
+  function openForget(sid, meta) {
+    pendingForget = sid;
+    $('modal-box').innerHTML =
+      '<h4>遗忘此会话（不可逆）</h4>' +
+      '<div class="meta">「' + esc(meta.title) + '」 · ' + esc(meta.source) + ' · ' + meta.count + ' 条消息 · ' + esc(meta.state) + '</div>' +
+      '<div class="meta mono">' + esc(sid) + '</div>' +
+      '<div class="warn">将删除：正文、决策、话题与会话链接，并写入防复活闸（本库不再收录该源会话）。原始会话文件不受影响。操作将记入审计日志（srelay forget --history 可查）。</div>' +
+      '<div id="m-err"></div>' +
+      '<div class="acts"><button id="m-cancel">取消</button><button id="m-ok" class="btn-danger">确认遗忘</button></div>';
+    $('modal').style.display = 'flex';
+    $('m-cancel').onclick = closeModal;
+    $('m-ok').onclick = doForget;
+  }
+  function closeModal() { $('modal').style.display = 'none'; pendingForget = null; }
+  function doForget() {
+    var sid = pendingForget;
+    if (!sid) return;
+    $('m-ok').disabled = true;
+    $('m-ok').textContent = '执行中…';
+    $('m-err').innerHTML = '';
+    fetch('/api/session/forget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Srelay-Token': TOKEN || '' },
+      body: JSON.stringify({ root: state.sel, id: sid })
+    })
+      .then(function (r) {
+        if (r.status === 403) {
+          showDeny('令牌已失效', '请重新执行 <span class="mono">srelay ui</span> 并用新链接打开。');
+          throw new Error('deny');
+        }
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error || 'forget failed');
+        closeModal();
+        if (state.view === 'session' && state.sess.id === sid) backToProject();
+        else loadProject();
+      })
+      .catch(function (e) {
+        if (e.message === 'deny') return;
+        $('m-ok').disabled = false;
+        $('m-ok').textContent = '确认遗忘';
+        $('m-err').innerHTML = '<div class="warn">失败：' + esc(e.message) + '</div>';
+      });
+  }
+  document.addEventListener('click', function (e) { if (e.target && e.target.id === 'modal') closeModal(); });
 
   // ── 会话详情 ──
   function openSession(id, focusSeq) {
@@ -494,7 +564,8 @@ export const HTML: string = `<!doctype html>
         return '<div class="list-item' + (x.seq ? ' clickable' : '') + '"' + (x.seq ? ' data-seq="' + x.seq + '"' : '') + '><span class="src">#' + (x.seq || '?') + '</span><span class="t">' + esc(x.q) + (x.unresolved ? ' <span class="pill warn">未决</span>' : '') + '</span></div>';
       }).join('') : '<div class="empty">无关键问题记录</div>';
       $('detail').innerHTML =
-        '<div class="card"><div class="backrow"><button id="s-back">← 返回项目</button></div>' +
+        '<div class="card"><div class="backrow"><button id="s-back">← 返回项目</button>' +
+        '<button id="s-del" class="btn-danger" style="margin-left:auto">遗忘此会话</button></div>' +
         '<div class="row1" style="display:flex;align-items:center;gap:10px;font-weight:600;font-size:15px;flex-wrap:wrap">' +
         esc(m.title || '（无标题）') +
         '<span class="pill">' + stateZh(m.state) + '</span>' +
@@ -518,6 +589,9 @@ export const HTML: string = `<!doctype html>
       $('s-back').onclick = backToProject;
       $('s-go').onclick = runSessionSearch;
       $('s-q').onkeydown = function (e) { if (e.key === 'Enter') $('s-go').click(); };
+      $('s-del').onclick = function () {
+        openForget(s.id, { title: m.title || '（无标题）', source: m.source, count: m.messageCount, state: stateZh(m.state) });
+      };
       Array.prototype.forEach.call(document.querySelectorAll('.list-item.clickable[data-seq]'), function (el) {
         el.onclick = function () {
           var sq = Number(el.getAttribute('data-seq'));

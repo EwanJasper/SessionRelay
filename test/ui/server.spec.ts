@@ -190,3 +190,42 @@ describe('ui · 会话详情路由（v1.2）', () => {
     expect(Array.isArray(j.data.logTail)).toBe(true);
   });
 });
+
+describe('ui · 遗忘写路由（v1.4 · U14）', () => {
+  let sid = '';
+  beforeAll(async () => {
+    const db = createDb(dbFile(PROJ));
+    const pid = projectIdOf(PROJ);
+    const now = new Date().toISOString();
+    insertSession(db, { id: 'del-1', source: 'zcode', sourceSessionId: 'zd-del', projectId: pid, createdAt: now, title: '待删', topics: [] });
+    insertMessage(db, { sessionId: 'del-1', role: 'user', content: 'x', seqNum: 1, createdAt: now });
+    db.prepare(`UPDATE sessions SET state='confirmed', message_count=1, last_event_at=? WHERE id='del-1'`).run(now);
+    db.close();
+    sid = 'del-1';
+  });
+
+  function post(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+    return req(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Srelay-Token': h.token, ...headers }, body: JSON.stringify(body) });
+  }
+
+  it('POST forget：token 保护 + 执行成功 + 404 反例', async () => {
+    // 无 token → 403（自定义头是 CSRF 防线，跨源表单打不进来）
+    expect((await req('/api/session/forget', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(403);
+    const r = await post('/api/session/forget', { root: PROJ, id: sid });
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.ok).toBe(true);
+    expect(j.data.id).toBe(sid);
+    // 已删 → 404 session not found
+    const r2 = await post('/api/session/forget', { root: PROJ, id: sid });
+    expect(r2.status).toBe(404);
+    // 未注册 root → 404 project not registered
+    const r3 = await post('/api/session/forget', { root: path.join(TMP, 'nope'), id: 'x' });
+    expect((await r3.json()).error).toBe('project not registered');
+  });
+
+  it('其余 POST 路径仍然 405（写面仅 forget 一条）', async () => {
+    const r = await post('/api/overview', {});
+    expect(r.status).toBe(405);
+  });
+});
