@@ -152,9 +152,10 @@ test/ui/
 1. **默认关闭**：不启动任何服务器，除非用户显式执行 `srelay ui`。
 2. **只绑 127.0.0.1**：`server.listen(port, '127.0.0.1')`，永不绑 0.0.0.0 / ::。
 3. **一次性 token**：启动时 `crypto.randomBytes(16)` 生成，打印 `http://127.0.0.1:{port}/?token={t}` 并自动开浏览器（`--no-open` 可关）。页面首次加载读 query 后 `location.replace` 去掉 token（不留在前进/后退历史），存 `sessionStorage`，后续 API 调用以 `X-Srelay-Token` 头携带。
-4. **双重校验，缺一即 403**：
-   - `Host` 头必须是 `127.0.0.1:{port}` 或 `localhost:{port}` —— 防 DNS rebinding（外域解析到 127.0.0.1 后同源读取的经典攻击）；
-   - token 头/首载 query 匹配 —— 防本机其他进程/其他浏览器页盲扫。
+4. **双重校验，各司其职（v1 实测修订，U13）**：
+   - `Host` 头必须是 `127.0.0.1:{port}` 或 `localhost:{port}`，**对所有请求**（含 HTML 外壳）—— 防 DNS rebinding（外域解析到 127.0.0.1 后同源读取的经典攻击）；
+   - token（`X-Srelay-Token` 头）只强制于 **`/api/*` 数据面** —— 防本机其他进程/其他浏览器页盲扫；
+   - **HTML 外壳免令牌**：外壳不含任何数据（数据全靠令牌保护的 API 拉取），刷新/收藏/裸地址打开都能拿到页面，由前端按 sessionStorage 令牌决定渲染仪表盘还是引导页。初版曾对外壳也要求令牌——而页面为防历史泄露会抹掉 `?token=`，两条规则打架导致刷新必死，实测翻车后放开。
    - **永不返回 CORS 头**：即使 token 泄露，跨源 JS 也读不到响应（浏览器拦截无 CORS 的读）。
 5. **只读到底**：DB 以 `readonly: true` 打开（`store/db.ts` 新增 `openReadonly()`）；HTTP 层无任何非 GET 路由——405 兜底。
 6. **前台生命周期**：Ctrl-C 即停，不做守护、不做后台驻留——本仓库刚花了一个整批 PR 根治孤儿守护（Issue #2），仪表盘不新增这一类风险面。
@@ -164,7 +165,7 @@ test/ui/
 
 | 攻击面 | 用例 | 期望 |
 |--------|------|------|
-| 无 token | `fetch('/api/overview')` | 403 |
+| 无 token | `fetch('/api/overview')` | 403（HTML 外壳 `/` 免令牌，见 U13） |
 | 错 token | 错误 `X-Srelay-Token` | 403 |
 | DNS rebinding | `Host: evil.com` | 403 |
 | 跨源读取 | 响应头断言 | 无 `Access-Control-Allow-Origin` |
@@ -211,6 +212,7 @@ test/ui/
 | U10 | 总览 10s 轮询、详情手动刷新 | v1 不引推送复杂度；本地只读轮询成本可忽略 |
 | U11 | `status` CLI 保留不动 | 两者共用底层查询函数，无维护双份逻辑问题 |
 | U12 | 增长曲线按 UTC date() 聚合 | 与库存 `created_at`（ISO/UTC）口径一致；前端标注时区 |
+| U13 | HTML 外壳免令牌，token 只锁 /api/*（v1 实测修订） | 外壳零数据无秘密可泄；初版锁外壳与"页面抹 ?token= 防历史泄露"互斥，刷新必死。放开后刷新/收藏可用，安全面不变（Host 校验仍覆盖一切请求） |
 
 ---
 

@@ -48,17 +48,19 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
   if (!ctx.allowedHosts?.has(host)) return json(res, 403, { ok: false, error: 'forbidden host' });
   // ② 只读：非 GET 一律 405
   if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'read-only' });
-  // ③ token：API 走 X-Srelay-Token 头；首载页面允许 ?token= 一次性引导
+  // ③ HTML 外壳不含任何数据（数据全在令牌保护的 /api/*），免令牌放行：
+  //    刷新/收藏/裸地址打开都能拿到页面，由前端按 sessionStorage 令牌决定渲染仪表盘还是引导页。
+  //    曾经要求 / 也带令牌 → 页面为防历史泄露抹掉 ?token= 后刷新必死（实测翻车），故放开。
+  if (u.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(HTML);
+    return;
+  }
+  // ④ API 面：强制 X-Srelay-Token 头
   const headerToken = Array.isArray(req.headers['x-srelay-token']) ? req.headers['x-srelay-token'][0] : req.headers['x-srelay-token'];
-  const authed = headerToken === token || (u.pathname === '/' && u.searchParams.get('token') === token);
-  if (!authed) return json(res, 403, { ok: false, error: 'invalid token' });
+  if (headerToken !== token) return json(res, 403, { ok: false, error: 'invalid token' });
 
   try {
-    if (u.pathname === '/') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      res.end(HTML);
-      return;
-    }
     if (u.pathname === '/api/overview') return json(res, 200, { ok: true, data: uiOverview() });
     if (u.pathname === '/api/project') {
       return json(res, 200, { ok: true, data: uiProject(u.searchParams.get('root') ?? '') });

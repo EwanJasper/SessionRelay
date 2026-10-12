@@ -49,15 +49,23 @@ function authed(p: string): Promise<Response> {
 }
 
 /** fetch 不允许改 Host 头，DNS rebinding 用例走原生 http */
-function rawHost(host: string): Promise<number> {
+function rawHostReq(path: string, host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const r = http.request(
-      { host: '127.0.0.1', port: h.port, path: '/api/overview', headers: { Host: host, 'X-Srelay-Token': h.token } },
+      { host: '127.0.0.1', port: h.port, path, headers: { Host: host, 'X-Srelay-Token': h.token } },
       (res) => { resolve(res.statusCode ?? 0); res.resume(); },
     );
     r.on('error', reject);
     r.end();
   });
+}
+
+function rawHost(host: string): Promise<number> {
+  return rawHostReq('/api/overview', host);
+}
+
+function rawHostIndex(host: string): Promise<number> {
+  return rawHostReq('/', host);
 }
 
 describe('ui · 安全矩阵（§5.1 全量）', () => {
@@ -66,7 +74,7 @@ describe('ui · 安全矩阵（§5.1 全量）', () => {
     expect(addr.address).toBe('127.0.0.1');
   });
 
-  it('无 token → 403', async () => {
+  it('无 token → 403（数据面；HTML 外壳除外）', async () => {
     expect((await req('/api/overview')).status).toBe(403);
   });
 
@@ -90,10 +98,17 @@ describe('ui · 安全矩阵（§5.1 全量）', () => {
     expect(r.status).toBe(405);
   });
 
-  it('首载页面：?token= 一次性引导 → 200 且为仪表盘 HTML', async () => {
-    const r = await req('/?token=' + h.token);
-    expect(r.status).toBe(200);
-    expect((await r.text()).includes('记忆仪表盘')).toBe(true);
+  it('HTML 外壳免令牌：裸 / 与带 token 的 / 都 200（刷新/收藏不再死，U13）', async () => {
+    const bare = await req('/');
+    expect(bare.status).toBe(200);
+    expect((await bare.text()).includes('记忆仪表盘')).toBe(true);
+    const withToken = await req('/?token=' + h.token);
+    expect(withToken.status).toBe(200);
+    expect((await withToken.text()).includes('记忆仪表盘')).toBe(true);
+  });
+
+  it('HTML 外壳仍受 Host 校验（rebinding 不放过空壳）', async () => {
+    expect(await rawHostIndex('evil.com:1234')).toBe(403);
   });
 
   it('未知路径 → 404', async () => {

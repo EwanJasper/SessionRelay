@@ -62,7 +62,7 @@ export const HTML: string = `<!doctype html>
 </style>
 </head>
 <body>
-<div id="deny"><h2>令牌无效</h2><div class="empty">请从终端重新执行 <span class="mono">srelay ui</span>，用打印的 URL 打开。</div></div>
+<div id="deny"><h2 id="deny-title"></h2><div class="empty" id="deny-body"></div></div>
 <header>
   <h1><b>srelay</b> 记忆仪表盘</h1>
   <span class="totals" id="totals">加载中…</span>
@@ -77,9 +77,17 @@ export const HTML: string = `<!doctype html>
 (function () {
   'use strict';
   var TOKEN = null;
+  var DENIED = false;
   var t0 = new URLSearchParams(location.search).get('token');
   if (t0) { sessionStorage.setItem('srelay-token', t0); history.replaceState(null, '', '/'); }
   TOKEN = sessionStorage.getItem('srelay-token');
+
+  function showDeny(title, body) {
+    DENIED = true;
+    $('deny-title').textContent = title;
+    $('deny-body').innerHTML = body;
+    $('deny').style.display = 'flex';
+  }
 
   var state = { projects: [], sel: null, sources: [], sessFilter: { state: '', source: '', q: '' }, page: 1, days: 30 };
 
@@ -110,7 +118,10 @@ export const HTML: string = `<!doctype html>
   function api(path) {
     return fetch(path, { headers: { 'X-Srelay-Token': TOKEN || '' } })
       .then(function (r) {
-        if (r.status === 403) { $('deny').style.display = 'flex'; throw new Error('deny'); }
+        if (r.status === 403) {
+          showDeny('令牌已失效', '服务可能已重启（每次 <span class="mono">srelay ui</span> 都会换新令牌）。请重新执行 <span class="mono">srelay ui</span>，用它打印的链接打开。');
+          throw new Error('deny');
+        }
         return r.json();
       })
       .then(function (j) { if (!j.ok) throw new Error(j.error || 'api error'); return j.data; });
@@ -253,12 +264,13 @@ export const HTML: string = `<!doctype html>
   }
 
   $('refresh').onclick = function () {
+    if (DENIED) return;
     loadOverview(true);
     if (state.sel) { loadProject(); loadSessions(); loadGrowth(); }
   };
-  setInterval(function () { if (!document.hidden) loadOverview(true); }, 10000);
+  setInterval(function () { if (!document.hidden && !DENIED) loadOverview(true); }, 10000);
 
-  if (!TOKEN) $('deny').style.display = 'flex';
+  if (!TOKEN) showDeny('需要一次性令牌', '本仪表盘的数据接口需要令牌。请在终端执行 <span class="mono">srelay ui</span>，用它打印的带 <span class="mono">?token=</span> 的链接打开。');
   else loadOverview();
 })();
 </script>
