@@ -157,7 +157,8 @@ export function uiSessions(root: string, opts: { state?: string; source?: string
   // 图表下钻：当天有活动的会话（last_event_at 落在该日）
   const day = opts.day && /^\d{4}-\d{2}-\d{2}$/.test(opts.day) ? opts.day : null;
   const got = listSessions(db, {
-    projectId: pid, state: opts.state || undefined, source: opts.source || undefined, limit: PAGE_SIZE + 1,
+    projectId: pid, state: opts.state || undefined, source: opts.source || undefined,
+    limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE,
     where: day ? { sql: 'date(COALESCE(s.last_event_at, s.created_at)) = ?', params: [day] } : null,
   });
   const hasMore = got.length > PAGE_SIZE;

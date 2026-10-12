@@ -367,14 +367,14 @@ export function findSessionByPrefix(db: DB, prefix: string, projectId: string): 
   return db.prepare('SELECT id, source, source_session_id, state, origin, title, created_at, last_event_at, message_count, summary_rule FROM sessions WHERE project_id = ? AND id LIKE ? ORDER BY last_event_at DESC LIMIT 1').get(projectId, prefix + '%') as SessionRow | undefined;
 }
 
-export function listSessions(db: DB, opts: { projectId: string; source?: string; state?: string; limit?: number; where?: { sql: string; params: unknown[] } | null }): SessionRow[] {
+export function listSessions(db: DB, opts: { projectId: string; source?: string; state?: string; limit?: number; offset?: number; where?: { sql: string; params: unknown[] } | null }): SessionRow[] {
   const conds = ['project_id = ?'];
   const params: unknown[] = [opts.projectId];
   if (opts.source) { conds.push('source = ?'); params.push(opts.source); }
   if (opts.state) { conds.push('state = ?'); params.push(opts.state); }
   if (opts.where) { conds.push(opts.where.sql); params.push(...opts.where.params); }
-  params.push(opts.limit ?? 20);
-  return db.prepare(`SELECT id, source, source_session_id, state, origin, title, created_at, last_event_at, message_count, summary_rule FROM sessions s WHERE ${conds.join(' AND ')} ORDER BY COALESCE(s.last_event_at, s.created_at) DESC LIMIT ?`).all(...params) as SessionRow[];
+  params.push(opts.limit ?? 20, opts.offset ?? 0);
+  return db.prepare(`SELECT id, source, source_session_id, state, origin, title, created_at, last_event_at, message_count, summary_rule FROM sessions s WHERE ${conds.join(' AND ')} ORDER BY COALESCE(s.last_event_at, s.created_at) DESC LIMIT ? OFFSET ?`).all(...params) as SessionRow[];
 }
 
 /** Scope 审计（方针 §7.2 scope_log；Team 版复用） */

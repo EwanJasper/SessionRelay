@@ -103,6 +103,30 @@ describe('ui · 数据装配', () => {
     expect(uiSessions(PROJ_A, { day: 'not-a-date' }).rows.length).toBe(2); // 非法日期忽略
   });
 
+  it('sessions：分页翻页内容必须变化（回归：曾因缺 OFFSET 每页同数据）', () => {
+    // 独立项目造 25 个会话，页大小 20 → 第 1 页 20 条，第 2 页 5 条且与第 1 页无重叠
+    const PROJ_C = path.join(TMP, 'proj-c');
+    makeProj(PROJ_C);
+    const db = createDb(dbFile(PROJ_C));
+    const pid = projectIdOf(PROJ_C);
+    const now = new Date().toISOString();
+    for (let i = 1; i <= 25; i++) {
+      insertSession(db, { id: 'pc-' + String(i).padStart(2, '0'), source: 'zcode', sourceSessionId: 'zc-' + i, projectId: pid, createdAt: now, title: '会话' + i, topics: [] });
+      db.prepare('UPDATE sessions SET last_event_at = ? WHERE id = ?').run(now, 'pc-' + String(i).padStart(2, '0'));
+    }
+    db.close();
+    touchRegistry(PROJ_C);
+    const p1 = uiSessions(PROJ_C, {});
+    expect(p1.rows.length).toBe(20);
+    expect(p1.hasMore).toBe(true);
+    const p2 = uiSessions(PROJ_C, { page: 2 });
+    expect(p2.rows.length).toBe(5);
+    expect(p2.hasMore).toBe(false);
+    const ids1 = new Set(p1.rows.map((r) => r.id));
+    expect(p2.rows.every((r) => !ids1.has(r.id))).toBe(true); // 两页零重叠
+    expect(uiSessions(PROJ_C, { page: 99 }).rows.length).toBe(0); // 越界空页
+  });
+
   it('白名单（U6）：未注册 root 一律 NotRegistered', () => {
     expect(() => uiProject(path.join(TMP, 'not-registered'))).toThrow(NotRegistered);
     expect(() => uiSessions(path.join(TMP, 'not-registered'), {})).toThrow(NotRegistered);
