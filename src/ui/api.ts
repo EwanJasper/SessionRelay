@@ -7,13 +7,20 @@ import { loadConfig } from '../shared/config.js';
 import { dbFile, projectIdOf, relayDir } from '../shared/paths.js';
 import {
   openReadonly, countsByState, countsBySource, projectSummary, growthByDay,
-  listSessions, getSession, listDecisions, listUnresolved, type DB,
+  listSessions, getSession, getSessionFull, getMessageRange, searchInSession,
+  listDecisions, listUnresolved, type DB,
 } from '../store/db.js';
 import { searchSessions } from '../search-svc/engine.js';
+import { openStats } from '../core/stats/counter.js';
 
 /** root 不在注册表（安全边界，server 层转 404） */
 export class NotRegistered extends Error {
   constructor(root: string) { super(`project not registered: ${root}`); }
+}
+
+/** 会话不存在（server 层转 404） */
+export class SessionNotFound extends Error {
+  constructor(id: string) { super(`session not found: ${id}`); }
 }
 
 // ── 只读连接缓存：文件身份（mtime+size）变了就重开（rebuild 会换库文件） ──
@@ -167,4 +174,61 @@ export function uiGrowth(root: string, days = 30): Array<{ date: string; msgs: n
   const snap = growthByDay(connOf(c.root), projectIdOf(c.root), d);
   growthCache.set(key, { snap, at: Date.now() });
   return snap;
+}
+
+// ── 会话详情（v1.2：下钻 + 会话内关键词搜索）──
+
+/** 单条消息正文截断上限：超长工具转储不整段回传（全文看 CLI show，ui 是浏览面） */
+const MSG_CAP = 4_000;
+const MSG_PAGE = 50;
+
+export function uiSession(root: string, id: string) {
+  const c = mustRegistered(root);
+  const s = getSessionFull(connOf(c.root), id);
+  if (!s) throw new SessionNotFound(id);
+  return s;
+}
+
+export function uiSessionMessages(root: string, id: string, from?: number) {
+  const c = mustRegistered(root);
+  const db = connOf(c.root);
+  const s = getSession(db, id);
+  if (!s) throw new SessionNotFound(id);
+  const maxSeq = Math.max(s.message_count, 0);
+  const f = Math.min(Math.max(1, from ?? 1), Math.max(1, maxSeq - MSG_PAGE + 1));
+  const to = Math.min(maxSeq, f + MSG_PAGE - 1);
+  const msgs = getMessageRange(db, id, f, to).map((m) => ({
+    seq: m.seq_num, role: m.role, at: m.created_at,
+    content: m.content.length > MSG_CAP ? m.content.slice(0, MSG_CAP) : m.content,
+    truncated: m.content.length > MSG_CAP, fullLen: m.content.length,
+  }));
+  return { from: f, to, maxSeq, page: Math.floor((f - 1) / MSG_PAGE) + 1, pages: Math.max(1, Math.ceil(maxSeq / MSG_PAGE)), msgs };
+}
+
+export function uiSessionSearch(root: string, id: string, q: string) {
+  const c = mustRegistered(root);
+  const db = connOf(c.root);
+  const s = getSession(db, id);
+  if (!s) throw new SessionNotFound(id);
+  const kw = q.trim();
+  if (!kw) return { total: 0, matches: [] };
+  return searchInSession(db, id, kw);
+}
+
+/** 项目健康（design v1.1 健康区）：watch.log 尾部 + 匿名计数器快照 */
+export function uiProjectHealth(root: string) {
+  const c = mustRegistered(root);
+  const logFile = path.join(relayDir(c.root), 'watch.log');
+  let logTail: string[] = [];
+  try {
+    const st = fs.statSync(logFile);
+    const fh = fs.openSync(logFile, 'r');
+    try {
+      const len = Math.min(st.size, 8_192);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fh, buf, 0, len, st.size - len);
+      logTail = buf.toString('utf8').split(/\r?\n/).filter(Boolean).slice(-40);
+    } finally { fs.closeSync(fh); }
+  } catch { /* 无日志 → 空 */ }
+  return { logTail, stats: openStats(c.root).snapshot() };
 }

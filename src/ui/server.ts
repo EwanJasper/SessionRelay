@@ -5,7 +5,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { HTML } from './public.js';
-import { uiOverview, uiProject, uiSessions, uiGrowth, closeAllDbs, NotRegistered } from './api.js';
+import { uiOverview, uiProject, uiSessions, uiGrowth, uiSession, uiSessionMessages, uiSessionSearch, uiProjectHealth, closeAllDbs, NotRegistered, SessionNotFound } from './api.js';
 
 export interface UiServerHandle {
   server: http.Server;
@@ -81,12 +81,29 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
       const d = Number(u.searchParams.get('days') ?? '30');
       return json(res, 200, { ok: true, data: uiGrowth(u.searchParams.get('root') ?? '', Number.isFinite(d) ? d : 30) });
     }
+    if (u.pathname === '/api/project/health') {
+      return json(res, 200, { ok: true, data: uiProjectHealth(u.searchParams.get('root') ?? '') });
+    }
+    if (u.pathname === '/api/session') {
+      return json(res, 200, { ok: true, data: uiSession(u.searchParams.get('root') ?? '', u.searchParams.get('id') ?? '') });
+    }
+    if (u.pathname === '/api/session/messages') {
+      const f = Number(u.searchParams.get('from') ?? '1');
+      return json(res, 200, {
+        ok: true,
+        data: uiSessionMessages(u.searchParams.get('root') ?? '', u.searchParams.get('id') ?? '', Number.isFinite(f) && f > 0 ? Math.floor(f) : 1),
+      });
+    }
+    if (u.pathname === '/api/session/search') {
+      return json(res, 200, { ok: true, data: uiSessionSearch(u.searchParams.get('root') ?? '', u.searchParams.get('id') ?? '', u.searchParams.get('q') ?? '') });
+    }
     if (u.pathname === '/api/health') {
       return json(res, 200, { ok: true, data: { ok: true, uptimeSec: Math.round(process.uptime()) } });
     }
     return json(res, 404, { ok: false, error: 'not found' });
   } catch (e) {
     if (e instanceof NotRegistered) return json(res, 404, { ok: false, error: 'project not registered' });
+    if (e instanceof SessionNotFound) return json(res, 404, { ok: false, error: 'session not found' });
     json(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
   }
 }

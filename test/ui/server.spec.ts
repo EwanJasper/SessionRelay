@@ -159,3 +159,34 @@ describe('ui · API 正反例', () => {
     expect(j.data.ok).toBe(true);
   });
 });
+
+describe('ui · 会话详情路由（v1.2）', () => {
+  it('session：元信息 200；不存在 → 404 session not found', async () => {
+    const j = await (await authed('/api/session?root=' + encodeURIComponent(PROJ) + '&id=s1')).json();
+    expect(j.ok).toBe(true);
+    expect(j.data.decisions[0].text).toBe('决定采用 PG');
+    const r = await authed('/api/session?root=' + encodeURIComponent(PROJ) + '&id=nope');
+    expect(r.status).toBe(404);
+    expect((await r.json()).error).toBe('session not found');
+  });
+
+  it('session/messages：分页返回', async () => {
+    const j = await (await authed('/api/session/messages?root=' + encodeURIComponent(PROJ) + '&id=s1&from=1')).json();
+    expect(j.data.msgs.length).toBe(1);
+    expect(j.data.msgs[0].seq).toBe(1);
+    expect(j.data.maxSeq).toBe(1);
+  });
+
+  it('session/search：会话内关键词命中', async () => {
+    const j = await (await authed('/api/session/search?root=' + encodeURIComponent(PROJ) + '&id=s1&q=' + encodeURIComponent('磁悬浮'))).json();
+    expect(j.data.total).toBe(1);
+    expect(j.data.matches[0].seq).toBe(1);
+  });
+
+  it('project/health：日志尾部数组', async () => {
+    fs.writeFileSync(path.join(PROJ, '.sessionrelay', 'watch.log'), 'a\nb\n', 'utf8');
+    const j = await (await authed('/api/project/health?root=' + encodeURIComponent(PROJ))).json();
+    expect(j.ok).toBe(true);
+    expect(Array.isArray(j.data.logTail)).toBe(true);
+  });
+});

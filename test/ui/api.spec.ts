@@ -7,7 +7,7 @@ import { createDb, insertSession, insertMessage } from '../../src/store/db.js';
 import { dbFile, projectIdOf } from '../../src/shared/paths.js';
 import { touchRegistry } from '../../src/shared/registry.js';
 import { defaultConfig, saveConfig } from '../../src/shared/config.js';
-import { uiOverview, uiProject, uiSessions, uiGrowth, closeAllDbs, NotRegistered } from '../../src/ui/api.js';
+import { uiOverview, uiProject, uiSessions, uiGrowth, uiSession, uiSessionMessages, uiSessionSearch, uiProjectHealth, closeAllDbs, NotRegistered, SessionNotFound } from '../../src/ui/api.js';
 
 const TMP = path.resolve('test/.tmp/ui-api');
 const REG = path.join(TMP, 'registry');
@@ -96,5 +96,47 @@ describe('ui · 数据装配', () => {
     expect(() => uiProject(path.join(TMP, 'not-registered'))).toThrow(NotRegistered);
     expect(() => uiSessions(path.join(TMP, 'not-registered'), {})).toThrow(NotRegistered);
     expect(() => uiGrowth(path.join(TMP, 'not-registered'))).toThrow(NotRegistered);
+  });
+});
+
+describe('ui · 会话详情（v1.2）', () => {
+  it('session：元信息含决策/关键问题/主题', () => {
+    const m = uiSession(PROJ_A, 'sess-a1');
+    expect(m.title).toBe('选型讨论');
+    expect(m.messageCount).toBe(2);
+    expect(m.decisions[0]!.text).toBe('决定采用 PG');
+    expect(m.decisions[0]!.seq).toBe(1);
+    expect(m.questions[0]!.q).toBe('部署方案？');
+    expect(m.questions[0]!.unresolved).toBe(true);
+    expect(() => uiSession(PROJ_A, 'nope')).toThrow(SessionNotFound);
+  });
+
+  it('messages：范围、钳制与截断标记', () => {
+    const d = uiSessionMessages(PROJ_A, 'sess-a1', 1);
+    expect(d.from).toBe(1); expect(d.to).toBe(2); expect(d.maxSeq).toBe(2);
+    expect(d.pages).toBe(1);
+    expect(d.msgs.map((m) => m.seq)).toEqual([1, 2]);
+    expect(d.msgs[0]!.truncated).toBe(false);
+    const clamped = uiSessionMessages(PROJ_A, 'sess-a1', 999);
+    expect(clamped.from).toBe(1); // 超界钳回首页
+  });
+
+  it('search：原文命中、片段含关键词、转义不误配', () => {
+    const hit = uiSessionSearch(PROJ_A, 'sess-a1', '磁悬浮');
+    expect(hit.total).toBe(1);
+    expect(hit.matches[0]!.seq).toBe(1);
+    expect(hit.matches[0]!.snippet).toContain('磁悬浮');
+    expect(uiSessionSearch(PROJ_A, 'sess-a1', '').total).toBe(0);
+    expect(uiSessionSearch(PROJ_A, 'sess-a1', '%').total).toBe(0); // % 不当通配符
+    expect(uiSessionSearch(PROJ_A, 'sess-a1', '不存在词xyz').total).toBe(0);
+  });
+
+  it('health：日志尾部与计数器快照', () => {
+    fs.writeFileSync(path.join(PROJ_A, '.sessionrelay', 'watch.log'), 'line1\nline2\ntail-line3\n', 'utf8');
+    const h = uiProjectHealth(PROJ_A);
+    expect(h.logTail).toEqual(['line1', 'line2', 'tail-line3']);
+    expect(h.stats).toEqual({});
+    const h2 = uiProjectHealth(PROJ_B); // 无日志 → 空
+    expect(h2.logTail).toEqual([]);
   });
 });

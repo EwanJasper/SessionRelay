@@ -430,6 +430,26 @@ export function projectSummary(db: DB, projectId: string): { messageTotal: numbe
   return { messageTotal: r.t, lastEventAt: r.e };
 }
 
+/** 会话内关键词扫描（ui）：字面 LIKE 匹配（不经分词，中文按原文命中），% _ \ 转义 */
+export function searchInSession(db: DB, sessionId: string, q: string, limit = 200): { total: number; matches: Array<{ seq: number; role: string; at: string | null; snippet: string }> } {
+  const pat = `%${q.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+  const total = (db.prepare(
+    "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND content LIKE ? ESCAPE '\\'"
+  ).get(sessionId, pat) as { n: number }).n;
+  const rows = db.prepare(
+    "SELECT seq_num, role, created_at, content FROM messages WHERE session_id = ? AND content LIKE ? ESCAPE '\\' ORDER BY seq_num LIMIT ?"
+  ).all(sessionId, pat, limit) as Array<{ seq_num: number; role: string; created_at: string | null; content: string }>;
+  const lower = q.toLowerCase();
+  const matches = rows.map((r) => {
+    const idx = r.content.toLowerCase().indexOf(lower);
+    const start = Math.max(0, idx - 60);
+    const end = idx + q.length + 80;
+    const snippet = (start > 0 ? '…' : '') + r.content.slice(start, end).replace(/\s+/g, ' ').trim() + (end < r.content.length ? '…' : '');
+    return { seq: r.seq_num, role: r.role, at: r.created_at, snippet };
+  });
+  return { total, matches };
+}
+
 export function dueIdle(db: DB, projectId: string, cutoffIso: string): string[] {
   return (db.prepare(`SELECT id FROM sessions WHERE project_id = ? AND state = 'active' AND last_event_at IS NOT NULL AND last_event_at < ?`).all(projectId, cutoffIso) as Array<{ id: string }>).map(r => r.id);
 }
