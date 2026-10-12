@@ -77,8 +77,8 @@ describe.skipIf(process.platform !== 'darwin')('daemon service · macOS 真装�
 
 describe('daemon service · 守护入口稳定性（chunk-hash 事故回归）', () => {
   it('S7 入口解析：绝不指向带 hash 的 chunk 文件（dist 重建后失效的根因）', async () => {
-    const { resolveWatchEntry } = await import('../../src/cli/service.js');
-    const { entry } = resolveWatchEntry();
+    const { resolveWatchEntry } = await import('../../src/cli/service.ts');
+    const { entry, exists } = resolveWatchEntry();
     // chunk 文件名模式：name-HASH.js（tsup 产物）——入口若匹配此模式即回归
     expect(path.basename(entry)).not.toMatch(/-[A-Z0-9]{8}\.js$/);
     // dev 模式指向源码入口；prod 模式必须是稳定的 dist/srelay.js
@@ -88,7 +88,9 @@ describe('daemon service · 守护入口稳定性（chunk-hash 事故回归）',
     } else {
       expect(entry.endsWith(path.join('dist', 'srelay.js'))).toBe(true);
     }
-    expect(fs.existsSync(entry)).toBe(true);
+    // exists 如实反映磁盘：prod 形态下未先 build 时是 false——此时该测的只是路径解析，
+    // 产物存在性由 smoke/dist.spec.ts 的「未构建则整体跳过」负责（不在这里误红新贡献者）
+    expect(exists).toBe(fs.existsSync(entry));
   });
 
   it('S8 windowsSilentVbs：引用 cmd 且以隐藏窗口启动（参数 0 = 闪黑框修复）', async () => {
@@ -106,7 +108,9 @@ describe('daemon service · 守护入口稳定性（chunk-hash 事故回归）',
     const r = resolveWatchEntryFrom(fakeChunkUrl);
     expect(r.entry.endsWith(path.join('dist', 'srelay.js'))).toBe(true); // 与 chunk 同目录，稳定文件名
     expect(r.entry).not.toContain('chunk-');
-    expect(r.exists).toBe(true); // 本仓库 dist 刚构建过，srelay.js 真实存在
+    // exists 标志必须如实反映磁盘：未先 build 的新贡献者跑测试时这里是 false 而不是误报 true，
+    // 契约在两种状态下都可验（上游评审要求：README 顺序（先 test）不该红）
+    expect(r.exists).toBe(fs.existsSync(r.entry));
   });
 });
 
