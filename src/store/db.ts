@@ -401,6 +401,35 @@ export function recentSessions(db: DB, projectId: string, n = 3): SessionRow[] {
   return listSessions(db, { projectId, limit: n });
 }
 
+// ── ui 仪表盘只读查询（design-dashboard §4.3；不写库、不迁移） ──
+
+/** 只读连接（ui 用）：readonly 模式，库不存在由 better-sqlite3 抛错（不静默建库） */
+export function openReadonly(file: string): DB {
+  const db = new Database(file, { readonly: true });
+  db.pragma('busy_timeout = 3000');
+  return db;
+}
+
+/** 每日消息增长：按 UTC date() 聚合（对齐库存 created_at 的 ISO/UTC 口径，U12） */
+export function growthByDay(db: DB, projectId: string, days = 30): Array<{ date: string; msgs: number }> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const rows = db.prepare(`
+    SELECT date(m.created_at) AS d, COUNT(*) AS c
+    FROM messages m JOIN sessions s ON s.id = m.session_id
+    WHERE s.project_id = ? AND m.created_at IS NOT NULL AND date(m.created_at) >= ?
+    GROUP BY d ORDER BY d
+  `).all(projectId, since) as Array<{ d: string; c: number }>;
+  return rows.map((r) => ({ date: r.d, msgs: r.c }));
+}
+
+/** 项目汇总（总览卡片）：消息总数 + 最近事件时刻 */
+export function projectSummary(db: DB, projectId: string): { messageTotal: number; lastEventAt: string | null } {
+  const r = db.prepare(
+    'SELECT COALESCE(SUM(message_count), 0) AS t, MAX(last_event_at) AS e FROM sessions WHERE project_id = ?'
+  ).get(projectId) as { t: number; e: string | null };
+  return { messageTotal: r.t, lastEventAt: r.e };
+}
+
 export function dueIdle(db: DB, projectId: string, cutoffIso: string): string[] {
   return (db.prepare(`SELECT id FROM sessions WHERE project_id = ? AND state = 'active' AND last_event_at IS NOT NULL AND last_event_at < ?`).all(projectId, cutoffIso) as Array<{ id: string }>).map(r => r.id);
 }
