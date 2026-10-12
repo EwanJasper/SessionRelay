@@ -46,7 +46,7 @@ export function closeAllDbs(): void {
 const TTL_CARD = 3_000;
 const TTL_GROWTH = 30_000;
 const cardCache = new Map<string, { snap: UiProjectCard; at: number }>();
-const growthCache = new Map<string, { snap: Array<{ date: string; msgs: number }>; at: number }>();
+const growthCache = new Map<string, { snap: Array<{ date: string; msgs: number; sess: number }>; at: number }>();
 
 export interface UiProjectCard {
   root: string; name: string; daemonAlive: boolean; lastActiveAt: string | null;
@@ -135,7 +135,7 @@ export interface UiSessionRow {
 
 const PAGE_SIZE = 20;
 
-export function uiSessions(root: string, opts: { state?: string; source?: string; q?: string; page?: number }) {
+export function uiSessions(root: string, opts: { state?: string; source?: string; q?: string; page?: number; day?: string }) {
   const c = mustRegistered(root);
   const pid = projectIdOf(c.root);
   const db = connOf(c.root);
@@ -154,10 +154,15 @@ export function uiSessions(root: string, opts: { state?: string; source?: string
     return { mode: 'search' as const, page: 1, hasMore: false, rows };
   }
   const page = Math.max(1, opts.page ?? 1);
-  const got = listSessions(db, { projectId: pid, state: opts.state || undefined, source: opts.source || undefined, limit: PAGE_SIZE + 1 });
+  // 图表下钻：当天有活动的会话（last_event_at 落在该日）
+  const day = opts.day && /^\d{4}-\d{2}-\d{2}$/.test(opts.day) ? opts.day : null;
+  const got = listSessions(db, {
+    projectId: pid, state: opts.state || undefined, source: opts.source || undefined, limit: PAGE_SIZE + 1,
+    where: day ? { sql: 'date(COALESCE(s.last_event_at, s.created_at)) = ?', params: [day] } : null,
+  });
   const hasMore = got.length > PAGE_SIZE;
   return {
-    mode: 'list' as const, page, hasMore,
+    mode: 'list' as const, page, hasMore, day,
     rows: got.slice(0, PAGE_SIZE).map((s) => ({
       id: s.id, source: s.source, state: s.state, title: s.title,
       createdAt: s.created_at, lastEventAt: s.last_event_at, messageCount: s.message_count,
@@ -165,7 +170,7 @@ export function uiSessions(root: string, opts: { state?: string; source?: string
   };
 }
 
-export function uiGrowth(root: string, days = 30): Array<{ date: string; msgs: number }> {
+export function uiGrowth(root: string, days = 30): Array<{ date: string; msgs: number; sess: number }> {
   const c = mustRegistered(root);
   const d = Math.min(90, Math.max(1, days));
   const key = `${c.root}|${d}`;

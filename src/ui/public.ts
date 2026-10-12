@@ -1,7 +1,8 @@
 // ui 仪表盘前端（design-dashboard U2/U7）：单 HTML 内联于 TS，tsup 一并打包——
 // files 清单零改动、check:artifacts 零风险、无路径解析问题。
 // 约定：模板字符串内部不得出现反引号与 ${}（内层 JS 一律用 '+' 拼接）。
-// v1.2：会话详情下钻 + 会话内关键词搜索（点击命中/决策跳到对应消息）+ 项目健康卡片。
+// v1.2：会话详情下钻 + 会话内关键词搜索 + 健康卡片。
+// v1.3：可交互增长图（悬停浮层/网格线/指标切换/点柱下钻当天会话）+ 自定义下拉组件。
 export const HTML: string = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -44,7 +45,17 @@ export const HTML: string = `<!doctype html>
   .bars .b .track { flex:1; background:#f1f3f5; border-radius:4px; height:14px; }
   .bars .b .fill { height:14px; border-radius:4px; background:var(--accent); min-width:2px; }
   .bars .b .num { width:52px; flex:none; }
-  .chartwrap { overflow-x:auto; }
+  .chartwrap { overflow-x:auto; position:relative; }
+  .chart-top { display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .chart-top h3 { margin:0; margin-right:auto; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { border:none; border-radius:0; padding:3px 12px; font-size:12px; background:var(--card); }
+  .seg button.on { background:#eef2ff; color:var(--accent); font-weight:600; }
+  #gtip { display:none; position:absolute; background:#1f2430; color:#fff; font-size:12px; padding:5px 10px; border-radius:6px; pointer-events:none; z-index:15; white-space:nowrap; box-shadow:0 4px 14px rgba(0,0,0,.2); }
+  rect.bar { cursor:pointer; transition:opacity .12s; }
+  rect.bar:hover { opacity:.68; }
+  .gridline { stroke:#eef0f3; stroke-width:1; }
+  .axlabel { font-size:10px; fill:#9aa1ab; }
   .empty { color:var(--dim); font-size:13px; padding:8px 0; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
@@ -53,9 +64,9 @@ export const HTML: string = `<!doctype html>
   td .snippet { color:var(--dim); font-size:12px; margin-top:2px; }
   tr.clickable { cursor:pointer; }
   tr.clickable:hover td { background:#f8f9ff; }
-  .filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
-  .filters select, .filters input { font:inherit; padding:4px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
-  .filters input { width:220px; }
+  .filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; align-items:center; }
+  .filters input { font:inherit; padding:4px 10px; border:1px solid var(--line); border-radius:8px; background:var(--card); width:220px; }
+  .filters input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px #3b5bdb22; }
   .pager { display:flex; align-items:center; gap:10px; margin-top:8px; color:var(--dim); font-size:12px; flex-wrap:wrap; }
   .mono { font-family:Consolas,monospace; font-size:12px; }
   .list-item { padding:6px 0; border-bottom:1px dashed var(--line); font-size:13px; }
@@ -63,7 +74,7 @@ export const HTML: string = `<!doctype html>
   .list-item .src { color:var(--dim); font-size:12px; margin-right:8px; }
   .list-item.clickable { cursor:pointer; }
   .list-item.clickable:hover .t { color:var(--accent); }
-  #deny { display:none; position:fixed; inset:0; background:#f8fafc; z-index:9; align-items:center; justify-content:center; flex-direction:column; gap:8px; }
+  #deny { display:none; position:fixed; inset:0; background:#f8fafc; z-index:30; align-items:center; justify-content:center; flex-direction:column; gap:8px; }
   .badge { display:inline-block; padding:0 8px; border-radius:99px; font-size:11px; }
   .badge.user { background:#e7f5ff; color:#1c7ed6; }
   .badge.assistant { background:#ebfbee; color:#2f9e44; }
@@ -81,6 +92,18 @@ export const HTML: string = `<!doctype html>
   .sres .sline { font-size:12px; color:var(--dim); margin-bottom:2px; }
   .backrow { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
   .logtail { font-family:Consolas,monospace; font-size:11.5px; background:#fafbfc; border:1px solid var(--line); border-radius:6px; padding:8px 10px; max-height:220px; overflow:auto; white-space:pre-wrap; word-break:break-all; color:#495057; }
+  .dd { position:relative; display:inline-block; }
+  .dd-btn { font:inherit; font-size:13px; padding:4px 28px 4px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); cursor:pointer; min-width:110px; text-align:left; position:relative; color:var(--fg); }
+  .dd-btn:hover, .dd.open .dd-btn { border-color:var(--accent); }
+  .dd-btn:after { content:''; position:absolute; right:10px; top:50%; margin-top:-2px; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid var(--dim); }
+  .dd-menu { display:none; position:absolute; top:calc(100% + 4px); left:0; z-index:20; background:var(--card); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 28px rgba(31,36,48,.14); padding:4px; min-width:100%; max-height:260px; overflow:auto; }
+  .dd.open .dd-menu { display:block; }
+  .dd-item { padding:6px 12px; border-radius:6px; cursor:pointer; font-size:13px; }
+  .dd-item:hover { background:#f1f3f5; }
+  .dd-item.sel { color:var(--accent); font-weight:600; background:#eef2ff; }
+  .chip { display:inline-flex; align-items:center; gap:4px; background:#eef2ff; color:var(--accent); border-radius:99px; padding:2px 4px 2px 12px; font-size:12px; font-family:Consolas,monospace; }
+  .chip button { border:none; background:none; padding:1px 7px; color:var(--accent); cursor:pointer; font-size:12px; border-radius:99px; }
+  .chip button:hover { background:#dbe4ff; }
   footer { text-align:center; color:var(--dim); font-size:12px; padding:10px 0 24px; }
   @media (max-width:900px){ main{flex-direction:column} aside{width:100%} }
 </style>
@@ -108,9 +131,11 @@ export const HTML: string = `<!doctype html>
 
   var MSG_PAGE = 50;
   var state = {
-    projects: [], sel: null, sessFilter: { state: '', source: '', q: '' }, page: 1, days: 30,
+    projects: [], sel: null, sessFilter: { state: '', source: '', q: '', day: '' }, page: 1, days: 30, metric: 'msgs',
+    bySourceKeys: [],
     view: 'project',
-    sess: { id: null, meta: null, from: 1, kw: '', results: null, hlSeq: null }
+    sess: { id: null, meta: null, from: 1, kw: '', results: null, hlSeq: null },
+    growthData: null
   };
 
   function $(id) { return document.getElementById(id); }
@@ -169,6 +194,41 @@ export const HTML: string = `<!doctype html>
   }
   function enc(s) { return encodeURIComponent(s); }
 
+  // ── 自定义下拉组件（v1.3：替换原生 select）──
+  function closeAllDD(except) {
+    Array.prototype.forEach.call(document.querySelectorAll('.dd.open'), function (d) {
+      if (d !== except) d.classList.remove('open');
+    });
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest || !e.target.closest('.dd')) closeAllDD(null);
+  });
+  function mountDD(mountId, options, value, onChange) {
+    var mount = $(mountId); if (!mount) return;
+    var cur = '';
+    for (var i = 0; i < options.length; i++) if (options[i].v === value) cur = options[i].label;
+    mount.innerHTML = '<div class="dd"><button type="button" class="dd-btn">' + esc(cur || options[0].label) + '</button>' +
+      '<div class="dd-menu">' + options.map(function (o) {
+        return '<div class="dd-item' + (o.v === value ? ' sel' : '') + '" data-v="' + esc(o.v) + '">' + esc(o.label) + '</div>';
+      }).join('') + '</div></div>';
+    var ddEl = mount.firstChild;
+    var btn = ddEl.querySelector('.dd-btn');
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      var isOpen = ddEl.classList.contains('open');
+      closeAllDD(ddEl);
+      if (!isOpen) ddEl.classList.add('open');
+    };
+    Array.prototype.forEach.call(ddEl.querySelectorAll('.dd-item'), function (item) {
+      item.onclick = function (e) {
+        e.stopPropagation();
+        ddEl.classList.remove('open');
+        if (item.getAttribute('data-v') === String(value)) return;
+        onChange(item.getAttribute('data-v'));
+      };
+    });
+  }
+
   // ── 总览 ──
   function loadOverview() {
     return api('/api/overview').then(function (d) {
@@ -201,13 +261,15 @@ export const HTML: string = `<!doctype html>
 
   // ── 项目详情 ──
   function selectProject(root) {
-    state.sel = root; state.view = 'project'; state.page = 1; state.sessFilter = { state: '', source: '', q: '' };
+    state.sel = root; state.view = 'project'; state.page = 1;
+    state.sessFilter = { state: '', source: '', q: '', day: '' };
     renderSidebar();
-    loadProject(); loadSessions(); loadGrowth(); loadHealth();
+    loadProject();
   }
 
   function loadProject() {
     api('/api/project?root=' + enc(state.sel)).then(function (d) {
+      state.bySourceKeys = Object.keys(d.bySource);
       var st = '';
       for (var k in d.sessions) st += '<span class="pill">' + stateZh(k) + ' ' + d.sessions[k] + '</span>';
       var src = '';
@@ -235,7 +297,10 @@ export const HTML: string = `<!doctype html>
         '<div><div class="k">最近事件</div><div class="v">' + fmtAgo(d.lastEventAt) + '</div></div>' +
         '</div></div>' +
         '<div class="card"><h3>会话构成</h3><div style="margin-bottom:8px">' + st + '</div><div class="bars">' + src + '</div></div>' +
-        '<div class="card"><h3>消息增长（近 ' + state.days + ' 天 · UTC 日）</h3><div class="chartwrap" id="growth"></div></div>' +
+        '<div class="card"><div class="chart-top"><h3>增长趋势</h3>' +
+        '<div class="seg" id="g-metric"><button data-m="msgs">消息</button><button data-m="sess">新会话</button></div>' +
+        '<span id="g-range"></span></div>' +
+        '<div class="chartwrap" id="growth"><div class="empty">加载中…</div></div></div>' +
         '<div class="card"><h3>会话（点击行进入会话详情）</h3><div id="sess"></div></div>' +
         '<div class="card"><h3>最近决策（点击跳到对应会话）</h3>' + dec + '</div>' +
         '<div class="card"><h3>未决问题（点击跳到对应会话）</h3>' + unres + '</div>' +
@@ -243,8 +308,96 @@ export const HTML: string = `<!doctype html>
       Array.prototype.forEach.call(document.querySelectorAll('.list-item.clickable'), function (el) {
         el.onclick = function () { openSession(el.getAttribute('data-sid')); };
       });
+      wireGrowthControls();
       loadGrowth(); loadSessions(); loadHealth();
     }).catch(function () {});
+  }
+
+  function wireGrowthControls() {
+    var seg = $('g-metric'); if (!seg) return;
+    Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
+      b.onclick = function () {
+        state.metric = b.getAttribute('data-m');
+        wireGrowthControls();
+        renderGrowthChart();
+      };
+      if (b.getAttribute('data-m') === state.metric) b.classList.add('on'); else b.classList.remove('on');
+    });
+    mountDD('g-range',
+      [{ v: '30', label: '近 30 天' }, { v: '60', label: '近 60 天' }, { v: '90', label: '近 90 天' }],
+      String(state.days),
+      function (v) { state.days = Number(v); loadGrowth(); });
+  }
+
+  function niceCeil(n) {
+    if (n <= 5) return 5;
+    var pow = Math.pow(10, Math.floor(Math.log10(n)));
+    for (var i = 1; i <= 5; i++) { var c = [1, 2, 2.5, 5, 10][i] * pow; if (c >= n) return c; }
+    return 10 * pow;
+  }
+
+  function loadGrowth() {
+    var el = $('growth'); if (!el) return;
+    api('/api/project/growth?root=' + enc(state.sel) + '&days=' + state.days).then(function (d) {
+      state.growthData = d;
+      renderGrowthChart();
+    }).catch(function () {});
+  }
+
+  function renderGrowthChart() {
+    var el = $('growth'); if (!el) return;
+    var d = state.growthData;
+    if (!d) { el.innerHTML = '<div class="empty">加载中…</div>'; return; }
+    if (!d.length) { el.innerHTML = '<div class="empty">窗口内无数据</div>'; return; }
+    var kw = state.metric === 'msgs' ? 'msgs' : 'sess';
+    var unit = state.metric === 'msgs' ? '条消息' : '个会话';
+    var H = 210, bw = 16, gap = 8, padL = 38, padB = 26, padT = 14;
+    var W = Math.max(640, d.length * (bw + gap) + padL + 12);
+    var nice = niceCeil(Math.max.apply(null, d.map(function (x) { return x[kw]; })));
+    var s = '<div style="position:relative;min-width:' + W + 'px">' +
+      '<div id="gtip"></div>' +
+      '<svg width="' + W + '" height="' + H + '" style="display:block">';
+    for (var g = 0; g <= 4; g++) {
+      var gy = padT + (H - padT - padB) * (1 - g / 4);
+      var gv = Math.round(nice * g / 4 * 10) / 10;
+      s += '<line class="gridline" x1="' + padL + '" y1="' + gy + '" x2="' + (W - 8) + '" y2="' + gy + '"/>' +
+        '<text class="axlabel" x="' + (padL - 7) + '" y="' + (gy + 3) + '" text-anchor="end">' + gv + '</text>';
+    }
+    var step = Math.max(1, Math.ceil(d.length / 10));
+    for (var j = 0; j < d.length; j++) {
+      var v = d[j][kw];
+      var h = v <= 0 ? 0 : Math.max(2, Math.round(v / nice * (H - padT - padB)));
+      var x = padL + j * (bw + gap) + 4, y = H - padB - h;
+      s += '<rect class="bar" data-i="' + j + '" x="' + x + '" y="' + y + '" width="' + bw + '" height="' + h + '" rx="3" fill="#3b5bdb"></rect>';
+      if (j % step === 0) s += '<text class="axlabel" x="' + (x + bw / 2) + '" y="' + (H - 8) + '" text-anchor="middle">' + d[j].date.slice(5) + '</text>';
+    }
+    s += '</svg></div>';
+    el.innerHTML = s;
+    var tip = $('gtip');
+    var wrap = el;
+    Array.prototype.forEach.call(el.querySelectorAll('rect.bar'), function (r) {
+      var i = Number(r.getAttribute('data-i'));
+      r.addEventListener('mouseenter', function () {
+        var wr = wrap.getBoundingClientRect(), br = r.getBoundingClientRect();
+        tip.textContent = d[i].date + ' · ' + d[i].msgs + ' 条消息 · ' + d[i].sess + ' 个会话活跃 · 点击下钻';
+        tip.style.display = 'block';
+        var tx = br.left - wr.left + br.width / 2 - tip.offsetWidth / 2;
+        if (tx < 2) tx = 2;
+        if (tx + tip.offsetWidth > wr.scrollWidth - 2) tx = wr.scrollWidth - tip.offsetWidth - 2;
+        tip.style.left = tx + 'px';
+        tip.style.top = Math.max(0, br.top - wr.top - tip.offsetHeight - 6) + 'px';
+      });
+      r.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+      r.addEventListener('click', function () { drillDay(d[i].date); });
+    });
+  }
+
+  function drillDay(date) {
+    state.sessFilter = { state: '', source: '', q: '', day: date };
+    state.page = 1;
+    loadSessions();
+    var card = $('sess');
+    if (card && card.closest) { var c = card.closest('.card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   }
 
   function loadHealth() {
@@ -259,40 +412,19 @@ export const HTML: string = `<!doctype html>
     }).catch(function () {});
   }
 
-  function loadGrowth() {
-    var el = $('growth'); if (!el) return;
-    api('/api/project/growth?root=' + enc(state.sel) + '&days=' + state.days).then(function (d) {
-      if (!d.length) { el.innerHTML = '<div class="empty">窗口内无消息</div>'; return; }
-      var max = 1; for (var i = 0; i < d.length; i++) if (d[i].msgs > max) max = d[i].msgs;
-      var W = Math.max(640, d.length * 24), H = 200, bw = 16, gap = 8;
-      var s = '<svg width="' + W + '" height="' + H + '" style="display:block">';
-      for (var j = 0; j < d.length; j++) {
-        var h = Math.max(2, Math.round(d[j].msgs / max * (H - 46)));
-        var x = j * (bw + gap) + 4, y = H - 26 - h;
-        s += '<rect x="' + x + '" y="' + y + '" width="' + bw + '" height="' + h + '" rx="3" fill="#3b5bdb"><title>' + d[j].date + ' · ' + d[j].msgs + ' 条</title></rect>';
-        if (j % Math.ceil(d.length / 8) === 0) s += '<text x="' + (x + bw / 2) + '" y="' + (H - 8) + '" font-size="10" fill="#6b7280" text-anchor="middle">' + d[j].date.slice(5) + '</text>';
-        if (d[j].msgs === max) s += '<text x="' + (x + bw / 2) + '" y="' + (y - 5) + '" font-size="10" fill="#6b7280" text-anchor="middle">' + d[j].msgs + '</text>';
-      }
-      s += '</svg>';
-      el.innerHTML = s;
-    }).catch(function () {});
-  }
-
   function loadSessions() {
     var el = $('sess'); if (!el || state.view !== 'project') return;
     var f = state.sessFilter;
     var qs = 'root=' + enc(state.sel) + '&page=' + state.page +
       (f.state ? '&state=' + enc(f.state) : '') +
       (f.source ? '&source=' + enc(f.source) : '') +
-      (f.q ? '&q=' + enc(f.q) : '');
+      (f.q ? '&q=' + enc(f.q) : '') +
+      (f.day ? '&day=' + enc(f.day) : '');
     api('/api/project/sessions?' + qs).then(function (d) {
-      var srcOpts = '<option value="">全部来源</option>';
-      var seen = {};
-      for (var i = 0; i < d.rows.length; i++) seen[d.rows[i].source] = 1;
-      for (var k in seen) srcOpts += '<option value="' + esc(k) + '"' + (f.source === k ? ' selected' : '') + '>' + esc(k) + '</option>';
-      var stOpts = '<option value="">全部状态</option>';
-      var sts = ['active', 'pending_end', 'confirmed', 'archived'];
-      for (var j = 0; j < sts.length; j++) stOpts += '<option value="' + sts[j] + '"' + (f.state === sts[j] ? ' selected' : '') + '>' + stateZh(sts[j]) + '</option>';
+      var stateOpts = [{ v: '', label: '全部状态' }].concat(
+        ['active', 'pending_end', 'confirmed', 'archived'].map(function (x) { return { v: x, label: stateZh(x) }; }));
+      var sourceOpts = [{ v: '', label: '全部来源' }].concat(
+        state.bySourceKeys.map(function (x) { return { v: x, label: x }; }));
       var rows = d.rows.map(function (r) {
         return '<tr class="clickable" data-sid="' + esc(r.id) + '"><td class="mono">' + esc(r.id.slice(0, 8)) + '</td><td>' + esc(r.source) + '</td><td>' + stateZh(r.state) +
           '</td><td class="title">' + esc(r.title || '（无标题）') + (r.snippet ? '<div class="snippet">' + esc(r.snippet) + '</div>' : '') +
@@ -300,20 +432,31 @@ export const HTML: string = `<!doctype html>
       }).join('');
       el.innerHTML =
         '<div class="filters">' +
-        '<select id="f-state">' + stOpts + '</select>' +
-        '<select id="f-source">' + srcOpts + '</select>' +
+        '<span id="dd-state"></span>' +
+        '<span id="dd-source"></span>' +
         '<input id="f-q" placeholder="项目内全文搜索（FTS）" value="' + esc(f.q) + '">' +
-        '<button id="f-go">查询</button></div>' +
+        '<button id="f-go">查询</button>' +
+        (f.day ? '<span class="chip">当天 ' + esc(f.day) + '<button id="chip-x" title="清除日期过滤">✕</button></span>' : '') +
+        '</div>' +
         (rows ? '<table><tr><th>ID</th><th>来源</th><th>状态</th><th>标题</th><th>消息</th><th>最近活动</th></tr>' + rows + '</table>' : '<div class="empty">无匹配会话</div>') +
         '<div class="pager"><button id="pg-prev"' + (state.page <= 1 ? ' disabled' : '') + '>上一页</button>' +
-        '<span>第 ' + d.page + ' 页' + (d.hasMore ? ' · 有更多' : '') + '</span>' +
+        '<span>第 ' + d.page + ' 页' + (d.hasMore ? ' · 有更多' : '') + (f.day ? ' · 已按 ' + esc(f.day) + ' 过滤' : '') + '</span>' +
         '<button id="pg-next"' + (d.hasMore ? '' : ' disabled') + '>下一页</button>' +
         (d.mode === 'search' ? '<span>（搜索结果最多 50 条）</span>' : '') + '</div>';
+      mountDD('dd-state', stateOpts, f.state, function (v) {
+        state.sessFilter.state = v; state.page = 1; loadSessions();
+      });
+      mountDD('dd-source', sourceOpts, f.source, function (v) {
+        state.sessFilter.source = v; state.page = 1; loadSessions();
+      });
       $('f-go').onclick = function () {
-        state.sessFilter = { state: $('f-state').value, source: $('f-source').value, q: $('f-q').value.trim() };
+        state.sessFilter.q = $('f-q').value.trim();
+        if (state.sessFilter.q) state.sessFilter.day = '';
         state.page = 1; loadSessions();
       };
       $('f-q').onkeydown = function (e) { if (e.key === 'Enter') $('f-go').click(); };
+      var cx = $('chip-x');
+      if (cx) cx.onclick = function () { state.sessFilter.day = ''; state.page = 1; loadSessions(); };
       $('pg-prev').onclick = function () { if (state.page > 1) { state.page--; loadSessions(); } };
       $('pg-next').onclick = function () { if (d.hasMore) { state.page++; loadSessions(); } };
       Array.prototype.forEach.call(el.querySelectorAll('tr.clickable'), function (tr) {
@@ -322,7 +465,7 @@ export const HTML: string = `<!doctype html>
     }).catch(function () {});
   }
 
-  // ── 会话详情（v1.2）──
+  // ── 会话详情 ──
   function openSession(id, focusSeq) {
     state.view = 'session';
     state.sess = { id: id, meta: null, from: 1, kw: '', results: null, hlSeq: focusSeq || null };
@@ -347,7 +490,6 @@ export const HTML: string = `<!doctype html>
         return '<div class="list-item clickable" data-seq="' + (x.seq || '') + '"><span class="src">#' + (x.seq || '?') + (x.at ? ' · ' + fmtDate(x.at) : '') + '</span><span class="t">' + esc(x.text) + '</span></div>';
       }).join('') : '<div class="empty">本会话无已提取决策</div>';
       var qs = (m.questions || []);
-      var unres = qs.filter(function (x) { return x.unresolved; });
       var qhtml = qs.length ? qs.map(function (x) {
         return '<div class="list-item' + (x.seq ? ' clickable' : '') + '"' + (x.seq ? ' data-seq="' + x.seq + '"' : '') + '><span class="src">#' + (x.seq || '?') + '</span><span class="t">' + esc(x.q) + (x.unresolved ? ' <span class="pill warn">未决</span>' : '') + '</span></div>';
       }).join('') : '<div class="empty">无关键问题记录</div>';
@@ -371,7 +513,7 @@ export const HTML: string = `<!doctype html>
         '<div class="filters"><input id="s-q" placeholder="在本会话全部消息中搜关键词（原文匹配）…" style="width:340px"><button id="s-go">搜索</button><span id="s-hint" style="color:var(--dim);font-size:12px"></span></div>' +
         '<div id="s-res"></div></div>' +
         '<div class="card"><h3>决策（点击跳到对应消息）</h3>' + dec + '</div>' +
-        ((qs.length) ? '<div class="card"><h3>关键问题（' + unres.length + ' 未决 · 点击跳转）</h3>' + qhtml + '</div>' : '') +
+        ((qs.length) ? '<div class="card"><h3>关键问题（点击跳转）</h3>' + qhtml + '</div>' : '') +
         '<div class="card"><h3>消息流</h3><div id="m-pager-top"></div><div id="msgs"><div class="empty">加载中…</div></div><div id="m-pager-bottom"></div></div>';
       $('s-back').onclick = backToProject;
       $('s-go').onclick = runSessionSearch;
@@ -382,18 +524,14 @@ export const HTML: string = `<!doctype html>
           if (sq > 0) jumpToSeq(sq);
         };
       });
-      // 默认打开末页；带 focusSeq 则跳到所在页
       var maxSeq = m.messageCount;
       var from = s.hlSeq ? Math.floor((s.hlSeq - 1) / MSG_PAGE) * MSG_PAGE + 1 : Math.max(1, Math.floor((maxSeq - 1) / MSG_PAGE) * MSG_PAGE + 1);
       loadSessionMessages(from);
-      runSessionSearchIfNeeded();
     }).catch(function (e) {
       $('detail').innerHTML = '<div class="card"><button id="s-back">← 返回项目</button><div class="empty" style="color:var(--bad)">会话加载失败：' + esc(e.message) + '</div></div>';
       $('s-back').onclick = backToProject;
     });
   }
-
-  function runSessionSearchIfNeeded() { /* 占位：搜索状态由用户交互触发 */ }
 
   function loadSessionMessages(from) {
     var el = $('msgs'); if (!el) return;
@@ -455,7 +593,6 @@ export const HTML: string = `<!doctype html>
       Array.prototype.forEach.call(box.querySelectorAll('.sres'), function (r) {
         r.onclick = function () { jumpToSeq(Number(r.getAttribute('data-seq'))); };
       });
-      // 当前页若在视野内顺便高亮
       loadSessionMessages(s.from);
     }).catch(function () {});
   }

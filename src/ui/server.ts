@@ -73,6 +73,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse, token: stri
           state: u.searchParams.get('state') ?? undefined,
           source: u.searchParams.get('source') ?? undefined,
           q: u.searchParams.get('q') ?? undefined,
+          day: u.searchParams.get('day') ?? undefined,
           page: Number.isFinite(p) && p > 0 ? Math.floor(p) : 1,
         }),
       });

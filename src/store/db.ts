@@ -410,16 +410,25 @@ export function openReadonly(file: string): DB {
   return db;
 }
 
-/** 每日消息增长：按 UTC date() 聚合（对齐库存 created_at 的 ISO/UTC 口径，U12） */
-export function growthByDay(db: DB, projectId: string, days = 30): Array<{ date: string; msgs: number }> {
+/** 每日增长（ui 仪表盘）：消息数 + 当天有活动的会话数，按 UTC date() 聚合（U12） */
+export function growthByDay(db: DB, projectId: string, days = 30): Array<{ date: string; msgs: number; sess: number }> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-  const rows = db.prepare(`
+  const msgRows = db.prepare(`
     SELECT date(m.created_at) AS d, COUNT(*) AS c
     FROM messages m JOIN sessions s ON s.id = m.session_id
     WHERE s.project_id = ? AND m.created_at IS NOT NULL AND date(m.created_at) >= ?
-    GROUP BY d ORDER BY d
+    GROUP BY d
   `).all(projectId, since) as Array<{ d: string; c: number }>;
-  return rows.map((r) => ({ date: r.d, msgs: r.c }));
+  const sessRows = db.prepare(`
+    SELECT date(COALESCE(last_event_at, created_at)) AS d, COUNT(*) AS c
+    FROM sessions WHERE project_id = ? AND last_event_at IS NOT NULL
+      AND date(COALESCE(last_event_at, created_at)) >= ?
+    GROUP BY d
+  `).all(projectId, since) as Array<{ d: string; c: number }>;
+  const mm = new Map(msgRows.map((r) => [r.d, r.c]));
+  const sm = new Map(sessRows.map((r) => [r.d, r.c]));
+  const dates = new Set([...mm.keys(), ...sm.keys()]);
+  return [...dates].sort().map((d) => ({ date: d, msgs: mm.get(d) ?? 0, sess: sm.get(d) ?? 0 }));
 }
 
 /** 项目汇总（总览卡片）：消息总数 + 最近事件时刻 */

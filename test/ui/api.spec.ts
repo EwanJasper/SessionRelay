@@ -86,10 +86,21 @@ describe('ui · 数据装配', () => {
     expect(d.rows.map((r) => r.id)).toEqual(['sess-a1']);
   });
 
-  it('growth：今昨两桶共 3 条', () => {
+  it('growth：今昨两桶共 3 条消息，今日 2 个活跃会话', () => {
     const g = uiGrowth(PROJ_A, 7);
     expect(g.reduce((n, x) => n + x.msgs, 0)).toBe(3);
     expect(g.length).toBeGreaterThanOrEqual(2);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(g.find((x) => x.date === today)!.sess).toBe(2);
+  });
+
+  it('sessions：day 下钻过滤（当天有活动的会话）', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const d = uiSessions(PROJ_A, { day: today });
+    expect(d.rows.length).toBe(2);
+    expect(d.day).toBe(today);
+    expect(uiSessions(PROJ_A, { day: '2020-01-01' }).rows.length).toBe(0);
+    expect(uiSessions(PROJ_A, { day: 'not-a-date' }).rows.length).toBe(2); // 非法日期忽略
   });
 
   it('白名单（U6）：未注册 root 一律 NotRegistered', () => {
