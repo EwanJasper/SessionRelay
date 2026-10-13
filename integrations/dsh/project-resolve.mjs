@@ -87,11 +87,16 @@ export function projectFromRecentSession(maxAgeMs = 24 * 3600_000) {
     cands.push({ slug: e.name, at: newest })
   }
   cands.sort((a, b) => b.at - a.at)
+  // 优先返回已建库的；同时记住"路径存在但未建库"的最近一个——
+  // 它是"当前在哪个项目"的强信号，不该被当成悬空处理（见 resolveProjectRoot 的 uninitialized）。
+  let uninitialized = null
   for (const c of cands) {
     const root = resolveFromSlug(c.slug)
-    if (root && fs.existsSync(path.join(root, '.sessionrelay'))) return root
+    if (!root) continue
+    if (fs.existsSync(path.join(root, '.sessionrelay', 'relay.sqlite'))) return root
+    if (!uninitialized && fs.existsSync(root)) uninitialized = root
   }
-  return null
+  return uninitialized ? { uninitialized } : null
 }
 
 /**
@@ -133,7 +138,16 @@ export function resolveProjectRoot(envRoot) {
   }
   // ② DSH 自己的会话归属（最准的"当前在哪个项目"信号）
   const fromSession = projectFromRecentSession()
-  if (fromSession) return { root: fromSession, via: 'dsh-session' }
+  if (fromSession && typeof fromSession === 'string') {
+    return { root: fromSession, via: 'dsh-session' }
+  }
+  // ②b 会话归属明确、但该项目还没建库 → 单独状态，不落到"悬空"。
+  // 若当成悬空，会把用户机器上另外几个项目列出来让他挑——那是误导（他就在这个项目里，
+  // 只是还没接入）。这里不自动建库：自动建库等于猜意图（Desktop/Downloads/盘符根都会被误判），
+  // 猜错即永久目录污染。与 ZCode 一致——普通目录零打扰，用户明确要求才 init。
+  if (fromSession && fromSession.uninitialized) {
+    return { root: null, uninitialized: fromSession.uninitialized, candidates: [], via: null }
+  }
   // ③ 注册表恰好一个存活项目（新用户只有一个项目时的友好路径）
   const reg = registryProjects()
   if (reg.length === 1) return { root: reg[0], via: 'registry-single' }

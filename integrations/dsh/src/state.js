@@ -69,6 +69,16 @@ export function validateProjectPath(targetPath) {
   } catch (err) {
     return { valid: false, normalizedPath: normalized, reason: `目标目录不存在或无法访问：${err.message}` }
   }
+  // 必须校验记忆库存在：只判目录会让"绑定一个还没 init 的目录"假成功——
+  // 提议通过 → 用户确认 → 切过去 → 所有工具报「未找到 .sessionrelay」静默失败。
+  // 实测踩中（Antigravity 报告 Bug 2）。
+  if (!fs.existsSync(path.join(normalized, '.sessionrelay', 'relay.sqlite'))) {
+    return {
+      valid: false,
+      normalizedPath: normalized,
+      reason: '该目录尚未初始化记忆库（先在该目录运行 srelay init，或让用户说一声"接入"）',
+    }
+  }
   return { valid: true, normalizedPath: normalized }
 }
 

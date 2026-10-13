@@ -8,7 +8,7 @@
 // 4. srelay_bind_project 必须是两段式：模型调用只提议（propose），绝不直接更改生效项目。
 import { defineTool } from './define-tool.js'
 import { execSrelay, clip } from './cli.js'
-import { getActiveProject, proposeProject } from './state.js'
+import { getActiveProject, proposeProject, confirmProject, cancelProposal } from './state.js'
 
 /** 标准工具返回输出契约，与 dsh-reach 一致 */
 const resultSchema = {
@@ -211,5 +211,42 @@ export const bindProjectTool = defineTool({
       payload: proposalResult.message,
       error: '',
     }
+  },
+})
+
+/**
+ * 【两段式第二段】确认绑定。仅在用户明确回复"确认"后由模型调用。
+ * 缺失这个工具时，第一段的提议永远无法生效——用户说"确认"模型也无从执行。
+ */
+export const confirmBindTool = defineTool({
+  name: 'srelay_confirm_bind_project',
+  description: '确认上一个项目绑定提议（两段式第二段）。仅在用户明确同意切换后才调用；没有待确认提议时会失败。',
+  parameters: {},
+  output: {
+    schema: resultSchema,
+    render: (_args, value) => [{
+      type: 'text',
+      text: value.ok ? value.payload : `确认失败：${value.error}`,
+    }],
+  },
+  async execute() {
+    const r = confirmProject()
+    if (!r.ok) return { ok: false, payload: '', error: r.message }
+    return { ok: true, payload: r.message, error: '' }
+  },
+})
+
+/** 取消待确认的绑定提议（用户改主意时用）。 */
+export const cancelBindTool = defineTool({
+  name: 'srelay_cancel_bind_project',
+  description: '取消待确认的项目绑定提议。用户反悔或想换个项目时使用。',
+  parameters: {},
+  output: {
+    schema: resultSchema,
+    render: (_args, value) => [{ type: 'text', text: value.ok ? value.payload : value.error }],
+  },
+  async execute() {
+    cancelProposal()
+    return { ok: true, payload: '已取消待确认的项目绑定提议。', error: '' }
   },
 })

@@ -4,7 +4,18 @@
   "type": "module",
   "main": "index.js",
   "license": "MIT",
-  "private": true,
+  "description": "SessionRelay 项目记忆 → DSH 自动简报与记忆工具（本地优先 · 离线自包含 · 两段式安全绑定）",
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "sessionrelay",
+    "memory",
+    "brief",
+    "system-prompt"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
   },
@@ -12,5 +23,17 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  }
+  },
+  "files": [
+    "index.js",
+    "project-resolve.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "src/cli.js",
+    "src/tools.js",
+    "src/state.js",
+    "src/define-tool.js",
+    "src/index.js",
+    "vendor/**"
+  ]
 }

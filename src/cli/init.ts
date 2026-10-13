@@ -52,6 +52,13 @@ function detectSources(): DetectedSource[] {
       paths: [path.join(home, '.zcode', 'cli', 'db', 'db.sqlite')],
     },
     {
+      id: 'dsh', name: 'DeepSeek Harness',
+      // 会话按工作目录 slug 分组存放；探测目录本身即可判定源可用。
+      // 此前漏了这一项：--yes 走「只选已安装的源」，故裸跑 srelay init 建出的库
+      // 永远采不到 DSH 会话（适配器 src/adapters/dsh/ 早已存在，只差这个探测项）。
+      paths: [path.join(home, '.dsh', 'sessions')],
+    },
+    {
       id: 'codex', name: 'Codex',
       paths: [path.join(home, '.codex')],
     },

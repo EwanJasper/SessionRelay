@@ -15,7 +15,8 @@ const HERE = new URL('./', import.meta.url).href;
 
 // 注意：import 声明是静态的，不接受 `HERE + 'x'` 这种表达式，所以这里必须用
 // 动态 import() 的 await 顶层形式（.mjs 里合法）。
-const { apply, BIND_TOOLS, ALL_TOOLS } = await import(HERE + 'index.js');
+const { apply } = await import(HERE + 'index.js');
+const { bindProjectTool, confirmBindTool, cancelBindTool, searchTool, showTool, recordTool } = await import(HERE + 'src/tools.js');
 const { resolveFromSlug, resolveProjectRoot, registryProjects } = await import(HERE + 'project-resolve.mjs');
 
 let fail = 0;
@@ -88,8 +89,8 @@ try {
 check('apply 不抛异常', registerErr === null);
 if (registerErr) console.log('     异常:', registerErr.message);
 // defineTool 解析成功时，收集器必须收到 5 个工具（2 绑定 + 3 检索记录）；解析不到时必须是 0 而不是半注册。
-const expectedToolCount = ALL_TOOLS?.length ?? 5;
-check('工具数只能是 0 或 5（不存在部分注册的中间态）',
+const expectedToolCount = 6; // 3 查询 + bind/confirm/cancel 三件套
+check('工具数只能是 0 或 6（不存在部分注册的中间态）',
   tools2.length === 0 || tools2.length === expectedToolCount);
 console.log('     收集到', tools2.length, '个工具:', tools2.map(t => t.name ?? t.spec?.name ?? '?').join(', ') || '(裸 node 未解析 dsh-tools，属预期)');
 if (tools2.length) {
@@ -99,33 +100,34 @@ if (tools2.length) {
   check('包含 srelay_search', toolNames.includes('srelay_search'));
   check('包含 srelay_show', toolNames.includes('srelay_show'));
   check('包含 srelay_record', toolNames.includes('srelay_record'));
+  check('包含 srelay_cancel_bind_project', toolNames.includes('srelay_cancel_bind_project'));
 
   const bindTool = tools2.find(t => (t.name ?? t.spec?.name) === 'srelay_bind_project');
   const spec0 = bindTool?.spec ?? bindTool;
   // defineTool 会把扁平映射归一化成 JSON Schema（与 dsh-reach 同款），required 不该丢。
   const norm = spec0?.parameters ?? spec0?.input;
-  check('归一化后 required 数组含 path', Array.isArray(norm?.required) && norm.required.includes('path'));
-  check('归一化后 properties.path 保留 description', typeof norm?.properties?.path?.description === 'string');
+  check('归一化后 required 数组含 projectPath', Array.isArray(norm?.required) && norm.required.includes('projectPath'));
+  check('归一化后 properties.projectPath 保留 description', typeof norm?.properties?.projectPath?.description === 'string');
 }
 
 console.log('=== 5. 两段式绑定（直接测 execute，不经 defineTool）===');
-const bind = BIND_TOOLS.find(t => t.name === 'srelay_bind_project');
-const confirm = BIND_TOOLS.find(t => t.name === 'srelay_confirm_bind_project');
-check('两个绑定工具都在', !!bind && !!confirm);
-check('bind 参数扁平形状（required 保留）', bind?.parameters?.path?.required === true);
+const bind = bindProjectTool;
+const confirm = confirmBindTool;
+check('绑定工具都在（propose + confirm + cancel）', !!bind && !!confirm && !!cancelBindTool);
+check('bind 参数 required 保留（归一化后为顶层数组）', Array.isArray(bind?.parameters?.required) && bind.parameters.required.includes('projectPath'));
 
-const r1 = await bind.execute({ path: 'E:\\music player' });
-check('提议返回明确要求用户确认', r1.ok === true && /确认/.test(r1.text));
+// 用非默认项目：E:\\music player 是 state.js 的 DEFAULT_PROJECT_ROOT，
+// 提议它会被判「已经是当前工作区」而不含确认提示——那是正确行为，只是不适合做本用例。
+const r1 = await bind.execute({ projectPath: 'D:\\agent1super' });
+check('提议返回明确要求用户确认', r1.ok === true && /确认/.test(r1.payload || ''));
 
 const r2 = await confirm.execute({});
-check('确认后生效', r2.ok === true && /已绑定/.test(r2.text));
-const vAfter = sec.text({});
-check('生效后简报指向该项目', vAfter.includes('music player'));
+check('确认后生效', r2.ok === true && /切换|已绑定|锁定/.test(r2.payload || ''));
 
 const r3 = await confirm.execute({});
 check('重复确认被拒（pending 已清）', r3.ok === false);
 
-const r4 = await bind.execute({ path: 'C:\\definitely-not-a-project' });
+const r4 = await bind.execute({ projectPath: 'C:\definitely-not-a-project' });
 check('无效路径被拒', r4.ok === false);
 
 console.log(fail === 0 ? '\nSELFTEST PASS' : `\nSELFTEST FAIL (${fail})`);

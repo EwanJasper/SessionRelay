@@ -1,0 +1,19 @@
+# ── 排除（不进发布包）──
+# 开发用符号链接：指向作者本机 DSH 安装，换机器即断
+node_modules
+# 自测脚本（开发用）
+selftest.mjs
+src/selftest.mjs
+# vendor 生成脚本与临时目录（发布包自带现成的 vendor/，不需要它）
+vendor-srelay.mjs
+.vendor-tmp
+
+# ── 明确包含（覆盖上面的 node_modules 规则）──
+# vendor/ 必须随包发布：这是"完全离线自包含"的本体。
+# npm 的 .npmignore 不支持 ! 反向规则，故 vendor 的内容靠"不匹配上面的规则"保留：
+#   node_modules 规则只匹配根级 node_modules/（npm 默认行为），vendor/node_modules/ 不受影响。
+
+# ── 关键：npm 默认忽略一切 node_modules/，含嵌套的 vendor/node_modules/。
+# 但 vendor/node_modules 是"离线自包含"的本体（better-sqlite3 原生 binding + jieba 词库），
+# 漏掉它发布包装上即崩。npm 的 .npmignore 不支持 ! 反向规则，
+# 唯一可靠做法：package.json 的 "files" 白名单显式列入 vendor/**。

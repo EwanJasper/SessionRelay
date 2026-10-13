@@ -19,18 +19,29 @@ import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { resolveProjectRoot } from './project-resolve.mjs'
-import { searchTool, showTool, recordTool } from './src/tools.js'
+import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool } from './src/tools.js'
 import { setStorageAdapter } from './src/state.js'
 
 export const name = 'dsh-srelay-brief'
 export const inject = ['systemPrompt', 'tools']
 
-// srelay CLI 入口：优先 env 覆盖，否则按 npm 全局安装的常规位置探测。
-// 不写死本机绝对路径——这个文件会随仓库开源。
+// srelay CLI 入口解析，三级优先：
+//   ① SRELAY_CLI_PATH 环境变量 —— 开发天窗（指向工作副本，免打包即可联调）
+//   ② 本插件自带的 vendor/ —— 默认路径，完全离线自包含（不依赖用户装没装 srelay）
+//   ③ npm 全局安装位置 —— 兜底（vendor 被裁掉时仍可用）
+// 必须用 fileURLToPath：new URL(...).pathname 对非 ASCII 做百分号编码，
+// 中文目录会变成 D:/dsh%E6%8F%92%E4%BB%B6%20%20%E8%AE%B0%E5%BF%86/... → existsSync 恒 false，
+// vendor 被静默跳过、回落全局（本机工作目录 D:\dsh插件  记忆\ 实测踩中）。
+// index.js 在插件根，故相对路径是 ./vendor/...（src/cli.js 里则是 ../vendor/...）。
+const VENDOR_SRELAY = fileURLToPath(new URL('./vendor/dist/srelay.js', import.meta.url))
 const SRELAY = process.env.SRELAY_CLI_PATH
-  || path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@ewanjasper', 'sessionrelay', 'dist', 'srelay.js')
-const NODE = 'D:/agent1super/node/node.exe'
+  || (fs.existsSync(VENDOR_SRELAY) ? VENDOR_SRELAY
+      : path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@ewanjasper', 'sessionrelay', 'dist', 'srelay.js'))
+// node 可执行文件：vendor 的 srelay 是纯 JS，用当前进程的 node 即可；
+// DSH 桌面端自带 runtime，process.execPath 就是它。
+const NODE = process.execPath
 // 项目根：DSH 是 GUI 宿主，CLI 子进程 cwd 不是项目根，所以这里显式给死。
 // 换主战场改这一处，或用 SRELAY_BRIEF_ROOT 覆盖。
 const ENV_ROOT = process.env.SRELAY_BRIEF_ROOT || null
@@ -144,6 +155,15 @@ export function buildBriefTextSync() {
     // 悬空：判定不出项目 → 给候选清单让用户/模型确认，而不是静默不注入。
     // 这里刻意不猜——注错项目的简报比不注入更糟（会把 A 项目的决策显示在 B 项目里）。
     const r = resolveProjectRoot(ENV_ROOT)
+    // ②b 会话归属明确但项目未建库：单独文案，不列其他项目（那会误导用户去挑别的项目）。
+    // 不自动建库——自动建库=猜意图，猜错即永久目录污染。
+    if (r.uninitialized) {
+      return [
+        `【SessionRelay · 尚未接入】当前项目：${r.uninitialized}`,
+        '该目录还没有记忆库。需要时对我说一声"接入"，我再执行 srelay init。',
+        '（未接入前不会采集本项目会话，也不会记录决策。）',
+      ].join('\n')
+    }
     const cands = (r.candidates ?? []).slice(0, 5)
     if (!cands.length) return ''
     return [
@@ -170,60 +190,6 @@ export function buildBriefTextSync() {
   return text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + '\n…(截断)' : text
 }
 
-// ── 两段式项目绑定（Z7）──
-// 为什么两段式：绑定决定"决策写进哪个库"。若模型能自主切换，它在 B 项目会话里
-// 误判绑到 A 项目，后续记录的决策就直接写进 A 的 SQLite，不可逆。
-// 对齐 SessionRelay 原则「AI 永远没有删除权」——同样的约束延伸到「写哪个库」。
-// 第一段（本工具）：只提议，写 pending，返回强提示要求用户确认。
-// 第二段：用户明确说"确认"后，由 confirm_bind_project 生效。
-let pendingBind = null // { root, at }
-
-export const BIND_TOOLS = [
-  {
-    name: 'srelay_bind_project',
-    description: '提议把当前会话绑定到某个项目的记忆库（两段式第一步：仅提议，需用户确认后生效）。当简报显示"未绑定项目"或用户说"切到某项目"时使用。',
-    parameters: {
-      path: { type: 'string', required: true, description: '项目根目录绝对路径，如 E:\mc整合包' },
-    },
-    execute(args) {
-      const root = String(args.path || '').trim()
-      if (!root) return { ok: false, text: '缺少 path 参数' }
-      if (!fs.existsSync(path.join(root, '.sessionrelay', 'relay.sqlite'))) {
-        return { ok: false, text: `该目录没有 SessionRelay 记忆库：${root}
-（先在项目里跑 srelay init 再绑定）` }
-      }
-      pendingBind = { root, at: Date.now() }
-      return {
-        ok: true,
-        text: `已提议绑定到：${root}
-
-⚠️ 此操作会改变记忆写入目标，需用户确认。
-请用户明确回复"确认"后，我再调用 srelay_confirm_bind_project 生效。`,
-      }
-    },
-  },
-  {
-    name: 'srelay_confirm_bind_project',
-    description: '确认上一个项目绑定提议（两段式第二步）。仅在用户明确同意后才调用。',
-    parameters: {},
-    execute() {
-      if (!pendingBind) return { ok: false, text: '没有待确认的绑定提议。先调用 srelay_bind_project 提议。' }
-      if (Date.now() - pendingBind.at > 5 * 60_000) {
-        pendingBind = null
-        return { ok: false, text: '提议已过期（超过 5 分钟）。请重新提议。' }
-      }
-      const root = pendingBind.root
-      boundRoot = root
-      pendingBind = null
-      lastResolve = { root, via: 'bound', at: Date.now() }
-      return { ok: true, text: `已绑定到：${root}
-本会话后续的记忆查询都指向该项目。` }
-    },
-  },
-]
-
-export const QUERY_TOOLS = [searchTool, showTool, recordTool]
-export const ALL_TOOLS = [...BIND_TOOLS, ...QUERY_TOOLS]
 
 export function apply(ctx) {
   ctx.systemPrompt.section({
@@ -273,40 +239,23 @@ export function apply(ctx) {
   }
   if (typeof defineTool !== 'function') return // 非 DSH 环境：简报已注册，绑定工具缺席
 
+  // 整合定稿：采用 src/ 的 6 个原生工具（含两段式 bind 的第二段 confirm）。
+  // 早期主线自带的 BIND_TOOLS 已被 src/tools.js 取代——两套并存会让模型看到
+  // 两个同名 srelay_bind_project，且旧那套的 confirm 与 state.js 的 pending 互不知情，
+  // 出现"提议了却确认不了"的死路。
   let registered = 0
-  for (const t of BIND_TOOLS) {
-    try {
-      ctx.tools.register(defineTool({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-        output: {
-          schema: { type: 'object', additionalProperties: false,
-            properties: { ok: { type: 'boolean', required: true }, text: { type: 'string', required: true } } },
-          render: (_a, v) => [{ type: 'text', text: v.text }],
-        },
-        async execute(args) { return t.execute(args) },
-      }))
-      registered++
-    } catch (e) {
-      // 单个工具注册失败不能拖垮另一个，更不能拖垮简报；但必须留下痕迹——
-      // 铁律 4：「启动不报错」不等于「工具注册对了」，静默 catch 正是当初
-      // 让两次真实 bug 藏了很久的原因。这里显式计数 + 可选告警。
-      if (process.env.SRELAY_BRIEF_DEBUG) console.error(`[dsh-srelay-brief] 注册 ${t.name} 失败：`, e.message)
-    }
-  }
-
-  // 注册原生记忆查询与记录工具（srelay_search, srelay_show, srelay_record）
-  for (const t of QUERY_TOOLS) {
+  const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool]
+  for (const t of allTools) {
     try {
       ctx.tools.register(t)
       registered++
     } catch (e) {
-      if (process.env.SRELAY_BRIEF_DEBUG) console.error(`[dsh-srelay-brief] 注册 ${t.name} 失败：`, e.message)
+      // 单个工具失败不拖垮其他工具与简报；但必须留痕——
+      // 铁律：「启动不报错」不等于「工具注册对了」，静默 catch 曾让真 bug 藏很久。
+      if (process.env.SRELAY_BRIEF_DEBUG) console.error(`[dsh-srelay-brief] 注册 ${t?.name} 失败：`, e.message)
     }
   }
-
-  const expectedTotal = BIND_TOOLS.length + QUERY_TOOLS.length
+  const expectedTotal = allTools.length
   // 注册数对不上就是真故障：留一行 stderr，不抛（简报不受影响）
   if (registered !== expectedTotal) {
     console.error(`[dsh-srelay-brief] 原生工具注册不全：${registered}/${expectedTotal}`)

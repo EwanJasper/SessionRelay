@@ -30,11 +30,13 @@ injection point — that renders the brief before each model step.
 
 1. **Brief injection.** A `systemPrompt` section, evaluated on every assembly
    (i.e. before each model step), showing the project's recent decisions and
-   unresolved questions. Bounded to 1200 chars.
-2. **Project resolution.** A four-step fallback chain that works without any
+   unresolved questions. Bounded to 1200 chars, with an mtime-keyed cache so a
+   repeat evaluation costs ~1 ms instead of ~310 ms.
+2. **Project resolution.** A four-step fallback chain that needs no
    configuration in the common case.
-3. **Two-stage project binding.** A pair of native tools for the case where
-   automatic resolution cannot decide.
+3. **Six native tools.** `srelay_search` / `srelay_show` / `srelay_record`
+   for querying, plus `srelay_bind_project` / `srelay_confirm_bind_project` /
+   `srelay_cancel_bind_project` for the two-stage binding.
 
 ## Project resolution
 
@@ -51,7 +53,7 @@ directory slug:
 ```
 ~/.dsh/sessions/
   --E-music~0020player--      ← E:\music player
-  --D--agent1super--          ← D:\agent1super
+  --D-agent1super--           ← D:\agent1super
 ```
 
 That slug is DSH's own record of which directory a session belongs to, so it is
@@ -77,18 +79,43 @@ project B conversation, and the model has no way to tell they are unrelated.
 ## Two-stage binding
 
 `srelay_bind_project` decides **which database decisions get written to**, so it
-is not a decision the model may make on its own. If a model in project B
+is not a decision the model may make on its own. If a model in a project B
 session mis-resolved and bound itself to project A, every decision it then
 recorded would be written into A's SQLite — irreversibly.
 
 This mirrors SessionRelay's own rule that AI never gets delete tools; the same
 constraint extends to "which store do writes go to":
 
-- `srelay_bind_project({ path })` — **proposes only**. Records a pending bind and
-  returns text explicitly asking the user to confirm. Nothing changes.
+- `srelay_bind_project({ projectPath })` — **proposes only**. Records a pending
+  proposal and returns text explicitly asking the user to confirm.
 - `srelay_confirm_bind_project()` — **applies**, and only after the user has
-  said so. The pending proposal expires after 5 minutes; a second confirm is
-  rejected.
+  said so.
+- `srelay_cancel_bind_project()` — drops a pending proposal.
+
+Proposals are tracked per scope, so multiple concurrent conversations do not
+share binding state. A target path is only accepted if it already contains a
+`.sessionrelay` database — otherwise binding a fresh directory would report
+success and then fail silently on every subsequent call.
+
+## Self-contained runtime (vendor/)
+
+The plugin ships its own SessionRelay runtime under `vendor/` and prefers it over
+any globally installed copy:
+
+```
+① SRELAY_CLI_PATH env   → development escape hatch (point at a working copy)
+② vendor/ (bundled)     → default; works with no npm install and no network
+③ global npm location   → fallback only
+```
+
+`vendor/` is a **build artifact**, not tracked in git — it is ~67 MB and carries
+`better-sqlite3` native bindings for every platform, which would bloat the
+repository (the whole repo is ~13 MB). Generate it with:
+
+```sh
+node vendor-srelay.mjs                 # fetch from npm
+node vendor-srelay.mjs --from <path>   # copy from an existing install (offline)
+```
 
 ## Install
 
@@ -104,12 +131,11 @@ The plugin is a DSH *bundle*: a package whose manifest declares
 ```
 
 Then `pnpm install` in the profile directory. The plugin needs
-`@deepseek-ai/dsh-tools` and `@deepseek-ai/dsh-system-prompt` as peers; DSH
-resolves both from its own installation.
+`@deepseek-ai/dsh-tools` as a peer; DSH resolves it from its own installation.
 
 ## Development notes
 
-Three things bit us during development and are worth knowing before editing:
+Four things bit us during development and are worth knowing before editing:
 
 1. **`apply` must be synchronous.** Cordis calls `apply` and expects a fiber;
    an `async apply` returns a Promise, and DSH reports
@@ -121,13 +147,26 @@ Three things bit us during development and are worth knowing before editing:
 3. **`SRELAY_PROJECT_ROOT` only affects `serve`.** Every CLI subcommand
    (`search`, `show`, `list`, `decisions`) resolves the project from **cwd**
    alone. When shelling out, pass `cwd: root`; setting the env var does nothing.
+4. **The two-stage bind needs all three tools.** Proposing without a confirm
+   tool means the user can say "yes" and nothing can act on it.
+5. **Resolve paths with `fileURLToPath`, never `new URL(...).pathname`.**
+   `.pathname` percent-encodes non-ASCII characters, so a plugin installed under
+   a directory like `D:\dsh插件  记忆\` resolves to
+   `D:/dsh%E6%8F%92%E4%BB%B6%20%20%E8%AE%B0%E5%BF%86/...` and every `existsSync`
+   fails. The vendored runtime is then silently skipped and the plugin falls back
+   to a global install — a 67 MB payload carried for nothing. When you test this,
+   test under a **non-ASCII** path: an ASCII-only path hides the bug completely
+   (that is exactly how it survived one round of "verified offline" testing).
+   Also build the path in one step; `dirname(fileURLToPath(url))` followed by
+   `join(..., 'dist')` yields `vendor/dist/dist/...`.
 
 ## Self-test
 
-```
+```sh
 node selftest.mjs
 ```
 
 Covers slug decoding against real DSH directory names, the resolution chain,
-the section registration contract (deliberately not awaiting the provider), and
-the two-stage binding. It does not require DSH to be running.
+the section registration contract (deliberately not awaiting the provider),
+tool registration via a stub collector, and the full two-stage binding flow. It
+does not require DSH to be running.

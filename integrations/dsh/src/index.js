@@ -7,11 +7,11 @@
 //   export function apply(ctx) {
 //     registerTools(ctx)
 //   }
-import { searchTool, showTool, recordTool, bindProjectTool } from './tools.js'
+import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool } from './tools.js'
 import * as bindState from './state.js'
 import { execSrelay, clip } from './cli.js'
 
-export { searchTool, showTool, recordTool, bindProjectTool }
+export { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool }
 export { bindState }
 export { execSrelay, clip }
 
@@ -27,4 +27,6 @@ export function registerTools(ctx) {
   ctx.tools.register(showTool)
   ctx.tools.register(recordTool)
   ctx.tools.register(bindProjectTool)
+  ctx.tools.register(confirmBindTool)   // 两段式第二段：缺它则提议永远无法生效
+  ctx.tools.register(cancelBindTool)
 }

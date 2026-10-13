@@ -7,14 +7,29 @@
 // 4. 清理终端 ANSI 转义字符，确保模型与用户看到纯净文本
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-export const NODE = fs.existsSync('D:/agent1super/node/node.exe')
-  ? 'D:/agent1super/node/node.exe'
-  : (fs.existsSync('C:/Program Files/nodejs/node.exe') ? 'C:/Program Files/nodejs/node.exe' : process.execPath)
+// node 可执行文件：用当前进程的（DSH 桌面端自带 runtime；CLI 宿主即用户 node）。
+// 不再探测本机固定路径——那会写死作者环境。
+export const NODE = process.execPath
+
+// srelay CLI 入口，三级优先（与 index.js 同源逻辑）：
+//   ① env 天窗 → ② 插件自带 vendor → ③ npm 全局兜底
+//
+// ⚠️ 路径解析必须用 fileURLToPath，不能用 new URL(...).pathname：
+// 后者对非 ASCII 字符做百分号编码，中文目录会变成
+//   D:/dsh%E6%8F%92%E4%BB%B6%20%20%E8%AE%B0%E5%BF%86/...
+// 于是 fs.existsSync 必然 false，vendor 被静默跳过、回落到 npm 全局——
+// 67MB 自包含白带，且在所有非 ASCII 路径下失效（本机工作目录
+// `D:\dsh插件  记忆\` 正是这个情况，实测踩中）。
+// 直接从 URL 得到 vendor 入口的绝对路径。注意别再 dirname+join 拼一次——
+// 那样会多出一级（实测得到 vendor/dist/dist/srelay.js，existsSync 假 → 静默回落）。
+const VENDOR_SRELAY = fileURLToPath(new URL('../vendor/dist/srelay.js', import.meta.url))
 
 export const SRELAY = process.env.SRELAY_CLI_PATH
-  || join(process.env.APPDATA || '', 'npm', 'node_modules', '@ewanjasper', 'sessionrelay', 'dist', 'srelay.js')
+  || (fs.existsSync(VENDOR_SRELAY) ? VENDOR_SRELAY
+      : join(process.env.APPDATA || '', 'npm', 'node_modules', '@ewanjasper', 'sessionrelay', 'dist', 'srelay.js'))
 
 /** 过滤终端 ANSI 颜色控制字符 */
 export function stripAnsi(s) {
