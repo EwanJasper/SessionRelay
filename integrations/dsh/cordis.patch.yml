@@ -1,0 +1,6 @@
+# dsh-srelay-brief profile bundle patch: inserts the local status-brief row.
+# Same shape as dsh-reach / dsh-searxng-tool — new instances must use insert,
+# a bare id is treated as an override and reports "entry not found".
+- insert:
+    - id: srelay-brief
+      name: 'dsh-srelay-brief'
