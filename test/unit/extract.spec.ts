@@ -171,3 +171,19 @@ describe('P4b · 词中误命中（触发词出现在更长词内部时不算决
     expect(d[0].text).toMatch(/改用 SQLite/);
   });
 });
+
+describe('P4c · 词中误命中补遗（简报实测暴露的新样本）', () => {
+  it('「决定性旁证」不是决策', () => {
+    const d = extractDecisions([msg('user', '决定性旁证：你自己的订阅里写着答案')]);
+    expect(d.map(x => x.text)).not.toContainEqual(expect.stringMatching(/决定性/));
+  });
+  it('「确定性」不是决策', () => {
+    const d = extractDecisions([msg('user', '这个系统的确定性很强，同样的输入必然得到同样的输出')]);
+    expect(d).toHaveLength(0);
+  });
+  it('真决策「决定采用」不受连带影响', () => {
+    const d = extractDecisions([msg('user', '我们决定采用渐进式披露做上下文注入')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/渐进式披露/);
+  });
+});

@@ -94,7 +94,7 @@ function isQuotedSpeech(s: string): boolean {
 // 「决定论 规则明确」被 DECISION_STRONG 的"决定"命中，但它讨论的是决定论（determinism），
 // 不是谁做了什么决定。实测该误命中在抽样里出现 2 次。
 // 只在这些组合后出现时才豁免——不误伤"决定改用 X"这种真决策。
-const DECISION_FALSE_POSITIVE = /(决定论|选择性注意|选择性|采纳率|采用率|放弃治疗|切换成本)/;
+const DECISION_FALSE_POSITIVE = /(决定论|确定性|决定性|选择性注意|选择性|采纳率|采用率|放弃治疗|切换成本)/;
 
 // [fork 0922] 决策合理性守卫：正则只管"句首有触发词"，不管句子长什么样——
 // 实测垃圾三来源：看板表格行（| 分隔）、Markdown 粗体残片（**）、消息内嵌 JSON 转义串。
