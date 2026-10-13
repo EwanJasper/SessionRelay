@@ -4,6 +4,8 @@ A native DSH plugin that brings SessionRelay project memory into DSH's system
 prompt — the equivalent of the SessionStart hook that CLI-shaped clients
 (ZCode, Claude Code) get for free.
 
+**[中文](./README.zh-CN.md) · [SessionRelay upstream](https://github.com/EwanJasper/SessionRelay)**
+
 ## Why this exists
 
 SessionRelay is an MCP server, so it can be *queried* by any MCP client. But an

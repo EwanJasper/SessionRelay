@@ -1,5 +1,5 @@
 {
-  "name": "dsh-srelay-brief",
+  "name": "@crx1146/dsh-sessionrelay",
   "version": "0.1.0",
   "type": "module",
   "main": "index.js",
@@ -16,6 +16,15 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rui08984-dot/dsh-sessionrelay.git"
+  },
+  "homepage": "https://github.com/rui08984-dot/dsh-sessionrelay#readme",
+  "bugs": {
+    "url": "https://github.com/rui08984-dot/dsh-sessionrelay/issues"
+  },
+  "author": "rui08984-dot",
   "dependencies": {
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
   },
@@ -29,6 +38,8 @@
     "project-resolve.mjs",
     "cordis.patch.yml",
     "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
     "src/cli.js",
     "src/tools.js",
     "src/state.js",
