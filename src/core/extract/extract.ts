@@ -77,6 +77,25 @@ function sentences(text: string): string[] {
   return merged.split(/(?<=[。！？!?]|\n)/).map((s) => s.trim()).filter(Boolean);
 }
 
+// [fork 1013] 转述/引用判定（审计 P4）：用户消息里复述他人文本的句子不是用户的决策或问题。
+// 实测来源：整份评审报告粘进消息 → 「此外助手最后以"要继续做别的吗？"」被当成用户未决问题，
+// 同一粘贴内容产出 3 条近似条目。挡的是"引用语义"，markdown 残片归 plausibleDecision 管。
+// 只影响提取端，不改源数据——命中转述的句子原本就不该进 decisions/questions。
+function isQuotedSpeech(s: string): boolean {
+  const t = s.trim();
+  // 显式转述标记开头：助手/对方/作者/报告/原文/上文/该文/文档/AI + 说提问道认为建议停
+  if (/^(?:此外|另外|还有)?\s*(?:助手|对方|作者|报告|原文|上述|上文|该文|这篇|文档|AI|模型)[^\n]{0,12}(?:说|道|问|提到|认为|指出|最后|停|写|建议|表示)/.test(t)) return true;
+  // 句子主体被引号包住且带引导词：「他说"…"」「助手问"…"」——整句都是被引内容
+  if (/(?:说|道|问|提到|建议|认为|表示)[^。！？!?\n]{0,8}[“"「『](?:[^”"」』]{4,})[”"」』]/.test(t)) return true;
+  return false;
+}
+
+// [fork 1013] 误命中词：触发词出现在更长词内部的中间位置。
+// 「决定论 规则明确」被 DECISION_STRONG 的"决定"命中，但它讨论的是决定论（determinism），
+// 不是谁做了什么决定。实测该误命中在抽样里出现 2 次。
+// 只在这些组合后出现时才豁免——不误伤"决定改用 X"这种真决策。
+const DECISION_FALSE_POSITIVE = /(决定论|选择性注意|选择性|采纳率|采用率|放弃治疗|切换成本)/;
+
 // [fork 0922] 决策合理性守卫：正则只管"句首有触发词"，不管句子长什么样——
 // 实测垃圾三来源：看板表格行（| 分隔）、Markdown 粗体残片（**）、消息内嵌 JSON 转义串。
 // 在抽取端拒收，比事后清洗数据治本。
@@ -115,6 +134,8 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         }
         text = text.replace(/[）)】」"'、，]+$/u, '').trim();
         if (!plausibleDecision(text)) break; // [fork 0922] 残片拒收
+        if (DECISION_FALSE_POSITIVE.test(text)) break; // [fork 1013] 词中误命中（"决定论"≠决定）
+        if (isQuotedSpeech(s)) break; // [fork 1013] 转述他人文本不是我的决策（P4）
         const key = text.slice(0, 20);
         if (seen.has(key)) break;
         seen.add(key);
@@ -141,6 +162,10 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
       if (!Q_MARK.test(s) || s.length < 8 || !Q_HINT.test(s)) continue;
       // [fork 0924] 问题也要过碎片守卫：列表项/表格行/粗体残片不是真问题（mc 整合包反馈同族）
       if (/^\s*([-*#>）)」]|&&)/.test(s) || /\|\s*-{2,}/.test(s) || /\*\*/.test(s)) continue;
+      // [fork 1013] 转述过滤（审计 P4）：粘贴的报告/AI 回复里的问句不是用户的问题
+      if (isQuotedSpeech(s)) continue;
+      // [fork 1013] markdown blockquote：粘贴的报告段落常以 > 开头
+      if (/^>\s*\S/.test(s)) continue;
       const tailAsked = idx >= Math.floor(total * 0.7); // 会话尾部提问，大概率未被回答
       out.push({
         q: s.replace(/\s+/g, ' ').trim().slice(0, 90),

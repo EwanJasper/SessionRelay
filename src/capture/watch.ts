@@ -18,6 +18,7 @@ import { acquireLock, touchLock, releaseLock, isDaemonAlive } from '../shared/lo
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
 import { autoArchiveProject, autoArchivePolicyOf } from './archive.js';
+import { recomputeExtractions } from './recompute.js';
 import { runJudge } from './judge.js';
 import { consumeHookEvents } from './hook-spool.js';
 import { ensureRegistered, get, adapterConfig } from '../adapters/registry.js';
@@ -196,6 +197,27 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     archiveTimer = setInterval(runAuto, archivePolicy.checkEveryMin * 60_000);
     archiveTimer.unref();
   }
+
+  // [fork 1013] 审计 P3：提取规则版本落后 → 后台分批重算。
+  // 不这么做的话，改规则只对新数据生效，历史垃圾永久留存——用户观感是"修了没用"。
+  // 节奏比归档更保守（默认 6h）：这是纯 CPU 活，且只在版本落后时才真正做事。
+  let recomputeTimer: NodeJS.Timeout | undefined;
+  const RECOMPUTE_EVERY_MS = Math.max(1, opts.config.recompute?.check_every_min ?? 360) * 60_000;
+  const runRecompute = () => {
+    chain = chain.then(() => {
+      try {
+        const r = recomputeExtractions(db);
+        if (r.recomputed > 0) {
+          log(`提取规则重算：${r.recomputed} 个会话${r.remaining > 0 ? `（剩 ${r.remaining} 待下批）` : '（已跟上版本）'}`);
+        }
+      } catch (e) {
+        log(`提取重算失败（不退出，下周期重试）: ${(e as Error).message}`);
+      }
+    });
+  };
+  runRecompute();
+  recomputeTimer = setInterval(runRecompute, RECOMPUTE_EVERY_MS);
+  recomputeTimer.unref();
   let stopped = false;
 
   try {
@@ -222,6 +244,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     // [fork 0922] worker 初始化失败：释放已持资源并报告 null（全局模式下跳过该项目，不拖垮进程）
     if (orphanTimer) clearInterval(orphanTimer);
     if (archiveTimer) clearInterval(archiveTimer);
+    if (recomputeTimer) clearInterval(recomputeTimer);
     clearInterval(heartbeat); clearInterval(judgeTimer); clearInterval(safetyTimer);
     releasePipeLock(root);
     log(`守护启动失败（${root}）: ${(e as Error).message}`);
@@ -235,6 +258,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
       stopped = true;
       if (orphanTimer) clearInterval(orphanTimer);
       if (archiveTimer) clearInterval(archiveTimer);
+      if (recomputeTimer) clearInterval(recomputeTimer);
       for (const w of watchers) w.close();
       clearInterval(heartbeat); clearInterval(judgeTimer); clearInterval(safetyTimer);
       await chain.catch(() => {});

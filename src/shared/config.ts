@@ -33,6 +33,10 @@ export interface RelayConfig {
     workflow_days?: number;
     check_every_min?: number;
   };
+  /** [fork 1013] 审计 P3：提取规则版本落后时的后台分批重算节奏（分钟，默认 6h） */
+  recompute?: {
+    check_every_min?: number;
+  };
 }
 
 export function defaultConfig(): RelayConfig {
@@ -48,6 +52,7 @@ export function defaultConfig(): RelayConfig {
     privacy: { ignore_file: '.sessionrelayignore', export_redact: true },
     identity: {},
     archive: { enabled: true, hot_days: 60, workflow_days: 7, check_every_min: 60 },
+    recompute: { check_every_min: 360 },
   };
 }
 
@@ -109,6 +114,7 @@ export function loadConfig(root: string): RelayConfig {
     identity: { ...def.identity, ...(raw.identity ?? {}) },
     semantic: { ...(raw.semantic ?? {}) },
     archive: { ...def.archive, ...(raw.archive ?? {}) },
+    recompute: { ...def.recompute, ...(raw.recompute ?? {}) },
   };
 }
 

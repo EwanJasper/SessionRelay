@@ -1,0 +1,119 @@
+// 审计报告 P3：提取规则版本 + 后台分批重算
+// 依据：E:\music player\docs\sessionrelay-审计报告-20261013.md
+// 病根：规则改了但历史会话不重算 → 用户观感"修了没用"。
+// 这三个不变量必须钉住：
+//   ① 版本落后时真的重算了（不是空转）
+//   ② 分批可续跑（中断后从头跳过已算的，不重算）
+//   ③ 版本已跟上时空转零成本
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { recomputeExtractions, extractVersionOf, EXTRACT_VERSION } from '../../src/capture/recompute.js';
+import type { DB } from '../../src/store/db.js';
+
+function seed(db: DB) {
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY, source TEXT NOT NULL, source_session_id TEXT NOT NULL,
+    project_id TEXT NOT NULL, origin TEXT NOT NULL DEFAULT 'auto',
+    state TEXT NOT NULL DEFAULT 'active', git_branch TEXT, title TEXT,
+    created_at TEXT NOT NULL, last_event_at TEXT, confirmed_at TEXT, pending_at TEXT,
+    message_count INTEGER NOT NULL DEFAULT 0, files_mentioned TEXT, topics TEXT,
+    decisions TEXT, key_questions TEXT, code_changes TEXT, summary_rule TEXT,
+    summary_ai TEXT, user_summary TEXT, user_tags TEXT, author TEXT,
+    imported_from TEXT, origin_project TEXT, content_hash TEXT, source_file TEXT,
+    synced_at TEXT, meta_text TEXT, cleanup_at TEXT, original_message_count INTEGER DEFAULT 0
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
+    content TEXT NOT NULL, search_text TEXT, seq_num INTEGER NOT NULL, created_at TEXT
+  )`);
+}
+
+function addSession(db: DB, id: string, msgs: Array<[role: string, content: string, seq: number]>, state = 'confirmed') {
+  db.prepare(
+    `INSERT INTO sessions (id, source, source_session_id, project_id, state, title, created_at, confirmed_at, message_count)
+     VALUES (?, 'dsh', ?, 'p', ?, ?, '2026-10-01T00:00:00Z', '2026-10-02T00:00:00Z', ?)`,
+  ).run(id, id, state, 'sess-' + id, msgs.length);
+  for (const [role, content, seq] of msgs) {
+    db.prepare('INSERT INTO messages (session_id, role, content, seq_num) VALUES (?, ?, ?, ?)')
+      .run(id, role, content, seq);
+  }
+}
+
+const decisionsOf = (db: DB, id: string): string[] => {
+  const row = db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(id) as { decisions: string | null };
+  return row.decisions ? (JSON.parse(row.decisions) as Array<{ text: string }>).map(d => d.text) : [];
+};
+
+describe('P3 · 提取规则版本与分批重算', () => {
+  let db: DB;
+  beforeEach(() => { db = new Database(':memory:') as DB; seed(db); });
+
+  it('① 脏数据 + 版本落后 → 重算清掉转述/词中误命中', () => {
+    addSession(db, 's1', [
+      ['user', '决定论 规则明确，能算出来 象棋残局这种场景', 1],
+      ['user', '我们决定改用 SQLite 做本地索引', 2],
+    ]);
+    // 预置"旧规则"产物：决定论误命中还在库里
+    db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?')
+      .run(JSON.stringify([{ text: '决定论 规则明确', seq: 1 }]), 's1');
+    expect(decisionsOf(db, 's1')).toContain('决定论 规则明确');
+
+    expect(extractVersionOf(db)).toBe(0);
+    const r = recomputeExtractions(db);
+    expect(r.recomputed).toBe(1);
+    expect(extractVersionOf(db)).toBe(EXTRACT_VERSION);
+    // 重算后：误命中消失，真决策保留
+    expect(decisionsOf(db, 's1')).not.toContain('决定论 规则明确');
+    expect(decisionsOf(db, 's1').some(t => /改用 SQLite/.test(t))).toBe(true);
+  });
+
+  it('② 分批可续跑：小 batch 中断后不重算已算过的', () => {
+    for (let i = 1; i <= 3; i++) addSession(db, 'b' + i, [['user', `第${i}轮决定采用方案${i}`, 1]]);
+    const r1 = recomputeExtractions(db, 2); // 只算 2 个
+    expect(r1.recomputed).toBe(2);
+    expect(r1.remaining).toBe(1);       // 还剩 1 个
+    expect(extractVersionOf(db)).toBe(0); // 没算完不推进版本
+
+    const r2 = recomputeExtractions(db, 2); // 续跑
+    expect(r2.recomputed).toBe(1);
+    expect(r2.remaining).toBe(0);
+    expect(extractVersionOf(db)).toBe(EXTRACT_VERSION); // 全部完成才标版本
+    // 三个会话都被正确重算
+    expect(decisionsOf(db, 'b1').length).toBe(1);
+    expect(decisionsOf(db, 'b3').length).toBe(1);
+  });
+
+  it('③ 版本已跟上 → 零成本空转', () => {
+    addSession(db, 'c1', [['user', '决定改用方案', 1]]);
+    recomputeExtractions(db);
+    expect(extractVersionOf(db)).toBe(EXTRACT_VERSION);
+    const r = recomputeExtractions(db);
+    expect(r).toEqual({ recomputed: 0, remaining: 0 });
+  });
+
+  it('④ 归档会话（cleanup_at 非空）不进重算队列——正文已删，无从重算', () => {
+    addSession(db, 'a1', [['user', '决定改用方案', 1]]);
+    // 真实归档会清空 message_count（runArchive 删正文后实测 mc=0，线上 160 个归档会话全为 0）；
+    // 这里照真实形态同时置两列，避免夹具比量产更宽松而掩盖边界。
+    db.prepare("UPDATE sessions SET cleanup_at = '2026-10-03T00:00:00Z', message_count = 0 WHERE id = 'a1'")
+      .run();
+    const r = recomputeExtractions(db);
+    expect(r.recomputed).toBe(0);
+    expect(extractVersionOf(db)).toBe(EXTRACT_VERSION); // 无可算 → 直接标完成
+  });
+
+  it('⑤ active 会话不重算（还没确认，规则结果会被 judge 覆盖）', () => {
+    addSession(db, 'd1', [['user', '决定改用方案', 1]], 'active');
+    const r = recomputeExtractions(db);
+    expect(r.recomputed).toBe(0);
+  });
+
+  it('⑥ 重算不动消息本体（源数据是唯一事实源）', () => {
+    addSession(db, 'e1', [['user', '决定改用方案X', 1], ['assistant', '好的', 2]]);
+    recomputeExtractions(db);
+    const n = (db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?').get('e1') as { n: number }).n;
+    expect(n).toBe(2);
+    const row = db.prepare('SELECT message_count FROM sessions WHERE id = ?').get('e1') as { message_count: number };
+    expect(row.message_count).toBe(2);
+  });
+});

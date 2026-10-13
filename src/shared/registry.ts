@@ -49,12 +49,28 @@ function write(r: RegistryFile): void {
 export function touchRegistry(root: string): void {
   const r = read();
   const abs = path.resolve(root);
+  // [fork 1013] 审计 P2：拒绝临时目录注册。上游 e7fe17a 只让测试子进程不再污染新条目，
+  // 但手工在 Temp 下建栈的存量条目永不过期（实测 16 个候选里 12 个是 %TEMP%\sb7-* 沙盒）。
+  // 这里是写侧闸门：临时目录不是项目，它的会话不该进真实项目的候选列表。
+  if (isTransientRoot(abs)) return;
   const now = new Date().toISOString();
   const e = r.projects.find((p) => path.resolve(p.root) === abs);
   if (e) e.lastActiveAt = now;
   else r.projects.push({ root: abs, registeredAt: now, lastActiveAt: now });
   write(r);
 }
+
+/** [fork 1013] 审计 P2：判定临时/一次性目录（os.tmpdir() 前缀）。
+ *  Windows: %TEMP%\sb7-* 这类测试沙盒；Linux: /tmp/*。 */
+export function isTransientRoot(abs: string): boolean {
+  const tmp = path.resolve(os.tmpdir()).toLowerCase();
+  return path.resolve(abs).toLowerCase().startsWith(tmp + path.sep);
+}
+
+/** [fork 1013] 审计 P2：注册表条目过期阈值（天）。超过且守护已死 → 视为废弃，
+ *  下次 registryCandidates() 落盘删除。默认 30 天：足够覆盖"项目换机器休息一个月"，
+ *  又不会让三个月前的测试沙盒继续稀释候选列表。 */
+const REGISTRY_TTL_DAYS = 30;
 
 export interface RegistryCandidate {
   root: string;
@@ -68,15 +84,29 @@ export function registryCandidates(): RegistryCandidate[] {
   const r = read();
   const live: RegistryCandidate[] = [];
   let pruned = false;
+  const cutoff = Date.now() - REGISTRY_TTL_DAYS * 86_400_000;
+  const alive = (p: RegistryEntry) => existsSync(p.root) && existsSync(relayDir(p.root));
+  const keep: RegistryEntry[] = [];
   for (const p of r.projects) {
-    if (!existsSync(p.root) || !existsSync(relayDir(p.root))) { pruned = true; continue; }
+    // [fork 1013] 读侧同样拒收临时目录：写侧闸门只防新污染，9 月底的存量
+    // Temp 下 sb7-* 沙盒还没过 30 天 TTL，靠 TTL 清不掉——目录还在、日期新鲜，正是它们能
+    // 一直稀释候选列表的原因。这里按"是不是临时目录"直接判死。
+    if (isTransientRoot(p.root)) { pruned = true; continue; }
+    if (!alive(p)) { pruned = true; continue; }
+    // [fork 1013] TTL 剪枝：过期且守护已死 = 废弃项目。守护还活着的不剪——
+    // 那说明只是这个项目近期没心跳（本机重启/换机），不是废弃。
+    const at = Date.parse(p.lastActiveAt ?? '');
+    const expired = Number.isFinite(at) && at < cutoff;
+    const daemon = isDaemonAlive(p.root).alive;
+    if (expired && !daemon) { pruned = true; continue; }
+    keep.push(p);
     live.push({
       root: p.root,
       name: path.basename(p.root),
-      daemonAlive: isDaemonAlive(p.root).alive,
+      daemonAlive: daemon,
       lastActiveAt: p.lastActiveAt ?? null,
     });
   }
-  if (pruned) write({ version: 1, projects: r.projects.filter((p) => existsSync(p.root) && existsSync(relayDir(p.root))) });
+  if (pruned) write({ version: 1, projects: keep });
   return live.sort((a, b) => (b.lastActiveAt ?? '').localeCompare(a.lastActiveAt ?? ''));
 }

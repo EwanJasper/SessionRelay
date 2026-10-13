@@ -114,3 +114,60 @@ describe('P2+ · key_exchanges 关键往返', () => {
     expect(meta.keyExchanges.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ── [fork 1013] 审计 P4：转述/引用过滤 + 词中误命中 ──
+// 依据：E:\music player\docs\sessionrelay-审计报告-20261013.md
+// P4：未决问题会收录用户消息里转述的他人文本；同一份粘贴报告产出 3 条近似条目。
+// P4b：「决定论」被 DECISION_STRONG 的"决定"命中（抽样 28 条里出现 2 次）。
+describe('P4 · 转述过滤（复审：粘贴的报告不是我的决策/问题）', () => {
+  it('「助手最后停在向用户提问"…"」不作未决问题', () => {
+    const q = extractQuestions([
+      msg('user', '此外助手最后停在向用户提问（"要我把这两项也一并按推荐处理掉，还是继续推进别的？"），你看怎么弄'),
+    ]);
+    expect(q.map(x => x.q)).not.toContainEqual(expect.stringMatching(/助手最后停在/));
+  });
+
+  it('「报告原文说…」不作决策', () => {
+    const d = extractDecisions([
+      msg('user', '报告原文说"最终选用 Postgres 而非 MySQL"，这个结论你怎么看'),
+    ]);
+    expect(d.map(x => x.text)).not.toContainEqual(expect.stringMatching(/^最终选用 Postgres/));
+  });
+
+  it('blockquote 行（> 开头）的问句不进未决清单', () => {
+    const q = extractQuestions([
+      msg('user', '> 需要确认这是否影响向后兼容？\n我这边先看看'),
+    ]);
+    expect(q).toHaveLength(0);
+  });
+
+  it('用户自己问的真问题仍然收录（不能过度过滤）', () => {
+    const q = extractQuestions([
+      msg('user', '我们这套方案要不要现在就升级内核？我还没定'),
+    ]);
+    expect(q.length).toBeGreaterThanOrEqual(1);
+    expect(q[0].q).toMatch(/升级内核/);
+  });
+});
+
+describe('P4b · 词中误命中（触发词出现在更长词内部时不算决策）', () => {
+  it('「决定论」不是决策', () => {
+    const d = extractDecisions([
+      msg('user', '决定论 规则明确，能算出来 象棋残局这种场景'),
+    ]);
+    expect(d.map(x => x.text)).not.toContainEqual(expect.stringMatching(/决定论/));
+  });
+
+  it('「选择性」「放弃治疗」等复合词不误命中', () => {
+    const d = extractDecisions([
+      msg('user', '选择性忽略一部分字段；放弃治疗这个想法不现实'),
+    ]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('真决策「决定改用 X」不受影响', () => {
+    const d = extractDecisions([msg('user', '我们决定改用 SQLite 做本地索引')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/改用 SQLite/);
+  });
+});
