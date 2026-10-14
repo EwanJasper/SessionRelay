@@ -78,8 +78,50 @@ function sessionBrief(db: DB, sessionId: string) {
     : { sessionId };
 }
 
+/** ZCode 侧只读 5 工具的规范名（Phase 1 检索折中：让"查历史"这条路真能用上，
+ *  但不把 7 个写域工具塞进每个会话的上下文）。顺序即计划 §七 的清单。 */
+/** Phase 1 集成后只剩两个入口（原五个：search_sessions / get_decisions /
+ *  get_session_detail / get_file_history / get_unresolved） */
+export const MCP_READONLY_TOOLS = [
+  'srelay_search',   // 四类内容一个入口（sessions/decisions/unresolved/files）
+  'srelay_show',     // 读一个会话的完整消息
+] as const;
+
+/** 读 SRELAY_MCP_TOOLS 白名单。未设/空 = 全注册（默认行为逐字节不变，契约测试不受影响）。
+ *  设了 = 只注册列出的工具。故意用白名单而不是黑名单：新增工具默认可见，
+ *  想要"只读子集"必须显式点名——与 forget 设计"删除是人的特权"同向。 */
+function toolAllowlist(): Set<string> | null {
+  const raw = process.env.SRELAY_MCP_TOOLS;
+  if (!raw || !raw.trim()) return null;
+  const want = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+  // 全写白名单 = 等于没设，走全注册，避免"想全开却少了一个"的静默半失效
+  const all = new Set<string>(Object.keys(TOOL_NAMES));
+  if (want.size >= all.size && [...want].every((n) => all.has(n))) return null;
+  return want;
+}
+
+/** 全部工具名（用于白名单完整性校验与 selftest 断言） */
+const TOOL_NAMES = {
+  srelay_search: 1, srelay_show: 1, list_sessions: 1, get_stats: 1, set_scope: 1,
+  annotate_session: 1, save_note: 1, export_handoff: 1, import_handoff: 1,
+  release_quarantine: 1, link_sessions: 1, get_linked_sessions: 1, suggest_related_sessions: 1,
+} as const;
+
 export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise<unknown>): McpServer {
   const server = new McpServer({ name: 'sessionrelay', version: VERSION });
+  // Phase 1：只读子集。白名单命中才注册——未注册的工具连 schema 都不进客户端的
+  // tools/list，所以省的是**每一轮**的上下文，不是"调的时候才付"。
+  const allow = toolAllowlist();
+  // ⚠️ 两条分支都必须用**绑定过**的 rawRegister：else 分支若直接赋 server.registerTool，
+  //    调用时 this 丢失，SDK 内部读 this._registeredTools 直接崩（默认路径全挂，
+  //    且只在真起 serve 时才暴露——tsc 看不出来，是靠真握手测试抓到的）。
+  // 签名用宽松 unknown[]：registerTool 是重载的，Parameters<> 会取到 never，
+  // 再用 as 收回精确类型（守卫/ zod 推断都在各 register 调用点上，不受影响）。
+  const rawRegister = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
+  const register = ((name: string, ...rest: unknown[]) => {
+    if (allow && !allow.has(name)) return undefined;
+    return rawRegister(name, ...rest);
+  }) as typeof server.registerTool;
 
   /** 统一守卫：显式 project 优先（选中/切换），解析失败转指导性 isError 响应 */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 直通保住 registerTool 的 zod 参数推断
@@ -107,18 +149,67 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return null;
   };
 
-  server.registerTool('search_sessions', {
-    title: '搜索历史会话',
-    description: '搜索本项目的历史会话记忆。何时用：用户问"之前/上次/为什么当时/我们讨论过吗"、接手项目需要背景、实现前确认已有决策、报错排查怀疑有历史结论。何时不调：纯新问题、当前对话刚说过的内容',
-    inputSchema: { query: z.string().describe('搜索词，支持 "短语" 精确匹配'), limit: z.number().optional(), ...zPred, ...zProject },
-  }, guard(async (args: { query: string; limit?: number; project?: string } & zPredShape) => {
+  // ── Phase 1：检索类四工具集成成一个入口 ──────────────────────────────
+  // 原为 search_sessions / get_decisions / get_unresolved / get_file_history 四个工具。
+  // 集成为 srelay_search(kind=…) 的理由（用户 10-14 要求"工具尽量少、能力不变、集成后效果更好"）：
+  //   · 四个工具共享同一套 schema 参数（query/limit/zPred/zProject）——原先定义四遍，
+  //     省的是**每一轮**的 tools/list 上下文，不是"调的时候才付"
+  //   · 简报已经每天告诉模型"有哪些决策/未决"，所以最常见的需求就是"检索"，
+  //     一个入口 + 一个 kind 参数比四个名字更好记
+  //   · 能力一件不少：四个 kind 分支的处理逻辑与原四个工具逐字相同
+  // 命名带 srelay_ 前缀：ZCode 侧同时挂着 one-search-mcp 等 8 个 server，
+  // 裸名 search 会撞车。
+  register('srelay_search', {
+    title: '检索项目记忆',
+    description: '检索本项目历史记忆，四类内容一个入口。kind：sessions=搜会话（默认；用户问"之前/上次/我们讨论过吗"、接手项目要背景、实现前确认已有结论、报错排查怀疑有历史结论）；decisions=全部已确认技术决策（response 里 kind=negative 的是"被否掉的路"，看到就别再提议同一条）；unresolved=提出过但未解决的问题；files=某文件路径被哪些会话讨论过。何时不调：纯新问题、当前对话刚说过的内容。深入某一个会话用 srelay_show',
+    inputSchema: {
+      query: z.string().describe('搜索词，支持 "短语" 精确匹配；kind=files 时传文件路径'),
+      kind: z.enum(['sessions', 'decisions', 'unresolved', 'files']).optional().describe('检索哪类内容，默认 sessions'),
+      limit: z.number().optional(),
+      decision_kind: z.enum(['decision', 'negative']).optional().describe('仅 kind=decisions：只看拍板采用的 / 被否掉的路'),
+      ...zPred, ...zProject,
+    },
+  }, guard(async (args: { query: string; kind?: 'sessions' | 'decisions' | 'unresolved' | 'files'; limit?: number; topic?: string; source?: string; decision_kind?: 'decision' | 'negative'; project?: string } & zPredShape) => {
     const cur = get();
+    const kind = args.kind ?? 'sessions';
+
+    // ── kind=decisions：本项目全部已确认技术决策（带出处，可回跳）──
+    if (kind === 'decisions') {
+      const rows = listDecisions(cur.db, cur.project, { topic: args.topic, source: args.source, kind: args.decision_kind });
+      return toolOut({
+        count: rows.length,
+        decisions: rows.map((r) => ({
+          at: r.at, text: r.text, kind: r.kind ?? 'decision', pinned: r.pinned === true,
+          provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msg: r.seq },
+        })),
+      });
+    }
+
+    // ── kind=unresolved：提出过但（启发式判定）未解决的问题 ──
+    if (kind === 'unresolved') {
+      const rows = listUnresolved(cur.db, cur.project, args.limit ?? 20);
+      return toolOut({ count: rows.length, unresolved: rows.map((r) => ({ q: r.q, at: r.at, provenance: sessionBrief(cur.db, r.sessionId) })) });
+    }
+
+    // ─── 以下两个 kind 都走全文检索（scope 装配 + 语义补充） ──
     const callPred = predFrom(args);
     // T28：每次调用重新装配（scope.json 热更新）
     const asm = assembleScope({ root: cur.root, cfg: cur.cfg, callPred, includeAuto: true });
     // 语义补充命中（design-semantic：未启用返回 null = 纯 FTS，行为与 0.2.5 等价）
     const { semanticSearch } = await import('../search-svc/semantic.js');
     const semHits = await semanticSearch(cur.db, cur.cfg, args.query, { project: cur.project, extraWhere: asm.where });
+
+    // ── kind=files：某文件路径被哪些会话讨论过（跨 agent）──
+    if (kind === 'files') {
+      const hits = searchSessions(cur.db, { project: cur.project, query: `"${args.query.replace(/\\/g, '/')}"`, limit: args.limit ?? 20, extraWhere: asm.where });
+      return toolOut({
+        kind: 'files', file: args.query,
+        count: hits.length,
+        sessions: hits.map((h) => ({ ...sessionBrief(cur.db, h.sessionId), snippet: h.snippet, provenance: { ...sessionBrief(cur.db, h.sessionId), msg: h.seq } })),
+      });
+    }
+
+    // ── kind=sessions：搜会话（默认） ──
     const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits });
     const out = hits.map((h) => ({
       ...sessionBrief(cur.db, h.sessionId),
@@ -127,21 +218,21 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       viaMeta: h.viaMeta,
       viaSemantic: h.viaSemantic ?? false,
       snippet: h.snippet,
-      provenance: { ...sessionBrief(cur.db, h.sessionId), msg: h.seq, note: `get_session_detail 可取全文` },
+      provenance: { ...sessionBrief(cur.db, h.sessionId), msg: h.seq, note: `srelay_show 可取全文` },
     }));
     // token 感知：告诉 AI 本次响应量 + 省 token 的深入路径
     const respBytes = Buffer.byteLength(JSON.stringify(out), 'utf8');
-    const tokenHint = `本次响应约 ${Math.round(respBytes / 3)} tokens。深入时省 token：get_session_detail(role:'user') 只看用户提问；get_decisions() 直接拿结论`;
+    const tokenHint = `本次响应约 ${Math.round(respBytes / 3)} tokens。深入时省 token：srelay_show(role:'user') 只看用户提问；srelay_search(kind:'decisions') 直接拿结论`;
     const hint2 = buildHint(cur.db, cur.cfg, cur.project, callPred, hits.length);
     return toolOut({
-      query: args.query, scoped: !!asm.where, escaped: asm.escaped,
+      kind: 'sessions', query: args.query, scoped: !!asm.where, escaped: asm.escaped,
       count: out.length, hits: out,
       estimated_tokens: Math.round(respBytes / 3),
       hint: [tokenHint, hint2].filter(Boolean).join(' | '),
     });
   }));
 
-  server.registerTool('get_session_detail', {
+  register('srelay_show', {
     title: '会话详情',
     description: '取某会话的消息（可按角色过滤、限制范围与长度）。默认安全：最多 20 条 × 1000 字 ≈ 20KB。要更多请显式传 start_msg/end_msg 或 max_chars。session_id 支持前缀',
     inputSchema: {
@@ -187,7 +278,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     const hints: string[] = [];
     if (to < requestedTo || sizeTruncated) {
       hints.push(`当前显示 ${result.length} 条（共 ${s.message_count} 条）`);
-      if (s.message_count > 20) hints.push('建议：role="user" 只看用户提问（通常很少）；get_decisions() 直接拿全部决策；start_msg 翻页');
+      if (s.message_count > 20) hints.push('建议：role="user" 只看用户提问（通常很少）；srelay_search(kind:"decisions") 直接拿全部决策；start_msg 翻页');
     }
     // 关键往返（可选）：从 code_changes 列的 keyExchanges 字段取（归档后仍保留）
     let keyExchanges: unknown = undefined;
@@ -217,7 +308,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     });
   }));
 
-  server.registerTool('list_sessions', {
+  register('list_sessions', {
     title: '列出会话',
     description: '按过滤条件列出本项目会话（scope 生效）',
     inputSchema: { limit: z.number().optional(), state: z.string().optional().describe('active|pending_end|confirmed'), ...zPred, ...zProject },
@@ -229,48 +320,10 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ count: rows.length, sessions: rows.map((s) => ({ ...sessionBrief(db, s.id), messageCount: s.message_count, summary: s.summary_rule?.split('\n')[0] ?? null })) });
   }));
 
-  server.registerTool('get_decisions', {
-    title: '决策列表',
-    description: '本项目全部已确认技术决策（带出处，可回跳）。kind=negative 的是"被否掉的路"——看到它就别再提议同一条（ADR-001）',
-    inputSchema: { topic: z.string().optional(), source: z.string().optional(), kind: z.enum(['decision', 'negative']).optional(), ...zProject },
-  }, guard(async (args: { topic?: string; source?: string; kind?: 'decision' | 'negative' }) => {
-    const { db, project } = get();
-    const rows = listDecisions(db, project, { topic: args.topic, source: args.source, kind: args.kind });
-    return toolOut({
-      count: rows.length,
-      decisions: rows.map((r) => ({
-        at: r.at, text: r.text, kind: r.kind ?? 'decision', pinned: r.pinned === true,
-        provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msg: r.seq },
-      })),
-    });
-  }));
 
-  server.registerTool('get_file_history', {
-    title: '文件讨论史',
-    description: '某文件路径被哪些会话讨论过（跨 agent）',
-    inputSchema: { file_path: z.string(), ...zProject },
-  }, guard(async (args: { file_path: string }) => {
-    const { root, cfg, db, project } = get();
-    const asm = assembleScope({ root, cfg, includeAuto: true });
-    const hits = searchSessions(db, { project, query: `"${args.file_path.replace(/\\/g, '/')}"`, limit: 20, extraWhere: asm.where });
-    return toolOut({
-      file: args.file_path,
-      count: hits.length,
-      sessions: hits.map((h) => ({ ...sessionBrief(db, h.sessionId), snippet: h.snippet, provenance: { ...sessionBrief(db, h.sessionId), msg: h.seq } })),
-    });
-  }));
 
-  server.registerTool('get_unresolved', {
-    title: '未决问题',
-    description: '会话中提出但（启发式判定）未解决的问题',
-    inputSchema: { limit: z.number().optional(), ...zProject },
-  }, guard(async (args: { limit?: number }) => {
-    const { db, project } = get();
-    const rows = listUnresolved(db, project, args.limit ?? 20);
-    return toolOut({ count: rows.length, unresolved: rows.map((r) => ({ q: r.q, at: r.at, provenance: sessionBrief(db, r.sessionId) })) });
-  }));
 
-  server.registerTool('get_stats', {
+  register('get_stats', {
     title: '索引统计',
     description: '本项目记忆库统计（会话数/状态/来源/体积/当前 scope）。开始处理项目任务前可调用，了解记忆库规模与覆盖范围',
     inputSchema: { ...zProject },
@@ -290,7 +343,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     });
   }));
 
-  server.registerTool('set_scope', {
+  register('set_scope', {
     title: '调整检索边界（逃生口）',
     description: '收得太紧时的放宽通道：mode:"full" 解除裁剪（隐私 ignore 永不受影响）；或设置新过滤条件',
     inputSchema: {
@@ -312,7 +365,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
 
   // ══════════ 写域工具（D21：内容不可变的旁路写入；状态迁移仍归 watch/CLI） ══════════
 
-  server.registerTool('annotate_session', {
+  register('annotate_session', {
     title: '注释会话（标签/摘要）',
     description: '为会话添加/移除标签、设置人工摘要（进入检索索引）。这是元数据编辑，不改写对话内容',
     inputSchema: {
@@ -338,7 +391,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ ok: true, sessionId: s.id, userTags: tags, ...(args.summary ? { userSummary: args.summary } : {}), note: '标签与摘要已进入检索索引' });
   }));
 
-  server.registerTool('save_note', {
+  register('save_note', {
     title: '写入结论笔记',
     description: '把结论/备忘写入项目记忆（source=note，origin=manual，立即确认并提取）。笔记中的决策句式会直接进入决策库',
     inputSchema: {
@@ -351,10 +404,10 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     const { db, project } = get();
     const id = createNoteSession(db, { projectId: project, title: args.title, content: args.content, tags: args.tags });
     insertScopeLog(db, 'note', { id, title: args.title }, 'mcp:save_note');
-    return toolOut({ ok: true, sessionId: id, source: 'note', state: 'confirmed', note: '笔记已可被 search / get_decisions / export 检索；可由用户以 srelay forget 移除' });
+    return toolOut({ ok: true, sessionId: id, source: 'note', state: 'confirmed', note: '笔记已可被 srelay_search / export 检索；可由用户以 srelay forget 移除' });
   }));
 
-  server.registerTool('export_handoff', {
+  register('export_handoff', {
     title: '导出交接包',
     description: '生成 .hop 交接包（sha256 完整性 + 默认脱敏）或 HANDOFF.md。默认尊重当前 scope',
     inputSchema: {
@@ -381,7 +434,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     }
   }));
 
-  server.registerTool('import_handoff', {
+  register('import_handoff', {
     title: '导入交接包（默认隔离）',
     description: '导入 .hop 交接包：sha256 全量校验 + 归化到当前项目。经 AI 发起的导入默认走隔离模式（只入元数据与摘要，正文待 release）',
     inputSchema: {
@@ -403,7 +456,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     }
   }));
 
-  server.registerTool('release_quarantine', {
+  register('release_quarantine', {
     title: '放行隔离会话',
     description: '把隔离导入的会话正文放行入库（用户确认后使用）',
     inputSchema: { session_id_prefix: z.string(), ...zProject },
@@ -413,7 +466,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ ok: true, released: r.released });
   }));
 
-  server.registerTool('link_sessions', {
+  register('link_sessions', {
     title: '建立会话关联',
     description: '把两个会话建立关联（continues=延续 / related=相关 / pinned=挂载），供 get_linked_sessions 与跨会话追溯',
     inputSchema: {
@@ -434,7 +487,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ ok: missed.length === 0, sessionId: a.id, linked: resolved, missed, kind: args.kind ?? 'related' });
   }));
 
-  server.registerTool('get_linked_sessions', {
+  register('get_linked_sessions', {
     title: '查询会话关联',
     description: '某会话的全部关联（双向：它指向的 / 指向它的），带 kind 与方向',
     inputSchema: { session_id: z.string(), ...zProject },
@@ -447,9 +500,9 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
   }));
 
   // 第 16 个工具（design-related）：算法发现的相关会话——与 get_linked_sessions（显式建立）语义不同
-  server.registerTool('suggest_related_sessions', {
+  register('suggest_related_sessions', {
     title: '相关会话推荐',
-    description: '推荐与某会话主题相关的其他历史会话（算法发现，非显式关联）。何时用：正在看一个会话想知道"还有哪些相关讨论"、开新会话前想找可 attach 的历史、记不清关键词搜不到时以会话为锚找线索。注意：推荐仅为导航线索，内容以 get_session_detail 为准',
+    description: '推荐与某会话主题相关的其他历史会话（算法发现，非显式关联）。何时用：正在看一个会话想知道"还有哪些相关讨论"、开新会话前想找可 attach 的历史、记不清关键词搜不到时以会话为锚找线索。注意：推荐仅为导航线索，内容以 srelay_show 为准',
     inputSchema: {
       session_id: z.string().describe('锚会话 ID（支持前缀）'),
       limit: z.number().optional().describe('默认 5，上限 10'),
@@ -466,7 +519,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       anchor: sessionBrief(db, s.id),
       count: items.length,
       suggestions: items.map((it) => ({ ...it, provenance: { sessionId: it.sessionId, source: it.source, createdAt: it.createdAt } })),
-      hint: '推荐仅为导航线索（不过 scope 契约）；深入内容用 get_session_detail，检索仍用 search_sessions',
+      hint: '推荐仅为导航线索（不过 scope 契约）；深入内容用 srelay_show，检索仍用 srelay_search',
     });
   }));
 

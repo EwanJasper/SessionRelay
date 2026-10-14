@@ -195,9 +195,9 @@ describe('serve 根解析信号链（design-serve-resolve）', () => {
     const howTo = String(g.howTo);
     expect(howTo).toContain('srelay init');
     expect(howTo).toContain('SRELAY_PROJECT_ROOT');
-    // deferred 模式契约不变：16 个工具照常可列出
+    // deferred 模式契约不变：全部工具照常可列出（Phase 1 后为 13 个）
     const tools = await c.listTools();
-    expect(tools.tools).toHaveLength(16);
+    expect(tools.tools).toHaveLength(13);
   }, 30000);
 
   it('R7 注册表损坏：视为空不 crash，走零候选路径', async () => {

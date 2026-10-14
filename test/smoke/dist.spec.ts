@@ -57,7 +57,7 @@ let registryDir = ''; // beforeAll 指向临时目录：init 会登记全局注�
     expect(fs.existsSync(path.join(tmp, '.sessionrelay', 'relay.sqlite'))).toBe(true);
   });
 
-  it('MCP 握手：serverInfo 与 package.json 一致 + 16 工具全部注册', async () => {
+  it('MCP 握手：serverInfo 与 package.json 一致 + 13 工具全部注册（Phase 1 检索四合一后）', async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [DIST, 'serve'],
@@ -72,6 +72,6 @@ let registryDir = ''; // beforeAll 指向临时目录：init 会登记全局注�
     await client.connect(transport);
     expect(client.getServerVersion()).toEqual({ name: 'sessionrelay', version: pkg.version });
     const tools = await client.listTools();
-    expect(tools.tools).toHaveLength(16);
+    expect(tools.tools).toHaveLength(13);
   }, 30000);
 });
