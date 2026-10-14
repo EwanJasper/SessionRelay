@@ -60,10 +60,19 @@ export function extractTopics(msgs: Msg[]): string[] {
 }
 
 // ── decisions：句式匹配（方针 §6.6："决定/选择/采用/放弃/最终用"） ──
-// [fork 0924] 弱触发词（不用/直接用/优先用/统一用）只认句首附近——它们是高频连接词，
-// 句中出现时多为普通叙述（mc整合包实测：71% 决策碎片来自这类误命中）
+// [fork 0924] 弱触发词只认句首附近——它们是高频连接词，句中出现时多为普通叙述
+// （mc整合包实测：71% 决策碎片来自这类误命中）
+//
+// [fork 1015] Phase 3 修复A：`不用` 从弱触发族**整体移除**。
+// 这是红队 1014 F9 修了一半的地方——那次只把它从 NEGATIVE_MARKERS（否定标记族）摘了，
+// 没摘 DECISION_WEAK_ANCHORED（决策判别族），于是"你不用管过程""不用每章都烧朱雀额度"
+// "旧会话不用删，放着就行"照样能进 decisions 列。
+// 实测精度（10-15，两库共 88 条该分支命中）：agent1super 61 条 / music player 24 条，
+// 逐条判读约 85–90% 是用户对 AI 的指令或口语，不是决策。
+// 剩下的 直接用/优先用/统一用/改为使用 四条实测保留率良好（"直接用 exe 路径后台启动，
+// 然后用 pid 接管"、"优先用 batch_extract.py 抓 arXiv HTML 全文"都是真决策），不动。
 const DECISION_STRONG = /(决定|选择|采用|最终用|最终选|定下|敲定|改为|改用|换成|切换到|升级到|切换成|放弃|弃用)[^。！？!?\n]{2,80}/;
-const DECISION_WEAK_ANCHORED = /^[^。！？!?\n]{0,4}(?:不用|直接用|优先用|统一用|改为使用)[^。！？!?\n]{2,80}/;
+const DECISION_WEAK_ANCHORED = /^[^。！？!?\n]{0,4}(?:直接用|优先用|统一用|改为使用)[^。！？!?\n]{2,80}/;
 const DECISION_RES: RegExp[] = [
   DECISION_STRONG,
   DECISION_WEAK_ANCHORED,
@@ -152,6 +161,27 @@ function plausibleDecision(text: string): boolean {
   if (/\*\*/.test(t)) return false; // [fork 0924] 任意位置的粗体残片（mid-text ** 也是格式污染）
   const pairs = (t.match(/[（(「『【]/g) ?? []).length - (t.match(/[）)】」』】]/g) ?? []).length;
   if (pairs !== 0) return false; // [fork 0924] 括号不配对=腰斩碎片
+  // [fork 1015] 内嵌 JSON 残片：原守卫只认 confirmed/title/session_id 三个键名，
+  // 实测漏了 `"done": true`、`"evidence": "..."` 这类（Phase 3 修复B 顺带扩族）
+  if (/"[A-Za-z_]\w*"\s*:/.test(t)) return false;
+  return true;
+}
+
+// [fork 1015] Phase 3 修复B：引号不配对=腰斩碎片。
+// 实测两库 83/30 条决策引号不配对，样例几乎全是"讨论决策的散文"而非决策本身——
+// "采用宿主 CLI 弹性探测"与 10-14"自包含 vendor"字面直接冲突"、
+// "决定论"误命中在 `extractDecisions` 的 `DECISION_STRONG` 里"、
+// "改为 Apache-2.0", "done": true, "evidence": …
+// 与 plausibleDecision 的括号配对是同一族判别，但**必须在剥离前跑**：
+// extractDecisions 会把尾部 `"'、，）` 一并剥掉，而 `改为"…那个"` 这种合法决策的
+// 闭引号正好在尾部——先剥后查会把真决策误杀（这个交互 bug 是回归测试抓到的）。
+// 故意**不**查反引号：实测真决策也用反引号包标识符（"改用 `fileURLToPath()`"）。
+export function quotesBalanced(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return true;
+  if (((raw.match(/“/g) ?? []).length) !== ((raw.match(/”/g) ?? []).length)) return false;
+  if (((raw.match(/"/g) ?? []).length) % 2 !== 0) return false;
+  if (((raw.match(/‘/g) ?? []).length) !== ((raw.match(/’/g) ?? []).length)) return false;
+  if (((raw.match(/'/g) ?? []).length) % 2 !== 0) return false;
   return true;
 }
 
@@ -175,6 +205,9 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
           text = i > 40 ? w.slice(0, i) : w;
         }
         text = text.replace(/[）)】」"'、，]+$/u, '').trim();
+        // [fork 1015] Phase 3 修复B：引号配对必须在**剥离前**的原始匹配文本上判——
+        // 上一行的尾部剥离会把 `改为"…那个"` 的闭引号一起剥掉，先剥后查会误杀真决策
+        if (!quotesBalanced(hit[0])) break;
         if (!plausibleDecision(text)) break; // [fork 0922] 残片拒收
         if (DECISION_FALSE_POSITIVE.test(text)) break; // [fork 1013] 词中误命中（"决定论"≠决定）
         if (isQuotedSpeech(s)) break; // [fork 1013] 转述他人文本不是我的决策（P4）

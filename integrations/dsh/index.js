@@ -84,7 +84,21 @@ const WARM_REFRESH_MS = 60_000   // 热缓存定时刷新
 const CACHE_TTL_MS = 5_000
 
 // ── 过滤规则：与 ZCode 的 brief-shared.mjs 逐条对应（同一套简报语义）──
+// ⚠️ 本块（CHATTER_TITLE + SUBAGENT_TASK_TITLE 两个常量，与 itemsFromArray 的过滤器链）
+// 必须与 brief-shared.mjs 的同名块**逐字一致**。1015 实测两侧已经漂移过一次：DSH 有
+// "报告/审稿碎片"过滤而 ZCode 没有，而用户日常在 ZCode 侧干活——缺的恰好是他唯一
+// 会看到的那一侧。selftest 第 11 节断言两块逐字相同，别再靠人眼。
 const CHATTER_TITLE = /^(你好|哈喽|您好|hi+|hello|hey|test|测试|在吗|在么)[!！。.~\s]*$/i
+// 子代理任务书标题（Phase 3 层①）。派给 subagent 的那条任务书，标题就是任务书原文。
+// 实测这类会话贡献全部决策的 16.7%（agent1super，90 会话 204 条）与 9.2%
+// （music player，28 会话 47 条），且**它们的报告永远比主会话的决策写入更晚**——
+// 所以简报"取最新 N 条"必然取到它。1015 实测简报 4 条决策 4 条全来自同一个
+// 红队子代理会话（标题="你是红队审查员。任务：…"，14 条消息里唯一实质内容是
+// seq=98 那条 10521 字的审查报告，报告里引用的示例决策反被抽成拍板）。
+// **只挡简报，不挡存储与检索**：信息零丢失，反悔只需删这一行过滤器。
+// 判据故意收得很窄：实测扩到"请精读/帮我"会连主会话的真决策一起挡掉——那类标题的
+// 会话里有"改用 fileURLToPath()"这种真决策（1015 实测，两个候选判据都试过）。
+const SUBAGENT_TASK_TITLE = /^(你是|你作为|任务[:：]|你的任务|act as|you are)/i
 
 function runSrelay(args, root, timeoutMs) {
   return new Promise((resolve) => {
@@ -130,6 +144,12 @@ function itemsFromArray(arr, key, max) {
       const t = String(d.text ?? '')
       return !/^(报告|原文|上文|上述|文档|该文|这篇|那份)/.test(t.trim())
         && !/被当成|误命中|被判为|不是决策|纯垃圾|噪声|伪影/.test(t)
+    })
+    .filter((d) => {
+      // Phase 3 层①：子代理任务书会话的决策/未决不进简报（仍全量可检索）。
+      // 置顶豁免——用户显式 pin 过的东西要尊重，与上面新鲜度窗同一规矩。
+      if (d.pinned === true) return true
+      return !SUBAGENT_TASK_TITLE.test(String(d.title ?? '').trim())
     })
     .filter((d) => {
       // 置顶决策豁免新鲜度窗——置顶的意义就是"老决策也要进简报"。

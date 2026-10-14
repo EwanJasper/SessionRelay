@@ -43,8 +43,24 @@ import type { Msg } from '../core/extract/extract.js';
  *           也进不了 search_text，双双失明）。
  *        F9 `不用` 从否定标记族整体移除（实测 13% 的 negative 仅靠它命中，其中约
  *           三分之二是用户指令/口语/保留型决策），并补词中误命中防护。
+ * 10 → 1015 Phase 3 简报决策噪声治理（根因修在抽取器，两处都是"修一半"的收尾）：
+ *        A `不用` 从**决策判别族** DECISION_WEAK_ANCHORED 整体移除。F9 上次只摘了
+ *          否定标记族（NEGATIVE_MARKERS），没摘判别族——于是"你不用管过程""不用每章
+ *          都烧朱雀额度""旧会话不用删，放着就行"照样能进 decisions 列。
+ *          实测两库该分支 61/24 条，逐条判读 85–90% 是用户对 AI 的指令或口语。
+ *          同族 直接用/优先用/统一用/改为使用 四条实测保留率良好，不动。
+ *        B 引号不配对=腰斩碎片（新增 quotesBalanced，与括号配对同族）。实测两库
+ *          83/30 条，样例几乎全是"讨论决策的散文"：`采用宿主 CLI 弹性探测"与 10-14"
+ *          自包含 vendor"字面直接冲突`、`决定论"误命中在 extractDecisions 的
+ *          DECISION_STRONG 里`。**必须在尾部剥离前判**——`改为"…那个"` 这种合法决策的
+ *          闭引号正在尾部，先剥后查会误杀（这个交互 bug 由回归测试抓到）。
+ *          故意不查反引号：真决策也用反引号包标识符（"改用 `fileURLToPath()`"）。
+ *        C plausibleDecision 的 JSON 残片守卫扩族：原只认 confirmed/title/session_id
+ *          三个键名，实测漏 `"done": true`、`"evidence": "..."`，改为任意 `"key":`。
+ *        同轮还在两个简报通道加了"子代理会话不进简报"（plugins/dsh/index.js 与
+ *        ZCode brief-shared.mjs），那是**消费侧**过滤、零数据丢失，不走重算。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 9;
+export const EXTRACT_VERSION = 10;
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;

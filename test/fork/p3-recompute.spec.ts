@@ -207,7 +207,7 @@ describe('重算游标：批次间集合变动不能跳过会话', () => {
       if (r.recomputed === 0 && r.remaining === 0) break;
       if (++guard > 50) throw new Error('未收敛');
     }
-    // 11 个仍在集合内的会话必须全部带上 kind（即全部被 v9 规则重算过）
+    // 11 个仍在集合内的会话必须全部带上 kind（即全部被当前版本规则重算过）
     const rows = db.prepare('SELECT id, decisions FROM sessions WHERE cleanup_at IS NULL AND message_count > 0').all() as Array<{ id: string; decisions: string }>;
     expect(rows.length).toBe(11);
     for (const r of rows) {

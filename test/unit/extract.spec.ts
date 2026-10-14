@@ -188,6 +188,101 @@ describe('P4c · 词中误命中补遗（简报实测暴露的新样本）', () 
   });
 });
 
+describe('P5 · Phase 3 修复A：「不用」不再是决策触发词（1015 F9 修一半的收尾）', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  // 实测样本（两库 88 条该分支命中，逐条判读 85–90% 是用户指令/口语而非决策）
+  it('「你不用管过程」不作决策', () => {
+    const d = extractDecisions([msg('user', '接下来你不用管，明天下午前后看生产日志的终态总结就行')]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('「不用每章都烧朱雀额度」不作决策', () => {
+    const d = extractDecisions([msg('user', '不用每章都烧朱雀额度，两首都在自动归档的轨道上')]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('「旧会话不用删，放着就行」不作决策（语义恰是保留）', () => {
+    const d = extractDecisions([msg('user', '旧会话不用删，放着就行')]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('「不用强调网文就是中文写作吧」不作决策', () => {
+    const d = extractDecisions([msg('user', '不用强调网文就是中文写作吧还有主攻这个moe的会好点')]);
+    expect(d).toHaveLength(0);
+  });
+
+  // 同族其余四条实测保留率良好，必须不误伤
+  it('「直接用 exe 路径后台启动」仍是决策', () => {
+    const d = extractDecisions([msg('user', '直接用 exe 路径后台启动，然后用 pid 接管')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/直接用 exe 路径/);
+  });
+
+  it('「优先用 batch_extract.py」仍是决策', () => {
+    const d = extractDecisions([msg('user', '优先用 batch_extract.py 抓 arXiv HTML 全文落 Markdown 缓存再精读')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/优先用 batch_extract/);
+  });
+
+  it('「不用」出现在句中（非句首锚定）本来就不命中，行为不变', () => {
+    const d = extractDecisions([msg('user', '这个东西其实不用改，我们用现在的方案继续推进就行')]);
+    expect(d).toHaveLength(0);
+  });
+});
+
+describe('P6 · Phase 3 修复B：引号不配对=腰斩碎片（plausibleDecision 扩族）', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  // 实测样本：两库 83/30 条引号不配对，样例几乎全是"讨论决策的散文"
+  it('「采用宿主 CLI 弹性探测"与 10-14"自包含 vendor"字面直接冲突」不作决策', () => {
+    const d = extractDecisions([msg('assistant', '采用宿主 CLI 弹性探测"与 10-14"自包含 vendor"字面直接冲突，所以不能只按字面判')]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('「决定论"误命中在 extractDecisions 的 DECISION_STRONG 里」不作决策', () => {
+    const d = extractDecisions([msg('assistant', '决定论"误命中在 `extractDecisions` 的 `DECISION_STRONG` 里，这是词中误命中')]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('JSON 残片「改为 Apache-2.0", "done": true」不作决策', () => {
+    const d = extractDecisions([msg('assistant', '改为 Apache-2.0", "done": true, "evidence": "p1b/package.json:5 现为')]);
+    expect(d).toHaveLength(0);
+  });
+
+  it('「决定 → 会话要等满 10 分钟…然后才有第一条"近期决策」不作决策', () => {
+    const d = extractDecisions([msg('assistant', '决定 → 会话要等满 10 分钟空闲才会被判定、提取决策 → 然后才有第一条"近期决策')]);
+    expect(d).toHaveLength(0);
+  });
+
+  // 反向：引号配对的真决策必须不误伤
+  it('「决定"写哪个库"——绑定必须两段式」引号配对，仍是决策', () => {
+    const d = extractDecisions([msg('user', '我们决定"写哪个库"——绑定必须两段式，模型只提议')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/写哪个库/);
+  });
+
+  it('「改为"优先返回已建库的，同时记住路径存在但未建库的那个"」仍是决策', () => {
+    const d = extractDecisions([msg('user', '改为"优先返回已建库的，同时记住路径存在但未建库的那个"')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/优先返回已建库/);
+  });
+
+  it('反引号包裹标识符的真决策不受影响（故意不查反引号）', () => {
+    const d = extractDecisions([msg('user', '改用 `fileURLToPath()` 正确处理编码，直接从 URL 得到文件路径')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/fileURLToPath/);
+  });
+
+  it('「改用 PowerShell 的 `Get-CimInstance`」仍是决策', () => {
+    const d = extractDecisions([msg('user', '改用 PowerShell 的 `Get-CimInstance` 查进程')]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/Get-CimInstance/);
+  });
+});
+
 describe('P4d · 未决问题显示归一化（1014：压口语不丢信息）', () => {
   const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
     ({ role, content, seqNum: seq, createdAt: '2026-10-14T10:00:00Z' });
