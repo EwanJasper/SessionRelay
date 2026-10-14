@@ -133,6 +133,29 @@ stateDiagram-v2
 - 会话级 AND 覆盖 + OR 兜底：连写词拆分（"认证方案"→ 认证+方案）、短语精确匹配（`"按月分区"`）
 - 每条结果**强制携带出处块**（会话 ID / 来源 agent / 日期 / 消息序号 / 摘要片段）
 
+#### 切换分词器：`search.tokenizer`
+
+项目的 `.sessionrelay/config.json` 里可设 `search.tokenizer`，两个取值：
+
+| 值 | 含义 | 体积 |
+|---|---|---|
+| `jieba`（默认） | 通用中文词典 + FTS5 | vendor 含 14MB 词典与平台原生包 |
+| `bigram` | 纯 unigram+bigram，**不依赖任何词典** | 零加载、零体积 |
+
+本机实测（37818 条消息 / 65 个真实查询，两边各自建索引）：召回打平（都 100%），
+但 bigram 平均只返回 3.0 条结果、jieba 返回 38.5 条——jieba 多出来的绝大多数是
+命中"需要/什么/模型"这类常用词的噪声。依据是 SIGIR 1997《Chinese text retrieval
+without using a dictionary》。详见 `docs/adr-002-bigram-tokenizer.md`。
+
+**默认仍是 jieba**：上述测量的 ground truth 是"正文字面包含查询"，这个定义本身偏向
+bigram，测不了"换个说法"的查询——而那正是词典可能有用的地方。
+
+> ⚠️ **切换后必须重建索引，否则不生效且不报错。**
+> 已入库的 `search_text` 是旧分词器产的，旧词元和新查询词元对不上，表现为
+> "改了配置搜索结果变少/变空"——又是一个静默半失效。
+> 重建：`srelay recompute`（重算提取字段）或删库重建。
+> 改完还要重启守护（Node 不热重载，且 `watch.ts` 的 cycle 用启动时的配置快照）。
+
 ### 🤖 MCP Server（16 个工具，9 读 + 7 写域）
 任何支持 MCP 的 AI agent 接入后，从此在这个项目里不再是失忆的：
 
