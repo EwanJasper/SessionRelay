@@ -5,23 +5,29 @@ import { searchSessions } from '../search-svc/engine.js';
 import { getSession } from '../store/db.js';
 import { requireRoot, openRelayDb, pc, fmtDate } from './ui.js';
 
-export async function cmdDecisions(opts: { topic?: string; source?: string; limit?: number; json?: boolean }): Promise<void> {
+export async function cmdDecisions(opts: { topic?: string; source?: string; kind?: string; limit?: number; json?: boolean }): Promise<void> {
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
     // [fork] listDecisions 升序返回（全列表"按时间"语义）；但 limit 语义应取"最近 N 条"——
     // 原实现 slice(0, limit) 取的是最老的 N 条，简报/CLI 的"最近决策"永远显示陈年旧账
-    const all = listDecisions(db, cfg.identity.project_id ?? root, { topic: opts.topic, source: opts.source });
+    // ADR-001：--kind 只认 decision|negative，别的值静默忽略（打歪一个字母不该让命令失败）
+    const kind = opts.kind === 'negative' || opts.kind === 'decision' ? opts.kind : undefined;
+    const all = listDecisions(db, cfg.identity.project_id ?? root, { topic: opts.topic, source: opts.source, kind });
     const rows = all.slice(-(opts.limit ?? 20)).reverse();
     if (opts.json) { console.log(JSON.stringify({ count: rows.length, decisions: rows }, null, 2)); return; }
     if (rows.length === 0) {
-      console.log(pc.dim('（暂无已确认决策。会话 confirmed 后自动提取——见 srelay list --state pending）'));
+      console.log(pc.dim(kind === 'negative'
+        ? '（暂无被否掉的路。ADR-001：kind 标记要等 recompute 到 v7 后才有——srelay doctor 看「提取规则版本」）'
+        : '（暂无已确认决策。会话 confirmed 后自动提取——见 srelay list --state pending）'));
       return;
     }
-    console.log(`共 ${rows.length} 条决策（按时间）：\n`);
+    console.log(`共 ${rows.length} 条${kind === 'negative' ? '被否掉的路' : '决策'}（按时间）：\n`);
     for (const r of rows) {
-      console.log(`${pc.dim(fmtDate(r.at))} [${r.source}] ${r.text}`);
+      // ADR-001：否定性决策加 ✗，与拍板采用的 ✓ 一眼分开
+      const mark = r.kind === 'negative' ? pc.red('✗') : pc.green('✓');
+      console.log(`${pc.dim(fmtDate(r.at))} ${mark} [${r.source}] ${r.text}`);
       console.log(pc.dim(`        出处：「${(r.title ?? '').slice(0, 30)}」 ${r.sessionId} · msg#${r.seq} · srelay show ${r.sessionId} --range ${r.seq}:${r.seq}`));
     }
   } finally {

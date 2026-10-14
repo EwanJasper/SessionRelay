@@ -207,6 +207,7 @@ program
   .description('列出所有已确认决策（含出处）')
   .option('--topic <t>')
   .option('--source <s>')
+  .option('--kind <k>', 'decision=只看拍板采用 / negative=只看被否掉的路（ADR-001）')
   .option('--limit <n>', '默认 20')
   .option('--json')
   .action(async (opts) => {
@@ -214,9 +215,40 @@ program
     await cmdDecisions({ ...opts, limit: opts.limit ? Number(opts.limit) : undefined });
   });
 
+program
+  .command('recompute')
+  .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
+  .option('--batch <n>', '每批会话数，默认 50')
+  .option('--json', '机器格式')
+  .action(async (opts) => {
+    const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
+    const { loadConfig } = await import('../shared/config.js');
+    const { recomputeExtractions, EXTRACT_VERSION } = await import('../capture/recompute.js');
+    const root = requireRoot();
+    const db = openRelayDb(root);
+    try {
+      const cfg = loadConfig(root);
+      void cfg;
+      const batch = opts.batch ? Math.max(1, Number(opts.batch)) : 50;
+      // 一路跑到跟上版本：守护是 6 小时一批，576 会话的库要 72 小时——等不起。
+      // recomputeExtractions 幂等，连续调用只是把同一个调用重复跑完。
+      let total = 0, guard = 0;
+      for (;;) {
+        const r = recomputeExtractions(db, batch);
+        total += r.recomputed;
+        if (r.recomputed === 0 && r.remaining === 0) break;
+        if (++guard > 2000) { console.error(pc.red('超过 2000 批，中止（应有异常）')); process.exitCode = 1; break; }
+      }
+      if (opts.json) { console.log(JSON.stringify({ version: EXTRACT_VERSION, recomputed: total }, null, 2)); return; }
+      if (total === 0) { console.log(pc.dim(`已是最新提取规则 v${EXTRACT_VERSION}，无需重算`)); return; }
+      console.log(`✅ 重算 ${total} 个会话到提取规则 v${EXTRACT_VERSION}`);
+    } finally {
+      db.close();
+    }
+  });
+
 // pin/unpin 共用的置顶入口（实现在 store/db.ts：LIKE 预筛 + JSON.parse 改 pinned 写回）
-async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: boolean }): Promise<void> {
-  const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
+async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: boolean }): Promise<void> {  const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
   const { loadConfig } = await import('../shared/config.js');
   const { setDecisionPinned } = await import('../store/db.js');
   const root = requireRoot();

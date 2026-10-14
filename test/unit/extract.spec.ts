@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractFiles, extractTopics, extractDecisions, extractQuestions,
-  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, type Msg,
+  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, isNegativeDecision, type Msg,
 } from '../../src/core/extract/extract.js';
 
 const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
@@ -329,5 +329,66 @@ describe('looksInjected：doctor 体检用的注入判定（与 stripInjected �
     expect(looksInjected('我们最终统一用 PostgreSQL 作为主库')).toBe(false);
     expect(looksInjected('为什么模型只有那个3.8flash？')).toBe(false);
     expect(looksInjected('改用 pwsh 直接 HTTPS 拉取，拿到 registry 原始 packument')).toBe(false);
+  });
+});
+
+// ── ADR-001：否定性决策标记 ──
+// 只做标记不做抽取：文本早已过 plausibleDecision / DECISION_FALSE_POSITIVE / isQuotedSpeech
+// 三道校验，所以这里测的是"标记判得准不准"，不是"抽得全不全"。
+describe('isNegativeDecision：给"否掉一条路"的决策打标记（ADR-001）', () => {
+  it('切换/放弃族判为否定', () => {
+    expect(isNegativeDecision('改用 pwsh 直接 HTTPS 拉取，拿到 registry 原始 packument')).toBe(true);
+    expect(isNegativeDecision('放弃了源码编译的路线——官方包自带构建好的成品，更省事也少踩坑')).toBe(true);
+    expect(isNegativeDecision('换成官方包，直接装到 `E:\inkos`')).toBe(true);
+    expect(isNegativeDecision('不再用 npx 拉上游原版')).toBe(true);
+    expect(isNegativeDecision('回退到 v3.1.4 的分支')).toBe(true);
+    expect(isNegativeDecision('统一不采用 browser-use')).toBe(true);
+  });
+  it('拍板采用的决策不判为否定', () => {
+    expect(isNegativeDecision('我们最终统一用 PostgreSQL 作为主库')).toBe(false);
+    expect(isNegativeDecision('决定采用渐进式披露，省 token 的套路')).toBe(false);
+    expect(isNegativeDecision('核心库存储定为 SQLite + FTS5')).toBe(false);
+  });
+  it('"切换到/改为"故意不判否定——它们是中性的，负面常常并不存在', () => {
+    // 实测样本："切换成功——触屏活着（[nav] 只埋路由不埋 tab，虚惊）"是正面句
+    expect(isNegativeDecision('切换成功——触屏活着')).toBe(false);
+    expect(isNegativeDecision('改为直查 SQL 通道')).toBe(false);
+  });
+  it('词中误命中防护：中文无词边界，"切换成"里含着"换成"', () => {
+    // 与 DECISION_FALSE_POSITIVE（"决定论"≠决定）同一类病，实测已中招
+    expect(isNegativeDecision('切换成功了')).toBe(false);
+    expect(isNegativeDecision('切换成 v3.1.5 分支')).toBe(false);
+    expect(isNegativeDecision('不放弃这条路线')).toBe(false);
+    expect(isNegativeDecision('绝不放弃本地优先')).toBe(false);
+    expect(isNegativeDecision('并未放弃')).toBe(false);
+  });
+  it('客套语不是否定决策', () => {
+    expect(isNegativeDecision('不用感谢')).toBe(false);
+    expect(isNegativeDecision('不用客气')).toBe(false);
+  });
+  it('失败判定族（不可行/不装…）故意不判——那条路要新建抽取路径，精度未达标', () => {
+    expect(isNegativeDecision('本地新常驻大模型不可行')).toBe(false);
+    expect(isNegativeDecision('按你的原则不装 chinese-longnovel-skill')).toBe(false);
+  });
+  it('非字符串/空串不抛', () => {
+    expect(isNegativeDecision('')).toBe(false);
+    // @ts-expect-error 故意传错类型，验证不抛
+    expect(isNegativeDecision(undefined)).toBe(false);
+    // @ts-expect-error 故意传错类型，验证不抛
+    expect(isNegativeDecision(null)).toBe(false);
+  });
+});
+
+describe('extractDecisions：kind 字段随决策一起产出（ADR-001）', () => {
+  const msgs = (content: string, role = 'user') => [{ role, content, seqNum: 1, createdAt: '2026-10-14T00:00:00.000Z' }];
+  it('否定性决策带 kind=negative', () => {
+    const d = extractDecisions(msgs('我们改用 pwsh 直接 HTTPS 拉取，拿到 registry 原始 packument'));
+    expect(d.length).toBeGreaterThan(0);
+    expect(d[0].kind).toBe('negative');
+  });
+  it('拍板决策带 kind=decision', () => {
+    const d = extractDecisions(msgs('我们最终决定采用 PostgreSQL 作为主库'));
+    expect(d.length).toBeGreaterThan(0);
+    expect(d[0].kind).toBe('decision');
   });
 });

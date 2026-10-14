@@ -566,15 +566,20 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
 export interface DecisionRow {
   at: string; source: string; sessionId: string; title: string | null;
   text: string; seq: number; msgAt?: string; pinned?: boolean;
+  /** ADR-001：这条决策是否编码"否掉一条路"。缺省视为 'decision'（存量数据无此字段）。 */
+  kind?: 'decision' | 'negative';
 }
 
-export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string }): DecisionRow[] {
+export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string; kind?: 'decision' | 'negative' }): DecisionRow[] {
   // [fork 0924b] 不再过滤 state='confirmed'——长活会话（一直 active）的决策也要可见，
   // 否则决策列再新鲜也进不了简报（mc整合包 0924 实测：791 条消息的活跃会话 9 条决策不可见）。
   // 未确认会话的"半成品"风险由抽取守卫+origin 排除+简报 48h 窗三层兜住。
   const conds = ['project_id = ?', 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')"];
   const params: unknown[] = [projectId];
   if (filter?.source) { conds.push('source = ?'); params.push(filter.source); }
+  // ADR-001：按 kind 过滤。SQL 层用 JSON 函数不可靠（不同 Node/SQLite 版本的 json_each
+  // 可用性不同），故取出后在 JS 侧过滤——listDecisions 本来就全量解析 JSON。
+  const wantKind = filter?.kind;
   const rows = db.prepare(`SELECT id, source, title, created_at, decisions, topics FROM sessions WHERE ${conds.join(' AND ')} ORDER BY created_at DESC`).all(...params) as Array<{
     id: string; source: string; title: string | null; created_at: string; decisions: string; topics: string | null;
   }>;
@@ -586,7 +591,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
   // 最新出现的那次——保留新、丢弃旧，语义正确。
   const seen = new Map<string, boolean>();   // key → 该键是否见过 pinned 条目
   for (const r of rows) {
-    let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean }> = [];
+    let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }> = [];
     let topics: string[] = [];
     try { decs = JSON.parse(r.decisions); topics = JSON.parse(r.topics ?? '[]'); } catch { continue; }
     if (filter?.topic && !topics.includes(filter.topic) && !r.title?.includes(filter.topic)) continue;
@@ -607,7 +612,9 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         continue;
       }
       seen.set(key, d.pinned === true);
-      out.push({ at: d.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: d.pinned === true });
+      const row: DecisionRow = { at: d.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+      if (wantKind && row.kind !== wantKind) continue;
+      out.push(row);
     }
   }
   // [fork 1014b] 置顶优先：本数组按时间升序返回，调用方 cmdDecisions 取末尾 N 条

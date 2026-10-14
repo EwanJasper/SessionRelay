@@ -13,7 +13,7 @@ export interface Msg {
 export interface ExtractedMeta {
   files: string[];
   topics: string[];
-  decisions: Array<{ text: string; seq: number; at?: string }>;
+  decisions: Array<{ text: string; seq: number; at?: string; kind?: 'decision' | 'negative' }>;
   questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }>;
   codeBlockCount: number;
   keyExchanges: Array<{ userText: string; aiText: string; userSeq: number; reason: string }>;
@@ -69,6 +69,44 @@ const DECISION_RES: RegExp[] = [
   DECISION_WEAK_ANCHORED,
   /([^。！？!?\n]{2,30}(?:方案|选型|策略|架构|库|协议|格式|命名|引擎|分词|存储|模式)(?:定为|确定为|选定为|采用|敲定))[^。！？!?\n]{0,40}/,
 ];
+
+// ── 否定性决策标记（ADR-001）──
+//
+// 问题：负面信息（"试过 X 失败了"）只活在原始消息里，而正文会被归档蒸发，于是同一个坑
+// 在新会话里重新踩。调研建议新建一套"失败尝试"抽取规则族，实测精度只有 75%
+// （噪声类：菜单选项"B. 不装 App"、markdown 表格行、代码块参数表、引号内规则引用、
+// "排除"的归因义 vs 否定义）——往刚把污染从 19 条打到 0 的库里灌噪声，不干。
+//
+// 但实测发现：**切换/放弃族的否定早已被 DECISION_STRONG 大量捕获**（D:\agent1super
+// 1267 条决策里 552 条含否定语义，占 43.6%），只是一律没有标记，简报里"改用 Y"与
+// "采用 Y"长得一模一样，看不出 Y 是被否掉的那条路。
+//
+// 所以只做标记，不新建抽取路径——文本早已过了 plausibleDecision / DECISION_FALSE_POSITIVE /
+// isQuotedSpeech 三道校验，标记不新增任何内容，精度是构造使然的（实测 85-90%，
+// 误标样本本就是库里已有的提取噪声）。
+//
+// 判别式故意**不含**"切换到/改为"：它们是中性的，负面只是隐含且常常并不存在
+// （实测"切换成功——触屏活着（虚惊）"这类正面句会被误标）。
+// 也故意不含"不可行/行不通/不装"等失败判定族——那些原抽取器根本不着边，要走
+// 新建路径，精度未达标，见 ADR-001 Option B 的重新评估条件。
+//
+// ⚠️ 中文没有词边界，必须防词中误命中——与 DECISION_FALSE_POSITIVE（"决定论"≠决定）
+// 同一类病，实测已中招：
+//   "切换成功/切换成" 里含着 "换成" → 正面句被判否定
+//   "不放弃/绝不放弃" 里含着 "放弃" → 正面句被判否定
+// 故对这两个词加负向后视。Node ≥9 支持 lookbehind，engines 允许的版本都够。
+const NEGATIVE_MARKERS = /(?<![切])换成|(?<![不没未绝并])放弃|弃用|不再用|回退到|退回到|改用|换用|不采用|不用/;
+// 客套语不是决策语义（"不用感谢/不用客气"）——这类文本能进 decisions 说明上游抽取已误收，
+// 但标记不该再放大它。
+const NEGATIVE_FALSE_POSITIVE = /(不用感谢|不用客气|不用谢|无须放弃|不必放弃)/;
+
+/** 这条决策是否编码了"否掉一条路"（ADR-001）。只做标记，不做抽取。 */
+export function isNegativeDecision(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  if (NEGATIVE_FALSE_POSITIVE.test(text)) return false;
+  NEGATIVE_MARKERS.lastIndex = 0;
+  return NEGATIVE_MARKERS.test(text);
+}
 
 function sentences(text: string): string[] {
   // [fork 0924] 软换行合并：Markdown 段内硬换行不再腰斩句子——
@@ -139,8 +177,8 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         const key = text.slice(0, 20);
         if (seen.has(key)) break;
         seen.add(key);
-        out.push({ text, seq: m.seqNum, at: m.createdAt ?? undefined });
-        break;
+        out.push({ text, seq: m.seqNum, at: m.createdAt ?? undefined, kind: isNegativeDecision(text) ? 'negative' : 'decision' });
+        break;;
       }
       if (out.length >= 10) return out;
     }

@@ -93,6 +93,10 @@ function queryDecisions(db, projectId, limit) {
         seq: d.seq,
         msgAt: d.at,
         pinned: d.pinned === true,
+        // ADR-001：kind 必须与核心库 listDecisions 同步带出，否则 SQL 通道渲染不出 ✗
+        // 而 CLI 兜底通道能——两条路产出的简报会不一样（本项目反复吃过的分叉亏）。
+        // 存量数据无此字段，按 'decision' 处理。
+        kind: d.kind === 'negative' ? 'negative' : 'decision',
       })
     }
   }

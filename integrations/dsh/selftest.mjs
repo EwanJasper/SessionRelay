@@ -591,6 +591,52 @@ console.log('=== 9b. 简报决策带日期 ===');
   if (decLines.length) console.log('     样例:', decLines[0].slice(0, 70));
 }
 
+// ═══ 9c. 否定性决策渲染 ✗（ADR-001）═══
+// 痛点：简报里"改用 Y"与"采用 Y"长得一模一样，模型看不出 Y 是被否掉的那条路，
+// 于是同一条建议会被反复重提。✗ 让它一眼可辨。
+// 不变量：**两条取数路都必须带出 kind**——SQL 通道漏带的话，CLI 兜底能渲染而 SQL 不能，
+// 两条路产出的简报就会分叉（本项目反复吃过的亏）。故这里用 stub 灌一条 negative，
+// 同时验 index.js 的渲染，再对照 SQL 通道的 queryDecisions 是否带 kind 字段。
+console.log('=== 9c. 否定性决策渲染 ✗（ADR-001）===');
+{
+  const fresh = await import(HERE + 'index.js?neg=1');
+  const reg = [];
+  fresh.apply({
+    systemPrompt: { section: (s2) => { reg.push(s2); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => fn(),
+  });
+  const now = new Date().toISOString();
+  const v = reg[0].text({
+    agent: { id: 'd', session: { header: { cwd: 'E:\\music player' } } },
+    // 两条路都走同一个入口：itemsFromArray 的 arr 由调用方喂，这里直接喂 negative 条目
+  });
+  void v;
+  // 直接验渲染函数：造一个含 negative 的数组，看输出是否带 ✗
+  const rendered = fresh.__testRenderItems?.([
+    { text: '采用 PostgreSQL 作为主库', at: now, seq: 1 },
+    { text: '改用 pwsh 直查 SQL，弃用子进程', at: now, seq: 2, kind: 'negative' },
+  ], 'decisions', 2) ?? null;
+  if (rendered === null) {
+    console.log('  SKIP 未导出 __testRenderItems（仅验证 SQL 通道带 kind）');
+  } else {
+    check('拍板决策不带 ✗', /^- \[\d{2}-\d{2}\] 采用 PostgreSQL/.test(rendered[0]));
+    check('否定性决策带 ✗', /^- \[\d{2}-\d{2}\] ✗ 改用 pwsh/.test(rendered[1]));
+    if (rendered[1]) console.log('     样例:', rendered[1].slice(0, 70));
+  }
+  // SQL 通道必须带出 kind（漏带 = 两条路分叉）
+  const bs2 = await import('./src/brief-sql.mjs?neg=1');
+  const d = bs2.queryBriefData('E:\\music player', 200);
+  if (!d) {
+    console.log('  SKIP 真实库不可达');
+  } else {
+    const withKind = d.decisions.filter((x) => x.kind === 'negative' || x.kind === 'decision').length;
+    check(`SQL 通道每条决策都带 kind（${withKind}/${d.decisions.length}）`, withKind === d.decisions.length);
+    const negs = d.decisions.filter((x) => x.kind === 'negative').length;
+    console.log(`     真实库否定性决策: ${negs} 条`);
+  }
+}
+
 // ═══ 10. 决策置顶（2026-10-14 并行工作流支B）═══
 // 痛点：简报只有 2 个名额且按时间倒序，重要的老决策（三个月前拍板的架构选择）
 // 永远排不上。置顶=被标记的决策优先显示，且豁免 48h 新鲜度窗。

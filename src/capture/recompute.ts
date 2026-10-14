@@ -25,13 +25,23 @@ import type { Msg } from '../core/extract/extract.js';
  *  5 → 1014 未决问题显示归一化（口语填充压缩，保留真疑问）。
  *  6 → 1014 剥注入块（<system-reminder> 等塞进 user 消息的系统上下文，实测把
  *        技能说明挖成了决策，一条重复 24 次）+ 决策查询跨会话去重。
- *  递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 6; // v6 = 1014 剥注入块 + 决策跨会话去重
+ *  7 → 1014 否定性决策标记（ADR-001）。不改抽取召回，只给"否掉一条路"的既有决策贴
+ *        kind:'negative'——实测切换/放弃族早已占决策总量 43.6% 但一律无标记，简报里
+ *        "改用 Y"与"采用 Y"不可分辨。失败判定族（不可行/不装…）暂不抽取：自由文本规则
+ *        实测精度仅 75%，灌噪声不划算，见 ADR-001 Option B 的重新评估条件。
+ * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
+export const EXTRACT_VERSION = 7;
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;
 
-/** 确保 extract_meta 表存在（createDb 的 DDL 之外，供 openExisting 的旧库自愈） */
+/** 确保 extract_meta 表存在（createDb 的 DDL 之外，供 openExisting 的旧库自愈）。
+ *  progress_version：progress 游标是在**哪个 EXTRACT_VERSION 下**累积的。
+ *  没有它，一次版本 bump 发生在重算中途时，旧游标会被当成新版本的进度继续用——
+ *  1014 实测：版本被打回 0 后游标停在 500，之后 bump 到 v7，守护从 500 继续跑，
+ *  只重算了尾巴 75 个会话就把版本标记为完成。**前 500 个会话永远拿着旧规则的数据，
+ *  而元数据说"已是最新"**——静默数据损坏，doctor 的「提取规则版本」检查也被骗过。
+ *  ALTER TABLE 兜旧库：CREATE TABLE IF NOT EXISTS 对已存在的表无效。 */
 function ensureTable(db: DB): void {
   db.exec(`CREATE TABLE IF NOT EXISTS extract_meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -39,8 +49,13 @@ function ensureTable(db: DB): void {
     last_run_at TEXT,
     last_recomputed INTEGER NOT NULL DEFAULT 0,
     remaining INTEGER NOT NULL DEFAULT 0,
-    progress INTEGER NOT NULL DEFAULT 0
+    progress INTEGER NOT NULL DEFAULT 0,
+    progress_version INTEGER NOT NULL DEFAULT 0
   )`);
+  const cols = db.prepare('PRAGMA table_info(extract_meta)').all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'progress_version')) {
+    db.exec('ALTER TABLE extract_meta ADD COLUMN progress_version INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 /** 本库记录的重算版本（无记录 = 0，视为全新库/未初始化） */
@@ -105,7 +120,11 @@ function remainingCount(db: DB): number {
 /** 跑一批重算（守护按需调用；幂等——重跑同一批只是再算一遍同样的规则）。
  *  分批推进：每批算 batch 个会话，把「已算过的会话数」写进 extract_meta.progress，
  *  下次调用跳过前 progress 个。全部算完才把 version 提到 EXTRACT_VERSION。
- *  失败不抛：单会话异常跳过，本批已算的进度仍然保留，下周期继续。 */
+ *  失败不抛：单会话异常跳过，本批已算的进度仍然保留，下周期继续。
+ *
+ *  ⚠️ progress 必须与 progress_version 配对使用。版本 bump 会让上一次未跑完的进度
+ *  全部作废（那些会话是按旧规则算的），此时要从头开始——否则就会重演 1014 那个
+ *  静默损坏：元数据说 v7 已完成，实际只有尾巴几十个会话是 v7 规则算的。 */
 export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResult {
   ensureTable(db);
   const cur = extractVersionOf(db);
@@ -117,9 +136,18 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
     return { recomputed: 0, remaining: 0 };
   }
 
-  // 取本批：跳过已算的进度（progress 存在 extract_meta 里）
-  const row = db.prepare('SELECT progress FROM extract_meta WHERE id = 1').get() as { progress?: number } | undefined;
-  const skip = row?.progress ?? 0;
+  // 取本批：跳过已算的进度（progress 存在 extract_meta 里）。
+  // 但 progress 是在旧版本下累积的话，它指代的"已算完"毫无意义——一律作废重来。
+  const row = db.prepare('SELECT progress, progress_version FROM extract_meta WHERE id = 1').get() as
+    { progress?: number; progress_version?: number } | undefined;
+  const stale = (row?.progress_version ?? 0) !== EXTRACT_VERSION;
+  const skip = stale ? 0 : (row?.progress ?? 0);
+  if (stale && (row?.progress ?? 0) > 0) {
+    // 作废前留一行痕迹：这类"看起来正常其实只算了一半"的故障，最难查的就是没有日志
+    db.prepare('UPDATE extract_meta SET progress = 0, progress_version = ? WHERE id = 1').run(EXTRACT_VERSION);
+  } else if (!row) {
+    db.prepare('INSERT INTO extract_meta (id, version, progress, progress_version) VALUES (1, ?, 0, ?)').run(cur, EXTRACT_VERSION);
+  }
   const todo = db.prepare(
     `SELECT s.id, s.title FROM sessions s
      WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0
@@ -140,25 +168,27 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
   }
   // 分批中：只推进进度，不碰 version（下次调用继续跳过已算的）
   db.prepare(
-    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress) VALUES (1, ?, ?, ?, ?, ?)
+    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, progress_version) VALUES (1, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        last_run_at = excluded.last_run_at,
        last_recomputed = excluded.last_recomputed,
        remaining = excluded.remaining,
-       progress = excluded.progress`,
-  ).run(cur, new Date().toISOString(), done, total - progressed, progressed);
+       progress = excluded.progress,
+       progress_version = excluded.progress_version`,
+  ).run(cur, new Date().toISOString(), done, total - progressed, progressed, EXTRACT_VERSION);
   return { recomputed: done, remaining: total - progressed };
 }
 
 function finishVersion(db: DB, done: number): void {
   db.prepare(
-    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress) VALUES (1, ?, ?, ?, 0, 0)
+    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, progress_version) VALUES (1, ?, ?, ?, 0, 0, ?)
      ON CONFLICT(id) DO UPDATE SET
        version = ?,
        last_run_at = ?,
        last_recomputed = ?,
        remaining = 0,
-       progress = 0`,
-  ).run(EXTRACT_VERSION, new Date().toISOString(), done,
-       EXTRACT_VERSION, new Date().toISOString(), done);
+       progress = 0,
+       progress_version = ?`,
+  ).run(EXTRACT_VERSION, new Date().toISOString(), done, EXTRACT_VERSION,
+       EXTRACT_VERSION, new Date().toISOString(), done, EXTRACT_VERSION);
 }

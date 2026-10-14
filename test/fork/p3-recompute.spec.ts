@@ -117,3 +117,57 @@ describe('P3 · 提取规则版本与分批重算', () => {
     expect(row.message_count).toBe(2);
   });
 });
+
+// ── 1014 深夜：progress 游标跨版本复用的静默损坏 ──
+// 病根：progress 记的是"已算过几个会话"，但它是在**某个** EXTRACT_VERSION 下累积的。
+// 版本 bump 发生在重算中途时，旧游标被当成新版本的进度继续用 → 只重算尾巴就把版本
+// 标记成完成，前面几百个会话永远拿着旧规则数据，而元数据说"已是最新"。
+// 本机实测中招：版本被打回 0 后游标停在 500，bump 到 v7 后从 500 继续，
+// 576 会话的库只重算了 75 个就报完成（doctor 的「提取规则版本」检查也被骗过）。
+describe('progress 游标必须与版本配对，否则静默跳过前几百个会话', () => {
+  function seedDb(): DB {
+    const db = new Database(':memory:') as unknown as DB;
+    seed(db);
+    return db;
+  }
+
+  it('⑦ 版本 bump 后，旧 progress 一律作废重来（不是接着跳', () => {
+    const db = seedDb();
+    for (let i = 0; i < 6; i++) addSession(db, `s${i}`, [['user', '决定改用方案', 1]]);
+    // 第一轮：跑到中途（batch=2），留下 progress
+    recomputeExtractions(db, 2);
+    const mid = (db.prepare('SELECT progress FROM extract_meta WHERE id = 1').get() as { progress: number }).progress;
+    expect(mid).toBeGreaterThan(0);
+    // 模拟"版本 bump 但游标还在"：手动把 version 拨回旧值，progress 保留
+    db.prepare('UPDATE extract_meta SET version = version - 1, progress_version = version - 1 WHERE id = 1').run();
+    const before = countDecisions(db);
+    // 再跑：必须从头来，不能从 progress 接着跳
+    recomputeExtractions(db, 100);
+    const after = countDecisions(db);
+    // 6 个会话全部按当前规则重算过（每会话 1 条决策）
+    expect(after).toBe(6);
+    expect(after).toBeGreaterThanOrEqual(before);
+    expect(extractVersionOf(db)).toBe(EXTRACT_VERSION);
+  });
+
+  it('⑧ 同版本内 progress 仍然有效（中断后续跑，不重算）', () => {
+    const db = seedDb();
+    for (let i = 0; i < 6; i++) addSession(db, `t${i}`, [['user', '决定采用方案', 1]]);
+    recomputeExtractions(db, 2);
+    const p1 = (db.prepare('SELECT progress FROM extract_meta WHERE id = 1').get() as { progress: number }).progress;
+    // 同版本续跑：progress 必须被尊重（不归零）
+    const r = recomputeExtractions(db, 2);
+    const p2 = (db.prepare('SELECT progress FROM extract_meta WHERE id = 1').get() as { progress: number }).progress;
+    expect(p2).toBeGreaterThanOrEqual(p1);
+    expect(r.recomputed).toBeGreaterThan(0);
+  });
+});
+
+function countDecisions(db: DB): number {
+  const rows = db.prepare('SELECT decisions FROM sessions WHERE decisions IS NOT NULL').all() as Array<{ decisions: string }>;
+  let n = 0;
+  for (const r of rows) {
+    try { n += (JSON.parse(r.decisions) as unknown[]).length; } catch { /* 坏行跳过 */ }
+  }
+  return n;
+}

@@ -1,0 +1,5 @@
+# node_modules 是开发者本机的开发便利符号链接（指向 /d/agent1super/dsh/node_modules/.pnpm/node_modules），
+# 只为让裸 node 下的 selftest 能解析 @deepseek-ai/dsh-tools。DSH 运行时由 profile 的
+# createRequire 自行解析（package.json 已声明该依赖），不需要它。
+# 绝不能同步到部署副本或发布物：那是本机绝对路径，换机器即断。
+node_modules

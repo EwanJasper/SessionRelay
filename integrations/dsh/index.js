@@ -138,14 +138,22 @@ function itemsFromArray(arr, key, max) {
   })
   return fresh.slice(0, max).map((d) => {
     const text = String(d.text ?? d.summary ?? d.q ?? d.title ?? JSON.stringify(d)).slice(0, 90)
+    // ADR-001：否定性决策加 ✗ 前缀。"改用 Y"与"采用 Y"此前在简报里长得一样，
+    // 模型看不出 Y 是被否掉的那条路，于是同一建议会被反复重提。✗ 让它一眼可辨。
+    // 只在 decisions 通道打；未决问题没有"否掉一条路"的语义。
+    const mark = (key === 'decisions' && d.kind === 'negative') ? '✗ ' : ''
     // 决策带日期：用户改过主意时，一眼看出哪条新哪条旧（此前简报完全不带时间，
     // 新旧冲突只能靠猜）。未决问题不带——问句的时间属性弱，且省 token。
     if (key !== 'decisions') return `- ${text}`
     const at = Date.parse(d.at ?? d.msgAt ?? '')
-    if (!Number.isFinite(at)) return `- ${text}`
-    return `- [${new Date(at).toISOString().slice(5, 10)}] ${text}`
+    if (!Number.isFinite(at)) return `- ${mark}${text}`
+    return `- [${new Date(at).toISOString().slice(5, 10)}] ${mark}${text}`
   })
 }
+
+// 仅供 selftest 用：不导出的话，"✗ 只在一条路上渲染"这种分叉就没法在自测里断言。
+// 生产路径不碰它。
+export const __testRenderItems = itemsFromArray
 
 /** CLI --json 原文 → 条目。解析失败走文本兜底（仅旧版 unresolved 空输出人话时触达） */
 function parseItems(raw, key, max) {

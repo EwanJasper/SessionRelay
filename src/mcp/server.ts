@@ -231,15 +231,15 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
 
   server.registerTool('get_decisions', {
     title: '决策列表',
-    description: '本项目全部已确认技术决策（带出处，可回跳）',
-    inputSchema: { topic: z.string().optional(), source: z.string().optional(), ...zProject },
-  }, guard(async (args: { topic?: string; source?: string }) => {
+    description: '本项目全部已确认技术决策（带出处，可回跳）。kind=negative 的是"被否掉的路"——看到它就别再提议同一条（ADR-001）',
+    inputSchema: { topic: z.string().optional(), source: z.string().optional(), kind: z.enum(['decision', 'negative']).optional(), ...zProject },
+  }, guard(async (args: { topic?: string; source?: string; kind?: 'decision' | 'negative' }) => {
     const { db, project } = get();
-    const rows = listDecisions(db, project, { topic: args.topic, source: args.source });
+    const rows = listDecisions(db, project, { topic: args.topic, source: args.source, kind: args.kind });
     return toolOut({
       count: rows.length,
       decisions: rows.map((r) => ({
-        at: r.at, text: r.text,
+        at: r.at, text: r.text, kind: r.kind ?? 'decision', pinned: r.pinned === true,
         provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msg: r.seq },
       })),
     });

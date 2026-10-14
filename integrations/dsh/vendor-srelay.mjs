@@ -48,11 +48,57 @@ if (localSource) {
   log(`从本地复制：${src}`)
   fs.cpSync(path.join(src, 'dist'), path.join(VENDOR, 'dist'), { recursive: true })
   fs.cpSync(path.join(src, 'package.json'), path.join(VENDOR, 'package.json'))
-  if (fs.existsSync(path.join(src, 'node_modules'))) {
-    log(`复制 node_modules（约 67MB，稍等）…`)
-    fs.cpSync(path.join(src, 'node_modules'), path.join(VENDOR, 'node_modules'), { recursive: true })
-  } else {
-    console.error('✗ 源目录没有 node_modules —— 缺它插件无法离线运行')
+  if (!fs.existsSync(path.join(src, 'node_modules'))) {
+    console.error(`✗ 源目录没有 node_modules —— 缺它插件无法离线运行`)
+    process.exit(1)
+  }
+  // ⚠️ 只复制**运行时依赖**，不能整个 node_modules 照抄。
+  // 实测踩坑：源是开发检出（git clone + npm install），node_modules 里含 devDependencies
+  // ——typescript 23M + tsup 12M + @esbuild 12M + vitest 等，vendor 从 67MB 胀到 136MB，
+  // 发布包翻倍。npm pack 那条路本来就只装 dependencies，离线这条路必须对齐。
+  const srcPkg = JSON.parse(fs.readFileSync(path.join(src, 'package.json'), 'utf8'))
+  const deps = Object.keys(srcPkg.dependencies ?? {})
+  if (deps.length === 0) {
+    console.error(`✗ 源 package.json 没有 dependencies 字段，拒绝盲目全量复制`)
+    process.exit(1)
+  }
+  log(`复制运行时依赖（${deps.length} 个）…`)
+  fs.mkdirSync(path.join(VENDOR, 'node_modules'), { recursive: true })
+  let copied = 0, missing = []
+  for (const dep of deps) {
+    const from = path.join(src, 'node_modules', dep)
+    if (!fs.existsSync(from)) { missing.push(dep); continue }
+    fs.cpSync(from, path.join(VENDOR, 'node_modules', dep), { recursive: true })
+    copied++
+  }
+  // 依赖闭包：dependencies + **optionalDependencies** 都要跟。
+  // optionalDependencies 不是可选的——原生模块的平台包（@node-rs/jieba-win32-x64-msvc
+  // 之类）全走这个字段，漏了它 CLI 直接 "Cannot find native binding"。
+  // 递归太深没必要（srelay 依赖树两层到底），跑三轮定点收敛。
+  for (let pass = 0; pass < 3; pass++) {
+    const declared = new Set()
+    for (const dep of deps) {
+      const pj = path.join(VENDOR, 'node_modules', dep, 'package.json')
+      if (!fs.existsSync(pj)) continue
+      try {
+        const j = JSON.parse(fs.readFileSync(pj, 'utf8'))
+        for (const d of Object.keys(j.dependencies ?? {})) declared.add(d)
+        for (const d of Object.keys(j.optionalDependencies ?? {})) declared.add(d)
+      } catch { /* 坏 package.json 跳过 */ }
+    }
+    let added = 0
+    for (const d of declared) {
+      const to = path.join(VENDOR, 'node_modules', d)
+      const from = path.join(src, 'node_modules', d)
+      if (fs.existsSync(to) || !fs.existsSync(from)) continue
+      fs.cpSync(from, to, { recursive: true })
+      added++
+    }
+    if (added === 0) break
+  }
+  log(`  已复制 ${copied} 个直接依赖${missing.length ? `，缺：${missing.join(', ')}` : ''}`)
+  if (missing.length) {
+    console.error(`✗ 有运行时依赖在源里找不到：${missing.join(', ')}——vendor 会缺功能`)
     process.exit(1)
   }
 } else {
