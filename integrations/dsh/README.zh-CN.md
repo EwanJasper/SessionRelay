@@ -14,11 +14,11 @@
 
 不是写死在文件里，而是**每个模型步骤前现查一次记忆库**。所以这一轮你做的决定，下一轮它就知道——ZCode 的开场 hook 做不到这点，它在开会话时就把内容定死了。
 
-简报限 1200 字符，并用「记忆库修改时间」做缓存判据：库没变就直接复用（约 1ms），避免每轮都等两个子进程（约 310ms）。
+简报限 1200 字符。取数走 **SQL 直查**（`node:sqlite` 只读打开，CLI 子进程只作兜底）：冷路径约 5ms、热路径约 1ms，而调 CLI 子进程要 310–360ms。想对照旧路径可以设 `SRELAY_BRIEF_FORCE_CLI=1`。
 
 **2. 自动认出「当前在哪个项目」**
 
-不需要任何配置。原理是 DSH 自己就按工作目录给会话分组存放：
+主信号是 DSH 自己交出来的 `agent.session.header.cwd`——会话创建时的绝对工作目录，按 agent 隔离，不用猜。取不到时才回落到下面这套会话反解：
 
 ```
 ~/.dsh/sessions/
@@ -26,18 +26,23 @@
   --D-agent1super--           ← D:\agent1super
 ```
 
-这个 slug 是 **DSH 自己记录的**会话归属，是插件唯一能读到的可靠信号。
+这个 slug 是 **DSH 自己记录的**会话归属，是插件能读到的兜底信号。
 
-**3. 六个原生工具**
+**3. 七个原生工具**
 
 | 工具 | 作用 |
 |---|---|
 | `srelay_search` | 检索项目历史会话与讨论 |
 | `srelay_show` | 查看某个会话的具体消息与出处 |
 | `srelay_record` | 主动沉淀一条已确认的决策 |
+| `srelay_init` | 给当前目录建记忆库（可逆，故单步执行） |
 | `srelay_bind_project` | **提议**切换项目（仅提议） |
 | `srelay_confirm_bind_project` | 用户确认后才生效 |
 | `srelay_cancel_bind_project` | 放弃提议 |
+
+**4. 新文件夹开箱即用**
+
+在 DSH 里打开一个真实目录，记忆库会自动建好，不必说"接入"。规则是**黑名单制**：除了临时目录、DSH 自身安装目录、npm 全局根、盘符根，全都自动接。ZCode 侧的 hook 用同一套黑名单——**改规则要两边一起改**。
 
 ---
 
@@ -48,14 +53,18 @@
 DSH 的 Plugins 页面 → 填入包名 → 安装：
 
 ```
-@crx1146/dsh-sessionrelay
+dsh-srelay-brief
 ```
 
 ### 方式二：命令行
 
 ```bash
-dsh plugin --profile web add @crx1146/dsh-sessionrelay
+dsh plugin --profile web add dsh-srelay-brief
 ```
+
+> ⚠️ 无论哪种方式，装完都要先确认 **vendor/ 在位**（见下文「自包含运行时」）。
+> 没有 vendor 时插件不报错，只会静默回落到全局 npm 的 srelay——如果那份是上游原版，
+> 你就会遇到"一切正常但简报永远空"的半失效状态。
 
 ### 方式三：直接落文件
 
@@ -71,13 +80,14 @@ dsh plugin --profile web add https://github.com/rui08984-dot/dsh-sessionrelay
 ## 项目判定链
 
 ```
-① env SRELAY_PROJECT_ROOT  →  显式指定，指向含 .sessionrelay 的目录即可
-② DSH 会话反解             →  24h 内最近活跃的会话组（最准的自动信号）
-③ 注册表恰好一个存活项目    →  新用户只有一个项目时的友好路径
-④ 悬空 / 未初始化          →  不猜，���名提示
+① agent.session.header.cwd  →  DSH 自己交出来的绝对工作目录（主信号，按 agent 隔离）
+② env SRELAY_PROJECT_ROOT   →  显式指定，指向含 .sessionrelay 的目录即可
+③ DSH 会话反解              →  24h 内最近活跃的会话组（兜底）
+④ 注册表恰好一个存活项目     →  新用户只有一个项目时的友好路径
+⑤ 悬空 / 未初始化           →  不猜，点名提示
 ```
 
-第 ④ 级**拒绝猜测**是有意的：把 A 项目的简报注进 B 项目的会话，比什么都不注更糟——模型无法分辨这两件事无关。
+第 ⑤ 级**拒绝猜测**是有意的：把 A 项目的简报注进 B 项目的会话，比什么都不注更糟——模型无法分辨这两件事无关。
 
 ---
 
@@ -97,20 +107,32 @@ dsh plugin --profile web add https://github.com/rui08984-dot/dsh-sessionrelay
 
 ## 自包含运行时（vendor/）
 
-插件自带 67MB 的 srelay 运行时（`dist/` + 全部依赖），所以：
+插件自带 62MB 的 srelay 运行时（`dist/` + 全部依赖），所以：
 
 - 用户**不需要**自己 `npm install -g`
 - **断网也能用**
 - 不会和用户机器上已有的 srelay 版本打架
 
-仓库里**不包含** vendor/（67MB 二进制不该进 git）。需要时用生成脚本重建：
+**仓库里不包含 vendor/**——62MB 二进制（含 8 个平台的 `better-sqlite3` 原生 binding 和中文分词词库）进 git 就永久留在历史里了。三条获取途径：
+
+| 途径 | 命令 | 需要联网 |
+|---|---|---|
+| **Release 资产**（最省事） | 从 [Releases](https://github.com/rui08984-dot/dsh-sessionrelay/releases) 下 `vendor.tar.gz`，解压到本目录 | 否 |
+| 从 npm 拉取 | `node vendor-srelay.mjs` | 是 |
+| 从本地已装副本复制 | `node vendor-srelay.mjs --from <path>` | 否 |
 
 ```bash
 node vendor-srelay.mjs                 # 从 npm 拉取（需联网）
 node vendor-srelay.mjs --from <path>   # 从本地已装副本复制（离线）
 ```
 
-npm 发布包由 `package.json` 的 `files` 白名单显式列入 —— 因为 npm 默认忽略一切 `node_modules/` 目录（包括嵌套的），漏掉这条规则会打出一个装上即崩的包。
+到位后自检：
+
+```bash
+node -e "console.log(require('fs').existsSync('vendor/dist/srelay.js'))"   # 必须 true
+```
+
+npm 发布包由 `package.json` 的 `files` 白名单显式列入 —— 因为 npm 默认忽略一切 `node_modules/` 目录（包括嵌套的），漏掉这条规则会打出一个装上即崩的包。`src/brief-sql.mjs` 也曾从白名单里漏掉过一次，症状就是发布物缺了 SQL 直查通道。
 
 ---
 
