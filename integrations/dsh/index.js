@@ -72,6 +72,13 @@ const NODE = process.execPath
 
 const MAX_CHARS = 1200
 const FRESH_MS = 48 * 3600_000
+// 简报名额。**必须与 ZCode 的 brief-shared.mjs 完全一致**，且本文件内只准有这一处定义。
+// 1014 实测踩坑：这三个数字原先在 sqlItems / buildBrief / text provider 冷路径里各写了
+// 一份（2/2），改名额时只改到两处，第三处静默留在旧值——症状是"SQL 路出 4 条决策、
+// CLI 兜底路出 2 条"，而 self              est 的"两条路正文逐字节一致"正是抓这个的。
+// 同一处知识多份副本，是这个项目反复吃的病。
+const DEC_SLOTS = 4
+const UNR_SLOTS = 3
 const COLD_SYNC_TIMEOUT_MS = 1500 // 冷缓存同步预热上界：最坏慢一轮，不挂住组装
 const WARM_REFRESH_MS = 60_000   // 热缓存定时刷新
 const CACHE_TTL_MS = 5_000
@@ -173,7 +180,9 @@ function sqlItems(root) {
   try {
     const d = queryBriefData(root, 200)
     if (!d) return null
-    return { dec: itemsFromArray(d.decisions, 'decisions', 2), unr: itemsFromArray(d.unresolved, 'unresolved', 2) }
+    // 名额 4/3，与 ZCode brief-shared.mjs 对齐。DSH 侧没有看板、不吃那部分预算，
+    // 但这是 SES 唯一的自动通道——模型不调工具就只会看到这里。
+    return { dec: itemsFromArray(d.decisions, 'decisions', DEC_SLOTS), unr: itemsFromArray(d.unresolved, 'unresolved', UNR_SLOTS) }
   } catch (e) {
     logSqlFallback(e?.message ?? 'query threw')
     return null
@@ -200,7 +209,7 @@ async function buildBrief(root) {
     runSrelay(['decisions', '--limit', '200', '--json'], root, 4000),
     runSrelay(['unresolved', '--limit', '200', '--json'], root, 4000),
   ])
-  return renderBrief(root, parseItems(decRaw, 'decisions', 2), parseItems(unrRaw, 'unresolved', 2))
+  return renderBrief(root, parseItems(decRaw, 'decisions', DEC_SLOTS), parseItems(unrRaw, 'unresolved', UNR_SLOTS))
 }
 
 // 自动接入中的提示。措辞必须中性——接入依据可能是 .git，也可能只是"用户在 DSH 里
@@ -373,7 +382,7 @@ export function apply(ctx) {
         const opts = { cwd: r.root, timeout: COLD_SYNC_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }
         const decRaw = execFileSync(NODE, [SRELAY, 'decisions', '--limit', '200', '--json'], opts)
         const unrRaw = execFileSync(NODE, [SRELAY, 'unresolved', '--limit', '200', '--json'], opts)
-        const text = renderBrief(r.root, parseItems(decRaw, 'decisions', 2), parseItems(unrRaw, 'unresolved', 2))
+        const text = renderBrief(r.root, parseItems(decRaw, 'decisions', DEC_SLOTS), parseItems(unrRaw, 'unresolved', UNR_SLOTS))
         cache.set(r.root, { text, at: Date.now() })
         return text
       } catch {
