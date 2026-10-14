@@ -3,6 +3,7 @@
 // T34：source_files.cursor 通用水位（文件型=字节偏移 JSON；SQLite 型=rowid 水位 JSON）。
 import Database from 'better-sqlite3';
 import { toSearchText } from '../core/tokenize/tokenizer.js';
+import { stripInjected } from '../core/extract/extract.js';
 
 // 便捷再导出：dbFile 常被误从本模块导入（实测已误 4 次），统一出口消灭此类错误
 export { dbFile } from '../shared/paths.js';
@@ -250,7 +251,22 @@ export function openExisting(file: string): DB {
 }
 
 export function metaTextOf(title: string | null | undefined, topics: string[] = []): string {
-  return toSearchText([title ?? '', ...topics].join(' '));
+  return searchTextOf([title ?? '', ...topics].join(' '));
+}
+
+/**
+ * 进全文索引的文本。**必须先过 stripInjected**。
+ *
+ * 为什么：清洗规则此前只接进了抽取路径（sanitizeMsgs），索引路径从来没剥——
+ * 客户端把 XML 外壳剥掉后才存进 user 消息的系统上下文（TodoWrite 提醒、运行时快照、
+ * 文件策略、审批策略），于是原样进了 search_text。实测 D:\agent1super：4361 条消息带
+ * 同一句提醒，占全部 search_text 的 15.9%（E:\music player 7.3%）。
+ *
+ * 这是与 decisions 被注入块污染**并列的第二个盲区**，症状是"索引胀大"而非简报出错，
+ * 所以一直没被发现。抽取路径修好（v8）之后索引路径照样脏——必须两边都修。
+ */
+export function searchTextOf(text: string): string {
+  return toSearchText(stripInjected(text));
 }
 
 // ───────────────────────── 捕获写入（sync 引擎用） ─────────────────────────
@@ -977,7 +993,7 @@ export function insertMessage(
   const info = db.prepare(`
     INSERT OR IGNORE INTO messages (session_id, role, content, search_text, seq_num, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(m.sessionId, m.role, m.content, toSearchText(idxSource), m.seqNum, m.createdAt ?? null);
+  `).run(m.sessionId, m.role, m.content, searchTextOf(idxSource), m.seqNum, m.createdAt ?? null);
   return info.changes;
 }
 

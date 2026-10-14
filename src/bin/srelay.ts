@@ -219,16 +219,15 @@ program
   .command('recompute')
   .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
   .option('--batch <n>', '每批会话数，默认 50')
+  .option('--search-text', '同时按当前清洗规则刷新消息的 search_text（派生列，规则变了会陈旧）')
   .option('--json', '机器格式')
   .action(async (opts) => {
     const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
-    const { loadConfig } = await import('../shared/config.js');
     const { recomputeExtractions, EXTRACT_VERSION } = await import('../capture/recompute.js');
+    const { searchTextOf } = await import('../store/db.js');
     const root = requireRoot();
     const db = openRelayDb(root);
     try {
-      const cfg = loadConfig(root);
-      void cfg;
       const batch = opts.batch ? Math.max(1, Number(opts.batch)) : 50;
       // 一路跑到跟上版本：守护是 6 小时一批，576 会话的库要 72 小时——等不起。
       // recomputeExtractions 幂等，连续调用只是把同一个调用重复跑完。
@@ -239,16 +238,38 @@ program
         if (r.recomputed === 0 && r.remaining === 0) break;
         if (++guard > 2000) { console.error(pc.red('超过 2000 批，中止（应有异常）')); process.exitCode = 1; break; }
       }
-      if (opts.json) { console.log(JSON.stringify({ version: EXTRACT_VERSION, recomputed: total }, null, 2)); return; }
-      if (total === 0) { console.log(pc.dim(`已是最新提取规则 v${EXTRACT_VERSION}，无需重算`)); return; }
-      console.log(`✅ 重算 ${total} 个会话到提取规则 v${EXTRACT_VERSION}`);
+      // [fork 1014] search_text 是消息插入时写的派生列，recompute 本来不碰它——
+      // 于是清洗规则改了（如 v8 剥无标签注入）之后， topics 干净了而索引照样脏。
+      // 实测该盲区让 4361 条消息的样板文字占掉 D:\agent1super 全部 search_text 的 18.7%。
+      let refreshed = 0;
+      if (opts.searchText) {
+        const rows = db.prepare('SELECT id, content FROM messages').all() as Array<{ id: number; content: string }>;
+        const upd = db.prepare('UPDATE messages SET search_text = ? WHERE id = ?');
+        db.exec('BEGIN');
+        try {
+          for (const m of rows) { upd.run(searchTextOf(String(m.content ?? '')), m.id); refreshed++; }
+          db.exec('COMMIT');
+        } catch (e) { db.exec('ROLLBACK'); throw e; }
+        db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
+      }
+      if (opts.json) {
+        console.log(JSON.stringify({ version: EXTRACT_VERSION, recomputed: total, searchTextRefreshed: refreshed }, null, 2));
+        return;
+      }
+      if (total === 0 && refreshed === 0) {
+        console.log(pc.dim(`已是最新提取规则 v${EXTRACT_VERSION}，无需重算${opts.searchText ? '（也未指定 --search-text）' : ''}`));
+        return;
+      }
+      if (total > 0) console.log(`✅ 重算 ${total} 个会话到提取规则 v${EXTRACT_VERSION}`);
+      if (refreshed > 0) console.log(`✅ 刷新 ${refreshed} 条消息的 search_text，FTS 索引已重建`);
     } finally {
       db.close();
     }
   });
 
 // pin/unpin 共用的置顶入口（实现在 store/db.ts：LIKE 预筛 + JSON.parse 改 pinned 写回）
-async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: boolean }): Promise<void> {  const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
+async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: boolean }): Promise<void> {
+  const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
   const { loadConfig } = await import('../shared/config.js');
   const { setDecisionPinned } = await import('../store/db.js');
   const root = requireRoot();

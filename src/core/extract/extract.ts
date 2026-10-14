@@ -339,11 +339,34 @@ const INJECTED_BLOCKS: RegExp[] = [
 // 匹配任意大小写，`AGENTS.md` 这类大写名因此中招。
 const SKILL_CATALOG_LINE = /^[ \t]*[-*+]\s*`[a-z0-9]+(?:-[a-z0-9]+)+`\s*[:：][^\n]*/gm
 
+// [fork 1014 深夜] 无标签注入：客户端把 XML 外壳**剥掉之后**才把系统上下文存进
+// user 消息，所以上面那组成对标签规则一条都匹配不到。这是现有清洗的真实盲区。
+//
+// 实测 D:\agent1super（43681 条消息）：
+//   · 4361 条带着同一句 TodoWrite 提醒，占全部 search_text 的 **18.7%**（2.9MB/15.5MB）
+//   · topics 4578 条里有 **488 条（10.7%）**是它的英文虚词残片
+//   · decisions 未被污染（该文本不含决策触发词）——所以这个盲区此前的症状是
+//     "索引胀大 + topics 变脏"，而不是简报出错，因此一直没被发现
+//
+// 判据：客户端每轮生成的样板句，逐字固定，与用户写的内容无关。段落间以空行分隔，
+// 故用 `(?:\n(?!\n)[^\n]*)*` 吃掉续行但不在空行处越过——宁可少剥，不能吃掉用户真话。
+// ⚠️ 故意**不剥** "Here are the existing contents of your todo list: […]"——
+// 那是用户真实的待办状态，是信息不是样板（覆盖度盘点：506 条消息带计划类内容，
+// 而它正是这些内容的载体）。
+const TAGLESS_INJECTED: RegExp[] = [
+  /The TodoWrite tool hasn't been used recently\.[\s\S]*?ignore if not applicable\.?/gi,
+  /Current runtime context\. This snapshot supersedes earlier runtime-context snapshots\.(?:\n(?!\n)[^\n]*)*/gi,
+  /Current DSH file policy:(?:\n(?!\n)[^\n]*)*/gi,
+  /Approval policy: ask\.(?:\n(?!\n)[^\n]*)*/gi,
+  /The active session goal is paused\.(?:\n(?!\n)[^\n]*)*/gi,
+]
+
 export function stripInjected(text: string): string {
   if (!text || typeof text !== 'string') return text
   let out = text
   for (const re of INJECTED_BLOCKS) out = out.replace(re, '\n')
   out = out.replace(SKILL_CATALOG_LINE, '\n')
+  for (const re of TAGLESS_INJECTED) out = out.replace(re, '\n')
   return out
 }
 
@@ -362,6 +385,9 @@ export function looksInjected(text: string): boolean {
   for (const re of INJECTED_BLOCKS) { re.lastIndex = 0; if (re.test(text)) return true }
   SKILL_CATALOG_LINE.lastIndex = 0
   if (SKILL_CATALOG_LINE.test(text)) return true
+  // [fork 1014 深夜] TAGLESS_INJECTED 也必须同源——stripInjected 剥得掉、这里检不出的话，
+  // 存量数据里的同类污染 doctor 就看不见（正是这个盲区让它活了这么久）。
+  for (const re of TAGLESS_INJECTED) { re.lastIndex = 0; if (re.test(text)) return true }
   return false
 }
 

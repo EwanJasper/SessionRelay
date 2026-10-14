@@ -29,8 +29,14 @@ import type { Msg } from '../core/extract/extract.js';
  *        kind:'negative'——实测切换/放弃族早已占决策总量 43.6% 但一律无标记，简报里
  *        "改用 Y"与"采用 Y"不可分辨。失败判定族（不可行/不装…）暂不抽取：自由文本规则
  *        实测精度仅 75%，灌噪声不划算，见 ADR-001 Option B 的重新评估条件。
+ *  8 → 1014 无标签注入剥离。客户端把 XML 外壳剥掉后才把系统上下文存进 user 消息，
+ *        成对标签规则一条都匹配不到——实测 D:\agent1super 4361 条消息带同一句 TodoWrite
+ *        提醒，占全部 search_text 的 18.7%、topics 里 10.7% 是它的英文虚词残片。
+ *        症状是"索引胀大 + topics 变脏"而非简报出错，所以这个盲区一直没被发现。
+ *        ⚠️ 只重算不清 search_text：那是消息插入时写的派生列，要清得走 rebuild 或
+ *        定向刷新，见 README。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 7;
+export const EXTRACT_VERSION = 8;
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;

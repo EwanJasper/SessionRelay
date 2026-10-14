@@ -392,3 +392,45 @@ describe('extractDecisions：kind 字段随决策一起产出（ADR-001）', () 
     expect(d[0].kind).toBe('decision');
   });
 });
+
+// ── 1014 深夜：无标签注入的清洗盲区 ──
+// 客户端把 XML 外壳剥掉之后才把系统上下文存进 user 消息，所以成对标签规则一条都匹配不到。
+// 实测 D:\agent1super：4361 条消息带同一句 TodoWrite 提醒，占全部 search_text 的 18.7%，
+// topics 里 10.7% 是它的英文虚词残片。这个盲区的症状是"索引胀大 + topics 变脏"而不是
+// 简报出错，所以一直没被发现。
+describe('stripInjected：无标签注入（客户端剥掉外壳后的系统上下文）', () => {
+  const TODO = "The TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. Also consider cleaning up the todo list if has become stale. Only use it if it's relevant to the current work. This is just a gentle reminder - ignore if not applicable.";
+
+  it('剥掉整段 TodoWrite 提醒', () => {
+    expect(stripInjected(TODO).trim()).toBe('');
+  });
+  it('剥掉提醒但保留同一消息里的用户真话', () => {
+    const mixed = TODO + '\n\n我们决定改用 pwsh 直查 SQL';
+    const out = stripInjected(mixed);
+    expect(out).not.toMatch(/TodoWrite/);
+    expect(out).toContain('我们决定改用 pwsh 直查 SQL');
+  });
+  it('剥掉运行时上下文快照三段', () => {
+    const ctx = 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: "D:\agent1super".\n\nApproval policy: ask. Operations that require approval may ask through the configured answerers.\n\n用户真话在这里';
+    const out = stripInjected(ctx);
+    expect(out).not.toMatch(/Current runtime context/);
+    expect(out).not.toMatch(/Current DSH file policy/);
+    expect(out).not.toMatch(/Approval policy/);
+    expect(out).toContain('用户真话在这里');
+  });
+  it('剥掉会话目标暂停提示', () => {
+    const out = stripInjected('The active session goal is paused. Do not continue pursuing it unless the user resumes or replaces the goal.\n\n继续干活');
+    expect(out).not.toMatch(/session goal is paused/);
+    expect(out).toContain('继续干活');
+  });
+  it('不剥用户的待办清单——那是信息不是样板', () => {
+    const todo = 'Here are the existing contents of your todo list:\n\n[1. [in_progress] preflight 环境检查\n2. [pending] 安装缺失组件';
+    expect(stripInjected(todo)).toContain('preflight 环境检查');
+  });
+  it('looksInjected 与 stripInjected 同源：存量污染检得出', () => {
+    expect(looksInjected(TODO)).toBe(true);
+    expect(looksInjected('Current runtime context. This snapshot supersedes earlier runtime-context snapshots.')).toBe(true);
+    // 用户真话不能误报
+    expect(looksInjected('我们决定改用 pwsh 直查 SQL，拿到 registry 原始 packument')).toBe(false);
+  });
+});
