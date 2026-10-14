@@ -7,12 +7,51 @@ import { segment } from '../core/tokenize/tokenizer.js';
 import { loadConfig, claudeProjectsDir, zcodeDbPath } from '../shared/config.js';
 import { dbFile, findRelayRoot, ignoreFile } from '../shared/paths.js';
 import { isDaemonAlive } from '../shared/lock.js';
+import { looksInjected } from '../core/extract/extract.js';
+import { EXTRACT_VERSION, extractVersionOf } from '../capture/recompute.js';
 import { registryCandidates } from '../shared/registry.js';
 import { watchServiceStatus } from './watch.js';
+import { detectSources } from './init.js';
 import { pc } from './ui.js';
 
 type Level = 'ok' | 'warn' | 'err';
 interface Check { name: string; level: Level; detail: string; fix?: string }
+
+/** 收集本机技能/规则文档的正文行（去空白），供"决策是否为文档原文残片"比对用。
+ *  只扫常见位置，找不到就返回空数组——比对是增强项，不是必需项。 */
+function collectDocLines(): string[] {
+  const home = os.homedir();
+  const roots = [
+    path.join(home, '.dsh', 'skills'),
+    path.join(home, '.zcode', 'skills'),
+    path.join(home, '.claude', 'skills'),
+  ];
+  const out: string[] = [];
+  // ⚠️ 行数上限必须给足：原为 20000，而本机技能目录一行不落正好 21653 行——
+  // 超限后 walk 直接 return，后扫的技能（steel-manning 等）整目录被跳过，
+  // doc-echo 对它们的残片污染永久假阴性（安全网有洞比没有更坏）。技能文档总共
+  // 就几 MB，doctor 又是按需命令，给 200000 行（约 10 倍余量）毫无负担。
+  const walk = (dir: string, depth: number) => {
+    if (depth > 3 || out.length > 200000) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full, depth + 1); continue; }
+      if (!/\.(md|txt)$/i.test(e.name)) continue;
+      try {
+        const text = fs.readFileSync(full, 'utf8');
+        const lines = text.split(/\r?\n/);
+        for (const line of lines) {
+          const t = line.replace(/\s+/g, '');
+          if (t.length >= 8) out.push(t);
+        }
+      } catch { /* 读不了跳过 */ }
+    }
+  };
+  for (const r of roots) { if (fs.existsSync(r)) walk(r, 0); }
+  return out;
+}
 
 export async function cmdDoctor(): Promise<void> {
   const checks: Check[] = [];
@@ -176,6 +215,105 @@ export async function cmdDoctor(): Promise<void> {
     } else {
       checks.push(c('语义检索', 'warn', '未启用（可选增强：换词查询也能命中，srelay semantic enable）'));
     }
+  }
+
+  // ═══ 记忆质量体检（2026-10-14 加）═══
+  // 这一类故障全是**静默**的：库建着、守护活着、status 显示 running，但简报里全是
+  // 技能目录垃圾 / 同一条决策重复 N 次 / 历史数据从没按新规则重算。所以单独列出来。
+  if (root) {
+    // ① 采集源覆盖：本机装着某源但 sources 里没有它 → 该源会话永远采不进去
+    // 检测统一走 detectSources()（与 init 同一份事实源），换机器/换目录结构只需改那一处，
+    // 不在此复制各源的目录知识（此前硬编码 ~/.dsh/sessions，DSH 之外的源漏检）
+    // ⚠️ 必须尊重 capture.ignore_sources：用户可能出于隐私**故意**不采集某个源
+    // （红队 1014 🟠8：装着 Trae 但不想采，旧逻辑直接 ❌ + 退出码 1，修复建议还是
+    // "补进 sources"——把用户的有意选择当成故障报，比不报更烦）。
+    try {
+      const configured = cfg?.capture?.sources;
+      const src: string[] = Array.isArray(configured) ? configured : [];
+      const ignored: string[] = Array.isArray(cfg?.capture?.ignore_sources) ? cfg!.capture!.ignore_sources! : [];
+      const installed = detectSources().filter(s => s.installed).map(s => s.id);
+      const missing = installed.filter(id => !src.includes(id) && !ignored.includes(id));
+      if (missing.length > 0) {
+        checks.push(c('采集源覆盖', 'err',
+          `capture.sources=[${src.join(',') || '空'}] 缺 ${missing.join(', ')}（本机已安装但未采集，其会话不会入库）`,
+          `把 ${missing.join(', ')} 补进 config.json 的 capture.sources；若故意不采，写进 capture.ignore_sources`));
+      } else if (installed.length === 0) {
+        checks.push(c('采集源覆盖', 'ok', `本机未检测到已安装的采集源（capture.sources=[${src.join(',') || '空'}]）`));
+      } else {
+        const excl = ignored.filter(id => installed.includes(id));
+        checks.push(c('采集源覆盖', 'ok',
+          `sources=[${src.join(',')}]${excl.length ? `（已排除 ${excl.join(', ')}）` : ''}`));
+      }
+    } catch (e) { checks.push(c('采集源覆盖', 'warn', (e as Error).message)); }
+
+    // ② 提取版本：库落后于当前规则 → 历史数据还是旧规则算的
+    try {
+      const db0 = new Database(dbFile(root), { readonly: true });
+      const v = extractVersionOf(db0);
+      db0.close();
+      checks.push(v >= EXTRACT_VERSION
+        ? c('提取规则版本', 'ok', `v${v}（当前 v${EXTRACT_VERSION}）`)
+        : c('提取规则版本', 'warn', `库是 v${v}，当前规则 v${EXTRACT_VERSION}`, '等守护的重算周期（默认 6 小时）跑完，或手动触发'));
+    } catch (e) { checks.push(c('提取规则版本', 'warn', (e as Error).message)); }
+
+    // ③ 记忆污染与重复：直接量简报会看到什么
+    try {
+      const db = new Database(dbFile(root), { readonly: true });
+      const rows = db.prepare(`SELECT decisions, key_questions FROM sessions
+        WHERE (decisions IS NOT NULL OR key_questions IS NOT NULL)
+          AND (origin IS NULL OR origin != 'workflow')`).all() as Array<{ decisions: string | null; key_questions: string | null }>;
+      let decTotal = 0, decInjected = 0, decDocEcho = 0, qTotal = 0, qInjected = 0;
+      const seen = new Set<string>();
+      let decDup = 0;
+      // 残片污染的兜底判定：决策正文是否为某个 SKILL.md / AGENTS.md 的**原文子串**。
+      // 为什么需要它：v6 剥的是"成对注入块 + 技能目录行"，但历史上已入库的污染决策
+      // 往往只剩无标签残片（"再决定接受、修订或坚持"）——looksInjected 与 stripInjected
+      // 严格同源后检不出这类（红队 1014 🟠4 假阴性）。doctor 是低频按需命令，扫一遍
+      // 技能目录（几十个文件）完全负担得起，换来"存量污染可见"。
+      const docLines = collectDocLines();
+      const isDocEcho = (text: unknown) => {
+        const t = String(text ?? '').replace(/\s+/g, '');
+        if (t.length < 8) return false;
+        for (const line of docLines) if (line.includes(t)) return true;
+        return false;
+      };
+      for (const r of rows) {
+        try {
+          for (const d of JSON.parse(r.decisions ?? '[]')) {
+            decTotal++;
+            const txt = String(d.text ?? '');
+            if (looksInjected(txt)) decInjected++;
+            else if (isDocEcho(txt)) decDocEcho++;
+            const k = txt.replace(/\s+/g, '').slice(0, 40);
+            if (k) { if (seen.has(k)) decDup++; else seen.add(k); }
+          }
+        } catch { /* 坏行跳过 */ }
+        try {
+          for (const q of JSON.parse(r.key_questions ?? '[]')) {
+            if (!q.unresolved) continue;
+            qTotal++;
+            if (looksInjected(String(q.q ?? ''))) qInjected++;
+          }
+        } catch { /* 坏行跳过 */ }
+      }
+      db.close();
+      const injRate = decTotal ? decInjected / decTotal : 0;
+      const dupRate = decTotal ? decDup / decTotal : 0;
+      const polluted = decInjected + decDocEcho;
+      const pollRate = decTotal ? polluted / decTotal : 0;
+      checks.push(pollRate > 0.02
+        ? c('决策注入污染', 'err',
+            `${polluted}/${decTotal} 条决策是注入内容（${(pollRate * 100).toFixed(1)}%：标记残片 ${decInjected} + 文档回显 ${decDocEcho}）`,
+            decDocEcho > 0 ? '文档回显=决策正文是某 SKILL.md/AGENTS.md 的原文子串；等重算周期（v6 起剥注入块），或 srelay rebuild 全量重建' : '等重算周期跑完（v6 起会剥掉注入块）；或先 srelay sync 触发')
+        : c('决策注入污染', 'ok', decTotal ? `${polluted}/${decTotal} 条` : '暂无决策'));
+      checks.push(qInjected > 0
+        ? c('未决注入污染', 'warn', `${qInjected}/${qTotal} 条未决是注入内容`, '等重算周期跑完')
+        : c('未决注入污染', 'ok', qTotal ? `0/${qTotal} 条` : '暂无未决'));
+      // 重复不报 err：listDecisions 已在查询侧去重，这里只是让人知道存量
+      checks.push(dupRate > 0.15
+        ? c('决策重复率', 'warn', `${decDup}/${decTotal} 条重复（${(dupRate * 100).toFixed(0)}%）`, '查询侧已自动去重，不影响简报；想清库存可 rebuild')
+        : c('决策重复率', 'ok', decTotal ? `${decDup}/${decTotal} 条（查询侧已去重）` : '暂无决策'));
+    } catch (e) { checks.push(c('记忆质量', 'warn', (e as Error).message)); }
   }
 
   for (const k of checks) {

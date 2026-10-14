@@ -13,6 +13,9 @@ export interface RelayConfig {
     idle_threshold_min: number;
     cooldown_hours: number;
     sources: string[];
+    /** 故意不采集的源 id（隐私/不需要）。doctor 的"采集源覆盖"检查会跳过它们，
+     *  不会把用户的有意选择报成故障。 */
+    ignore_sources?: string[];
     /** 覆盖各源的默认存储路径（自定义安装位置时设置）。支持环境变量：CLAUDE_PROJECTS_DIR / ZCODE_DB_PATH / CODEX_DIR / TRAE_DIR / DSH_SESSIONS_DIR */
     claude_projects_dir?: string;
     zcode_db_path?: string;
@@ -43,6 +46,7 @@ export function defaultConfig(): RelayConfig {
   return {
     version: '1.0',
     capture: {
+      ignore_sources: [],
       mode: 'full',
       idle_threshold_min: 10,
       cooldown_hours: 6,

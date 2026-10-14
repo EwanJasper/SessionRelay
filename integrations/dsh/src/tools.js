@@ -6,9 +6,32 @@
 // 2. output schema 必须显式声明 additionalProperties: false。
 // 3. 绝不起 MCP serve 子进程，底层通过 cli.js 瞬态调用 CLI 命令。
 // 4. srelay_bind_project 必须是两段式：模型调用只提议（propose），绝不直接更改生效项目。
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { defineTool } from './define-tool.js'
 import { execSrelay, clip } from './cli.js'
 import { getActiveProject, proposeProject, confirmProject, cancelProposal } from './state.js'
+import { isInternalDir } from '../project-resolve.mjs'
+
+/**
+ * 采集源校正：本机装着 DSH 时，config 的 capture.sources 必须含 'dsh'。
+ * `srelay init --yes` 靠 detectSources() 自动探测，而 dsh 探测项是我们 fork 加的——
+ * 上游原版或经 npx 拉到的那份没有它，建出的库 sources 只有 zcode/codex，结果是
+ * 「库建好了但 DSH 会话永远采不进去，简报永远空，且没有任何报错」。
+ */
+function ensureDshSource(root) {
+  try {
+    if (!existsSync(join(homedir(), '.dsh', 'sessions'))) return
+    const cfg = join(root, '.sessionrelay', 'config.json')
+    if (!existsSync(cfg)) return
+    const j = JSON.parse(readFileSync(cfg, 'utf8'))
+    const src = j?.capture?.sources
+    if (!Array.isArray(src) || src.includes('dsh')) return
+    src.push('dsh')
+    writeFileSync(cfg, JSON.stringify(j, null, 2))
+  } catch { /* 校正失败不阻塞：库已建成，下轮采集时再看 */ }
+}
 
 /** 标准工具返回输出契约，与 dsh-reach 一致 */
 const resultSchema = {
@@ -210,6 +233,72 @@ export const bindProjectTool = defineTool({
       ok: true,
       payload: proposalResult.message,
       error: '',
+    }
+  },
+})
+
+/**
+ * 7. srelay_init —— 为当前项目建立记忆库
+ *
+ * 为什么需要它：「尚未接入」那条简报以前写着"对我说一声'接入'，我再执行 srelay init"，
+ * 但插件压根没有能建库的工具——那句话是空头承诺，用户说了"接入"模型也无从下手
+ * （只能猜着去 shell 里敲命令，且不一定找得到 CLI）。本工具把这条断点补上。
+ *
+ * 为什么不需要两段式：建库的代价极低且**可逆**（只建一个 .sessionrelay/ 目录，
+ * 删掉就彻底消失），与"绑定到已有库"（写错库不可逆）是完全不同的风险等级。
+ * 所以这里是单段执行，但返回值必须说清楚建在哪、下一步是什么。
+ */
+export const initProjectTool = defineTool({
+  name: 'srelay_init',
+  description: '为当前项目建立 SessionRelay 记忆库（可逆：删掉 .sessionrelay 目录即恢复原状）。当项目尚未接入，或用户明确说"接入"时使用。已建库的项目调用会直接返回无需重复建立。',
+  parameters: {
+    projectPath: { type: 'string', description: '项目绝对路径（可选；缺省取当前会话的工作目录）' },
+  },
+  output: {
+    schema: resultSchema,
+    render: (_args, value) => [{
+      type: 'text',
+      text: value.ok ? value.payload : `建立记忆库失败：${value.error}`,
+    }],
+  },
+  async execute(args, exec) {
+    // 目标路径优先级：显式参数 > agent 的 cwd（与简报同一来源）> 报错要求显式传
+    let root = String(args?.projectPath ?? '').trim()
+    if (!root) {
+      const cwd = exec?.agent?.session?.header?.cwd
+      if (typeof cwd === 'string' && cwd.trim()) root = cwd.trim()
+    }
+    if (!root) {
+      return { ok: false, payload: '', error: '无法确定项目路径：请显式传入 projectPath（项目绝对路径）' }
+    }
+
+    // 黑名单：临时目录 / DSH 自身 / npm 全局 / 盘符根，一律拒绝
+    // （与自动接入共用同一份 isInternalDir，规则只有一处，不会两边漂移）
+    if (isInternalDir(root)) {
+      return { ok: false, payload: '', error: `拒绝在 ${root} 建立记忆库：该目录属于临时目录或工具自身的安装/配置位置` }
+    }
+
+    // 采集源校正放在"已建库"早退之前：历史遗留的坏配置（sources 缺 dsh）也要能修好，
+    // 否则调用方看到"无需重复建立"就走了，坏配置一直留着。
+    ensureDshSource(root)
+
+    const dbFile = join(root, '.sessionrelay', 'relay.sqlite')
+    if (existsSync(dbFile)) {
+      return { ok: true, payload: `项目已有记忆库，无需重复建立：${root}` }
+    }
+
+    // --backfill none：默认 30 天回填实测 1050ms，裸 init 154ms；建库这一步不需要历史
+    const res = await execSrelay(['init', '--yes', '--backfill', 'none'], { cwd: root, timeoutMs: 30000 })
+    if (!res.ok) {
+      return { ok: false, payload: '', error: (res.stderr || res.stdout || 'srelay init 执行失败').slice(0, 300) }
+    }
+    // 建库后再确认一次：init 成功但库没落盘的情况必须报出来，不能假装成功
+    if (!existsSync(dbFile)) {
+      return { ok: false, payload: '', error: `srelay init 返回成功但未找到 ${dbFile}` }
+    }
+    return {
+      ok: true,
+      payload: `已为 ${root} 建立记忆库。下一轮起，本项目的决策与未决问题会自动出现在系统提示里。`,
     }
   },
 })

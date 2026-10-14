@@ -16,14 +16,17 @@
 //     重算只能基于残余消息 → 归档会话的脏数据不会被这机制清掉，那需要 rebuild。
 //   - 限流 + 可中断：每批 N 个会话，单批耗时计入守护周期压力；失败不抛，下周期继续。
 import type { DB } from '../store/db.js';
-import { extractDecisions, extractQuestions, extractTopics, summaryRule } from '../core/extract/extract.js';
+import { summaryRule } from '../core/extract/extract.js';
+import { extractForWrite } from '../store/db.js';
 import type { Msg } from '../core/extract/extract.js';
 
 /** 提取规则族版本。任何会影响 decisions/questions/topics 语义的改动都必须递增。
  *  3 → 1013 转述/引用过滤 + 词中误命中守卫（审计 P4）。
  *  5 → 1014 未决问题显示归一化（口语填充压缩，保留真疑问）。
+ *  6 → 1014 剥注入块（<system-reminder> 等塞进 user 消息的系统上下文，实测把
+ *        技能说明挖成了决策，一条重复 24 次）+ 决策查询跨会话去重。
  *  递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 5; // v5 = 1014 未决问题显示归一化（末句定位 + 口语压缩）
+export const EXTRACT_VERSION = 6; // v6 = 1014 剥注入块 + 决策跨会话去重
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;
@@ -64,11 +67,16 @@ function messagesOf(db: DB, sessionId: string): Msg[] {
 
 /** 重算单个会话的提取字段（写回同一行，不动消息本体）。 */
 function recomputeSession(db: DB, s: { id: string; title: string | null }): void {
+  // ⚠️ 必须先过 sanitizeMsgs：提取有多个入口，漏掉这一步，注入块就会从重算这条路
+  // 重新污染库（1014 实测：重算跑了 85 个会话数据一点没变，就是因为这里绕过了
+  // extractMessages 里的清洗）。
   const msgs = messagesOf(db, s.id);
   if (msgs.length === 0) return;
-  const decisions = extractDecisions(msgs);
-  const questions = extractQuestions(msgs);
-  const topics = extractTopics(msgs);
+  // ⚠️ 必须走 extractForWrite：它一次做三件事——剥注入块、提取、并回既有 pinned。
+  // 本路径曾自己调 extractDecisions 又自己 JSON.stringify 写列，结果用户置顶的决策
+  // 在每次版本升级（v5→v6、将来的 v7…）时被全库静默擦掉（红队 1014 🔴，且本机
+  // 实测正在发生）。sanitizeMsgs 也已内含，不必在外部再剥一次。
+  const { decisions, questions, topics } = extractForWrite(db, s.id, msgs);
   const summary = summaryRule(s.title, {
     files: [], topics, decisions, questions, codeBlockCount: 0, keyExchanges: [],
   }, { messageCount: msgs.length, source: 'recompute', firstAt: new Date(0).toISOString(), lastAt: null });
@@ -85,9 +93,12 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
 
 /** 剩余待重算会话数（版本已跟上时为 0）。 */
 function remainingCount(db: DB): number {
+  // 三个状态都要：confirmed 已定案、pending/pending_end 是判定链中间态（闲置>10min 等
+  // 6h 冷却）。此前只算 confirmed+pending，漏掉 pending_end——实测 5 个会话的污染决策
+  // 因此永远重算不掉（1014）。已归档的 cleanup_at 非空/message_count=0，正确排除。
   return (db.prepare(
     `SELECT COUNT(*) AS n FROM sessions s
-     WHERE s.state IN ('confirmed', 'pending') AND s.cleanup_at IS NULL AND s.message_count > 0`,
+     WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0`,
   ).get() as { n: number }).n;
 }
 
@@ -111,7 +122,7 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
   const skip = row?.progress ?? 0;
   const todo = db.prepare(
     `SELECT s.id, s.title FROM sessions s
-     WHERE s.state IN ('confirmed', 'pending') AND s.cleanup_at IS NULL AND s.message_count > 0
+     WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0
      ORDER BY s.confirmed_at DESC, s.id
      LIMIT ? OFFSET ?`,
   ).all(batch, skip) as Array<{ id: string; title: string | null }>;

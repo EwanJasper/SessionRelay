@@ -156,8 +156,7 @@ Then `pnpm install` in the profile directory. The plugin needs
 
 ## Development notes
 
-Four things bit us during development and are worth knowing before editing:
-
+Seven things bit us during development and are worth knowing before editing:
 1. **`apply` must be synchronous.** Cordis calls `apply` and expects a fiber;
    an `async apply` returns a Promise, and DSH reports
    `failed to import` and silently skips the plugin. Resolve optional peers with
@@ -180,13 +179,44 @@ Four things bit us during development and are worth knowing before editing:
    (that is exactly how it survived one round of "verified offline" testing).
    Also build the path in one step; `dirname(fileURLToPath(url))` followed by
    `join(..., 'dist')` yields `vendor/dist/dist/...`.
+6. **Windows path literals need doubled backslashes.** `'E:\music player'`
+   silently becomes `E:music player` — `\d`, `\c`, `\S` are consumed as escape
+   sequences, leaving a separator-less *drive-relative* string that
+   `path.resolve` anchors to the **process cwd**. Six such literals in
+   `selftest.mjs` made one assertion pass in the author copy and fail in the
+   integrations copy, purely because of which directory the test ran from.
+   Section 0 of `selftest.mjs` now asserts every literal still looks like `X:\`
+   and still exists on disk, so a regression turns the suite red first.
+7. **`node:sqlite` must be loaded lazily.** It exists only on Node ≥ 22.5 and
+   still needs `--experimental-sqlite` on 22.x, while `engines` allows
+   `^22.19.0`. A top-level `import { DatabaseSync } from 'node:sqlite'` makes the
+   **whole plugin** fail to load on Node 22 (no brief at all, no error) instead
+   of just disabling the fast path. Use `createRequire` inside a `try/catch` —
+   see `src/brief-sql.mjs`.
+
+## Data path: SQL first, CLI as fallback
+
+Briefs are read straight out of `relay.sqlite` with the built-in `node:sqlite`
+module (`src/brief-sql.mjs`) — no subprocess, no dependency, ~5 ms cold. The
+queries, ordering, dedup and freshness windows are copied verbatim from
+SessionRelay's `listDecisions`/`listUnresolved` and `cli/meta.ts`; **if you
+change those, change `brief-sql.mjs` too**, or the two paths will drift apart.
+
+`selftest.mjs` section 8b asserts the two paths agree field-for-field on a real
+database, and 8c additionally asserts the SQL path is actually taken: the CLI
+fallback measures ~336 ms against SQL's ~5 ms, and both must render a
+byte-identical brief.
+
+The CLI subprocess remains as a fallback for: Node without `node:sqlite`, a
+database schema older than the plugin, or a WAL `-shm` that cannot be written.
+Force it for comparison with `SRELAY_BRIEF_FORCE_CLI=1`.
 
 ## Compatibility
 
 | Component | Tested | Notes |
 |---|---|---|
 | DeepSeek Harness | `0.2.0-rc.2` | The plugin's `text` provider depends on `systemPrompt.section()` and reads `assembly.agent.session.header.cwd`. Both are internal APIs — a DSH minor bump can change them, and the failure mode is **silent** (no brief, no error). |
-| Node.js | `^22.19.0 \|\| >=24.0.0` | Declared in `engines`, aligned with DSH's own constraint. |
+| Node.js | `^22.19.0 \|\| >=24.0.0` | Declared in `engines`, aligned with DSH's own constraint. The fast SQL path needs ≥ 22.5 (flag-free on 24); older runtimes fall back to the CLI subprocess and still work. |
 | SessionRelay | `0.5.1`+ (fork builds included) | Vendored by default; a global install is only a fallback. |
 
 **If the brief stops appearing after a DSH upgrade**, check in this order:

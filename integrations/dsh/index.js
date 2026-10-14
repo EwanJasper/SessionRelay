@@ -30,17 +30,27 @@
 //   · 冷缓存（本进程第一次见到该 cwd）允许一次**有界**同步预热，否则首轮永远没记忆
 //   · 诚实代价：预热失败时该轮无简报，下一轮才有
 //
+// ═══ 取数双通道（2026-10-14 第二轮修正）═══
+// 上一条的"预热"仍然要 spawn 两个 node 子进程，最坏 310ms。现在首选**直查 SQL**
+// （src/brief-sql.mjs，node:sqlite 内置、零依赖、毫秒级），CLI 子进程降级为兜底：
+//   · 实测三个真实库 200 条决策 + 全部未决，与 CLI --json 逐字段零差异
+//   · SQL 不可用（Node<22.5 / 库 schema 比插件旧 / WAL 只读打不开）→ 自动回落 CLI，
+//     行为与本改动之前逐字节一致
+//   · 直查只读开库，绝不与守护进程争写锁
+//
 // ═══ 已知未实测项 ═══
 // cwd 字段尚未在真实 DSH 组装中打过日志（启动 DSH 不触发组装，需真实一轮对话）。
 // 已用「cwd 优先 + slug 回落」防御：取不到时行为与旧版一致。
 import { execFile, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
-import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool } from './src/tools.js'
+import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
+import { queryBriefData, sqlChannelAvailable } from './src/brief-sql.mjs'
 
 export const name = 'dsh-srelay-brief'
 export const inject = ['systemPrompt', 'tools']
@@ -77,17 +87,27 @@ function runSrelay(args, root, timeoutMs) {
   })
 }
 
-function parseItems(raw, key, max) {
-  if (!raw) return []
-  let arr
-  try {
-    const j = JSON.parse(raw)
-    arr = j[key] ?? j.unresolved ?? []
-  } catch {
-    return raw.split(/\r?\n/).map(s => s.trim())
-      .filter(s => s && !s.startsWith('(') && !/暂无/.test(s))
-      .slice(0, max).map(s => `- ${s.slice(0, 90)}`)
+// ── 取数双通道 ──
+// ① 直查 SQL（node:sqlite）：首选。零子进程、零依赖、毫秒级。
+//    实测三个真实库（E:\music player 59.5MB / E:\mc整合包 / D:\agent1super），
+//    200 条决策 + 全部未决，与 CLI --json 逐字段零差异。
+// ② CLI 子进程：兜底。node:sqlite 不可用（Node < 22.5）、库 schema 比插件旧、
+//    WAL 只读打不开时自动回落，行为与本改动之前逐字节一致。
+// SRELAY_BRIEF_FORCE_CLI=1：诊断逃逸阀——SQL 通道一旦行为可疑，无需重装即可
+// 强制走旧路径对照（selftest 8c 用它证明两条路产出同一份简报）。
+const SQL_OK = sqlChannelAvailable() && !process.env.SRELAY_BRIEF_FORCE_CLI
+let sqlFallbackLogged = false
+
+function logSqlFallback(reason) {
+  if (sqlFallbackLogged) return
+  sqlFallbackLogged = true
+  if (process.env.SRELAY_BRIEF_DEBUG) {
+    console.error(`[dsh-srelay-brief] 直查 SQL 不可用（${reason}），回落 CLI 子进程`)
   }
+}
+
+/** 数组 → 简报条目（过滤/排序/截断）。两条取数通道共用，保证语义一致 */
+function itemsFromArray(arr, key, max) {
   if (!Array.isArray(arr)) return []
   const cutoff = Date.now() - FRESH_MS
   const fresh = arr
@@ -104,9 +124,52 @@ function parseItems(raw, key, max) {
       return !/^(报告|原文|上文|上述|文档|该文|这篇|那份)/.test(t.trim())
         && !/被当成|误命中|被判为|不是决策|纯垃圾|噪声|伪影/.test(t)
     })
-    .filter((d) => { const at = Date.parse(d.at ?? d.msgAt ?? ''); return !Number.isFinite(at) || at >= cutoff })
-  fresh.sort((a, b) => (Date.parse(b.at ?? b.msgAt ?? '') || 0) - (Date.parse(a.at ?? a.msgAt ?? '') || 0))
-  return fresh.slice(0, max).map(d => `- ${String(d.text ?? d.summary ?? d.q ?? d.title ?? JSON.stringify(d)).slice(0, 90)}`)
+    .filter((d) => {
+      // 置顶决策豁免新鲜度窗——置顶的意义就是"老决策也要进简报"。
+      // 三个月前拍板的架构选择若被 48h 窗滤掉，置顶就形同虚设。
+      if (key === 'decisions' && d.pinned === true) return true
+      const at = Date.parse(d.at ?? d.msgAt ?? '')
+      return !Number.isFinite(at) || at >= cutoff
+    })
+  // 置顶优先，同组内时间倒序。与 ZCode 侧 brief-shared.mjs 的 jsonItems 同规。
+  fresh.sort((a, b) => {
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
+    return (Date.parse(b.at ?? b.msgAt ?? '') || 0) - (Date.parse(a.at ?? a.msgAt ?? '') || 0)
+  })
+  return fresh.slice(0, max).map((d) => {
+    const text = String(d.text ?? d.summary ?? d.q ?? d.title ?? JSON.stringify(d)).slice(0, 90)
+    // 决策带日期：用户改过主意时，一眼看出哪条新哪条旧（此前简报完全不带时间，
+    // 新旧冲突只能靠猜）。未决问题不带——问句的时间属性弱，且省 token。
+    if (key !== 'decisions') return `- ${text}`
+    const at = Date.parse(d.at ?? d.msgAt ?? '')
+    if (!Number.isFinite(at)) return `- ${text}`
+    return `- [${new Date(at).toISOString().slice(5, 10)}] ${text}`
+  })
+}
+
+/** CLI --json 原文 → 条目。解析失败走文本兜底（仅旧版 unresolved 空输出人话时触达） */
+function parseItems(raw, key, max) {
+  if (!raw) return []
+  let j
+  try { j = JSON.parse(raw) } catch {
+    return raw.split(/\r?\n/).map(s => s.trim())
+      .filter(s => s && !s.startsWith('(') && !/暂无/.test(s))
+      .slice(0, max).map(s => `- ${s.slice(0, 90)}`)
+  }
+  return itemsFromArray(j?.[key] ?? j?.unresolved ?? [], key, max)
+}
+
+/** 直查 SQL 取简报条目。返回 null = 本通道不可用，调用方应回落 CLI */
+function sqlItems(root) {
+  if (!SQL_OK) return null
+  try {
+    const d = queryBriefData(root, 200)
+    if (!d) return null
+    return { dec: itemsFromArray(d.decisions, 'decisions', 2), unr: itemsFromArray(d.unresolved, 'unresolved', 2) }
+  } catch (e) {
+    logSqlFallback(e?.message ?? 'query threw')
+    return null
+  }
 }
 
 function renderBrief(root, dec, unr) {
@@ -121,8 +184,10 @@ function renderBrief(root, dec, unr) {
   return text
 }
 
-/** 真正碰子进程的地方：异步，跑在组装路径之外 */
+/** 真正取数的地方：异步，跑在组装路径之外。直查 SQL 优先，CLI 子进程兜底 */
 async function buildBrief(root) {
+  const sql = sqlItems(root)
+  if (sql) return renderBrief(root, sql.dec, sql.unr)
   const [decRaw, unrRaw] = await Promise.all([
     runSrelay(['decisions', '--limit', '200', '--json'], root, 4000),
     runSrelay(['unresolved', '--limit', '200', '--json'], root, 4000),
@@ -130,9 +195,11 @@ async function buildBrief(root) {
   return renderBrief(root, parseItems(decRaw, 'decisions', 2), parseItems(unrRaw, 'unresolved', 2))
 }
 
+// 自动接入中的提示。措辞必须中性——接入依据可能是 .git，也可能只是"用户在 DSH 里
+// 打开了这个文件夹"（放开规则后），写死"是 Git 仓库"会在非 git 文件夹上说谎。
 function autoInitingText(root) {
   return [
-    `【SessionRelay · 正在接入】检测到 ${path.basename(root)} 是 Git 仓库，正在自动建立记忆库。`,
+    `【SessionRelay · 正在接入】检测到工作区 ${path.basename(root)}，正在自动建立记忆库。`,
     '下一轮起，本项目的决策与未决问题会自动出现在这里。',
   ].join('\n')
 }
@@ -140,8 +207,8 @@ function autoInitingText(root) {
 function uninitializedText(root) {
   return [
     `【SessionRelay · 尚未接入】当前项目：${root}`,
-    '该目录还没有记忆库。需要时对我说一声"接入"，我再执行 srelay init。',
-    '（未接入前不会采集本项目会话，也不会记录决策。）',
+    '该目录还没有记忆库。说一声"接入"，或调用 srelay_init 工具即可建立。',
+    '（建库可逆：删掉 .sessionrelay 目录就恢复原状。未接入前不会采集本项目会话，也不会记录决策。）',
   ].join('\n')
 }
 
@@ -173,7 +240,35 @@ function autoInit(root) {
       if (err && process.env.SRELAY_BRIEF_DEBUG) {
         console.error(`[dsh-srelay-brief] 自动接入 ${root} 失败:`, String(stderr || err.message).slice(-200))
       }
+      // 不管 init 成败都校一次：采集源缺 dsh 是"库建好了却永远采不到 DSH 会话"的
+      // 静默故障，实测发生过一次（14:36 的库 sources 只有 zcode+codex）。
+      ensureDshSource(root)
     })
+}
+
+/**
+ * init 后校正采集源：本机装着 DSH（~/.dsh/sessions 存在）时，config 的
+ * capture.sources 必须含 'dsh'。
+ *
+ * 为什么需要这道校正：`srelay init --yes` 靠 detectSources() 自动探测，而探测项
+ * 是我们 fork 加的——上游原版、或经 npx 拉到的那份没有它，建出来的库 sources 就是
+ * ['zcode','codex']。库看着建成功了，但 DSH 会话永远采不进去，简报永远是空的，
+ * 而且没有任何报错。这种"静默半失效"比直接失败更难发现。
+ */
+function ensureDshSource(root) {
+  try {
+    if (!fs.existsSync(path.join(os.homedir(), '.dsh', 'sessions'))) return
+    const cfg = path.join(root, '.sessionrelay', 'config.json')
+    if (!fs.existsSync(cfg)) return
+    const j = JSON.parse(fs.readFileSync(cfg, 'utf8'))
+    const src = j?.capture?.sources
+    if (!Array.isArray(src) || src.includes('dsh')) return
+    src.push('dsh')
+    fs.writeFileSync(cfg, JSON.stringify(j, null, 2))
+    if (process.env.SRELAY_BRIEF_DEBUG) {
+      console.error(`[dsh-srelay-brief] 采集源校正：已把 dsh 补进 ${cfg}`)
+    }
+  } catch { /* 校正失败不阻塞会话，下轮再试 */ }
 }
 
 function resolveRoot(assembly) {
@@ -257,8 +352,16 @@ export function apply(ctx) {
         return hit.text
       }
 
-      // 冷缓存：一次**有界**同步预热。没有它，每个项目每进程的第一轮都没记忆。
+      // 冷缓存：先直查 SQL（毫秒级、无子进程、不占组装预算）。
+      // SQL 不可用（Node<22.5 / 库 schema 旧 / WAL 只读打不开）才做**有界**同步预热——
+      // 没有预热，每个项目每进程的第一轮都没记忆。
       try {
+        const sql = sqlItems(r.root)
+        if (sql) {
+          const text = renderBrief(r.root, sql.dec, sql.unr)
+          cache.set(r.root, { text, at: Date.now() })
+          return text
+        }
         const opts = { cwd: r.root, timeout: COLD_SYNC_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }
         const decRaw = execFileSync(NODE, [SRELAY, 'decisions', '--limit', '200', '--json'], opts)
         const unrRaw = execFileSync(NODE, [SRELAY, 'unresolved', '--limit', '200', '--json'], opts)
@@ -286,7 +389,7 @@ export function apply(ctx) {
   } catch { /* 非 DSH 环境：简报已注册，工具缺席 */ }
   if (typeof defineTool !== 'function') return
 
-  const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool]
+  const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool]
   for (const t of allTools) {
     try { ctx.tools.register(t) } catch { /* 单个失败不拖垮其他 */ }
   }

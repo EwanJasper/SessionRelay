@@ -214,6 +214,38 @@ program
     await cmdDecisions({ ...opts, limit: opts.limit ? Number(opts.limit) : undefined });
   });
 
+// pin/unpin 共用的置顶入口（实现在 store/db.ts：LIKE 预筛 + JSON.parse 改 pinned 写回）
+async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: boolean }): Promise<void> {
+  const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
+  const { loadConfig } = await import('../shared/config.js');
+  const { setDecisionPinned } = await import('../store/db.js');
+  const root = requireRoot();
+  const db = openRelayDb(root);
+  try {
+    const cfg = loadConfig(root);
+    const n = setDecisionPinned(db, cfg.identity.project_id ?? root, fragment, pinned);
+    if (opts.json) { console.log(JSON.stringify({ action: pinned ? 'pin' : 'unpin', fragment, updated: n }, null, 2)); return; }
+    if (n === 0) { console.log(pc.dim(`没有找到含「${fragment}」的决策`)); return; }
+    console.log(pinned
+      ? `📌 置顶了 ${n} 条决策（含「${fragment}」）——简报优先显示，即使它时间很老`
+      : `取消置顶 ${n} 条决策（含「${fragment}」）`);
+  } finally {
+    db.close();
+  }
+}
+
+program
+  .command('pin <text>')
+  .description('置顶决策：把文本含该片段的所有条目标为置顶（简报优先显示，即使时间很老）')
+  .option('--json', '机器格式')
+  .action(async (text: string, opts: { json?: boolean }) => { await cmdPinDecision(text, true, opts); });
+
+program
+  .command('unpin <text>')
+  .description('取消置顶：把文本含该片段的所有条目恢复原状')
+  .option('--json', '机器格式')
+  .action(async (text: string, opts: { json?: boolean }) => { await cmdPinDecision(text, false, opts); });
+
 program
   .command('unresolved')
   .description('列出未解决问题（启发式）')

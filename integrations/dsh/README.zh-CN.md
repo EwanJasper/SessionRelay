@@ -133,6 +133,22 @@ npm 发布包由 `package.json` 的 `files` 白名单显式列入 —— 因为 
 **6. 「启动不报错」不等于「工具注册对了」。**
 必须写 selftest 用 stub 收集器验证 `ctx.tools.register` 真的收到了东西。静默 `catch` 会让这类 bug 藏很久。
 
+**7. Windows 路径字面量的反斜杠必须双写。**
+`'E:\music player'` 会静默变成 `E:music player`——`\d`、`\c`、`\S` 被当成转义序列吃掉，剩下一个没有分隔符的**盘符相对路径**，`path.resolve` 会拿**进程 cwd** 当基准悄悄解析到别处。selftest 里六处中招，后果是同一条断言在作者副本通过、在集成副本失败，区别只在于测试从哪个目录跑。现在 selftest 第 0 节会断言每个字面量仍是 `X:\` 形态且目录真实存在，一退化就先红。
+
+**8. `node:sqlite` 必须懒加载。**
+它只在 Node ≥ 22.5 上有，且 22.x 还要 `--experimental-sqlite` 标志，而 `engines` 允许 `^22.19.0`。顶部静态 `import` 会让**整个插件**在 Node 22 上加载失败（简报全灭、不报错），而不只是关掉快速通道。用 `createRequire` + try/catch 取，见 `src/brief-sql.mjs`。
+
+---
+
+## 取数通道：SQL 优先，CLI 兜底
+
+简报直接用内置的 `node:sqlite` 读 `relay.sqlite`（`src/brief-sql.mjs`）——不起子进程、零依赖、冷路径约 5ms。查询条件、排序、去重、新鲜度窗口逐条复刻自核心库的 `listDecisions`/`listUnresolved` 与 `cli/meta.ts`；**改了核心库就必须同步改这个文件**，否则两条路会悄悄分叉。
+
+`selftest.mjs` 第 8b 节断言两条路在真实库上逐字段一致，8c 节进一步证明走的确实是 SQL（CLI 兜底实测约 336ms，SQL 约 5ms，且两者渲染出的简报正文必须逐字节相同）。
+
+CLI 子进程保留为兜底，用于：Node 没有 `node:sqlite`、库的 schema 比插件旧、WAL 的 `-shm` 不可写。想强制走旧路对照时设 `SRELAY_BRIEF_FORCE_CLI=1`。
+
 ---
 
 ## 致谢

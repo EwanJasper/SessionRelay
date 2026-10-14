@@ -415,7 +415,7 @@ export function getMessageRange(db: DB, sessionId: string, fromSeq: number, toSe
 
 // ───────────────────── Phase 2：confirmed 副作用与元数据查询 ─────────────────────
 
-import { extractMessages, extractDecisions, extractQuestions, summaryRule, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
+import { extractMessages, extractDecisions, extractQuestions, extractTopics, summaryRule, sanitizeMsgs, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
 
 export function getSessionMessages(db: DB, sessionId: string): Msg[] {
   return (db.prepare('SELECT role, content, seq_num, created_at FROM messages WHERE session_id = ? ORDER BY seq_num')
@@ -461,8 +461,12 @@ export function refreshDecisionsIncremental(db: DB, id: string): boolean {
   const lastSeq = existing.reduce((m, d) => Math.max(m, d.seq ?? 0), 0);
   const msgs = (db.prepare('SELECT role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? AND seq_num > ? ORDER BY seq_num')
     .all(id, lastSeq) as Msg[]).map((m) => ({ ...m, role: m.role === 'user' ? 'user' as const : 'assistant' as const }));
-  const newDecs = extractDecisions(msgs).filter((d) => !existing.some((e) => e.text === d.text));
-  const newQs = extractQuestions(msgs);
+  // ⚠️ 必须走 extractForWrite：这里曾直接调 extractDecisions(msgs)，没过 sanitizeMsgs，
+  // 技能目录垃圾从最高频的 pending 路径原样写回库（红队 1014 🔴）。且本路径每闲置
+  // 10 分钟必跑，是四个写入方里最勤快的那个。
+  const extracted = extractForWrite(db, id, msgs);
+  const newDecs = extracted.decisions.filter((d) => !existing.some((e) => e.text === d.text));
+  const newQs = extracted.questions;
   if (newDecs.length === 0 && newQs.length === 0) return true;
   const mergedDecs = [...existing, ...newDecs];
   let questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }> = [];
@@ -481,6 +485,50 @@ export function refreshDecisionsIncremental(db: DB, id: string): boolean {
   return true;
 }
 
+/** 读某会话现有的 pinned 决策文本集合（用于并回，防重写丢状态） */
+function readPinnedTexts(db: DB, id: string): Set<string> {
+  try {
+    const raw = (db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(id) as { decisions?: string | null } | undefined)?.decisions;
+    const set = new Set<string>();
+    for (const d of JSON.parse(raw ?? '[]') as Array<{ text?: string; pinned?: boolean }>) {
+      if (d?.pinned === true && typeof d.text === 'string') set.add(d.text);
+    }
+    return set;
+  } catch { return new Set(); }
+}
+
+/**
+ * ═══ 唯一的提取写入口 ═══
+ * 所有写 `decisions` / `key_questions` 列的路径**必须**走这里，不许自己调
+ * extractDecisions / extractQuestions。
+ *
+ * 病历（同一bug被红队两次抓到，1014）：
+ *   decisions 列有四个写入方——applyExtraction（confirm）、
+ *   refreshDecisionsIncremental（judge pending，最高频）、recomputeSession（版本重算）、
+ *   setDecisionPinned（pin/unpin）。1014 的"剥注入块"只补进 extractMessages 入口，
+ *   "pinned 并回"只补进 applyExtraction，于是：
+ *     · pending 路径（每次闲置>10min 必跑）原样把技能目录垃圾写回库
+ *     · 版本重算把用户置顶标记逐个静默擦掉
+ *   两次都是"改了一条路，另一条路继续坏"，且全程无报错。
+ *
+ * 本函数把三件事锁在一处：① sanitizeMsgs 剥注入块 ② 提取 ③ 并回既有 pinned。
+ * 新增写入方时，走这里就同时获得三件；自己调 extractDecisions 就会重新打开这个洞。
+ */
+export function extractForWrite(db: DB, id: string, msgs: Msg[]): {
+  decisions: ExtractedMeta['decisions'];
+  questions: ExtractedMeta['questions'];
+  topics: string[];
+} {
+  const clean = sanitizeMsgs(msgs);
+  const decisions = extractDecisions(clean);
+  const questions = extractQuestions(clean);
+  const topics = extractTopics(clean);
+  const pinned = readPinnedTexts(db, id);
+  const merged = pinned.size === 0 ? decisions
+    : decisions.map((d) => (pinned.has(d.text) ? { ...d, pinned: true } : d));
+  return { decisions: merged, questions, topics };
+}
+
 export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary: string): void {
   const s = getSession(db, id);
   // [fork 0924] meta_text 重写必须并回既有 user_tags（confirm/refresh 路径同 annotate/save——
@@ -490,6 +538,14 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
     existingTags = JSON.parse((db.prepare('SELECT user_tags FROM sessions WHERE id = ?').get(id) as { user_tags?: string | null } | undefined)?.user_tags ?? '[]') as string[];
   } catch { /* 空标签 */ }
   const topicsAndDecisions = [...meta.topics, ...meta.decisions.map((d) => d.text.slice(0, 30)), ...existingTags];
+  // [fork 1014b] decisions 整体重写会把 pinned 置顶标记静默清掉——confirm/refresh 路径
+  // 每次都走这里，用户置顶过的决策会被下一次提取吃得一干二净。与上面 user_tags 的
+  // "重写必须并回既有状态"是同一类病，按 text 键把旧标记并回来。
+  // pinned 并回统一走 readPinnedTexts（与 extractForWrite 同一份逻辑，不分叉）
+  const pinned = readPinnedTexts(db, id);
+  const decisions = pinned.size === 0
+    ? meta.decisions
+    : meta.decisions.map((d) => (pinned.has(d.text) ? { ...d, pinned: true } : d));
   db.prepare(`
     UPDATE sessions SET
       files_mentioned = ?, topics = ?, decisions = ?, key_questions = ?, code_changes = ?,
@@ -498,7 +554,7 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
   `).run(
     JSON.stringify(meta.files),
     JSON.stringify(meta.topics),
-    JSON.stringify(meta.decisions),
+    JSON.stringify(decisions),
     JSON.stringify(meta.questions),
     JSON.stringify({ codeBlockCount: meta.codeBlockCount, keyExchanges: meta.keyExchanges }),
     summary,
@@ -509,7 +565,7 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
 
 export interface DecisionRow {
   at: string; source: string; sessionId: string; title: string | null;
-  text: string; seq: number; msgAt?: string;
+  text: string; seq: number; msgAt?: string; pinned?: boolean;
 }
 
 export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string }): DecisionRow[] {
@@ -523,16 +579,87 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
     id: string; source: string; title: string | null; created_at: string; decisions: string; topics: string | null;
   }>;
   const out: DecisionRow[] = [];
+  // [fork 1014] 跨会话去重——与 listUnresolved 的 seenQ 完全同规。
+  // 此前这里一条去重都没有，而同一条决策每被一个会话碰到就重复入库一次：
+  // E:\music player 实测 423 条决策里 74 条是重复（17%），最狠的一条重复了 24 次，
+  // 把简报仅有的 2 个名额整个占满。rows 按 created_at DESC 排，所以先遇到的是
+  // 最新出现的那次——保留新、丢弃旧，语义正确。
+  const seen = new Map<string, boolean>();   // key → 该键是否见过 pinned 条目
   for (const r of rows) {
-    let decs: Array<{ text: string; seq: number; at?: string }> = [];
+    let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean }> = [];
     let topics: string[] = [];
     try { decs = JSON.parse(r.decisions); topics = JSON.parse(r.topics ?? '[]'); } catch { continue; }
     if (filter?.topic && !topics.includes(filter.topic) && !r.title?.includes(filter.topic)) continue;
     for (const d of decs) {
-      out.push({ at: d.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at });
+      const key = (d.text ?? '').replace(/\s+/g, '').slice(0, 40);
+      if (!key) continue;
+      const wasPinned = seen.get(key) === true;
+      if (seen.has(key)) {
+        // 已见过同文本：跳过旧条目，但**把 pinned 状态继承给先前进队的那条**。
+        // 否则用户置顶的是旧会话里的条目、新会话又出现同文本决策时，胜出的最新条目
+        // pinned=false，置顶静默失效（红队 1014 🟠7）。
+        if (d.pinned === true && !wasPinned) {
+          seen.set(key, true);
+          for (let i = out.length - 1; i >= 0; i--) {
+            if ((out[i].text ?? '').replace(/\s+/g, '').slice(0, 40) === key) { out[i].pinned = true; break; }
+          }
+        }
+        continue;
+      }
+      seen.set(key, d.pinned === true);
+      out.push({ at: d.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: d.pinned === true });
     }
   }
-  return out.sort((a, b) => a.at.localeCompare(b.at));
+  // [fork 1014b] 置顶优先：本数组按时间升序返回，调用方 cmdDecisions 取末尾 N 条
+  // 再 reverse 作为"最近 N 条"。所以 pinned 必须排到数组**末尾**——否则置顶的
+  // 老决策（如三个月前拍板的架构选择）会被 slice(-N) 一刀切掉，置顶形同虚设。
+  // 置顶组排末尾保证它一定落在取用窗口内；组内保持原升序（时间倒序语义不变），
+  // 非置顶条目的时间规则逐字节不变。
+  out.sort((a, b) => {
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? 1 : -1;
+    return a.at.localeCompare(b.at);
+  });
+  return out;
+}
+
+/** 置顶/取消置顶决策（srelay pin/unpin）：把 decisions JSON 里 text 含 fragment
+ *  的条目的 pinned 置 true（pin）或删字段（unpin，JSON 回到原状）。返回匹配条目数。
+ *  匹配分两步：先 SQL LIKE 对 JSON 列做包含预筛（决策存在 JSON blob 里，没有列可
+ *  等值匹配，只能整行 LIKE；% _ \ 是 LIKE 通配符，需转义防漏），再 JSON.parse
+ *  逐条按 text 精确判定——LIKE 可能命中 JSON 的非 text 位置（时间戳、键名），
+ *  最终以"text 包含片段"为准。JSON.parse 失败的行跳过：一条坏行不该让命令崩。
+ *
+ *  ⚠️ LIKE 预筛对含反斜杠的片段会失配：decisions 是 JSON 列，字面 `\` 在库里存成
+ *  **两个字符**，而转义后的 LIKE 模式只匹配单个字面 `\`。红队 1014 实测：库里有
+ *  "决定把 100%_raw\path 换成新格式"，`pin "100%_raw\path"` 命中 0 而
+ *  `pin "100%_raw"` 命中 1——含 Windows 路径的决策置顶静默失效。
+ *  修法：预筛同时试**原样**与**JSON 义**（\ → \\）两种模式，命中任一即入围。
+ *
+ *  ⚠️ 空片段必须拒绝：`fragment=''` → LIKE `%%` 命中全部行 → `text.includes('')`
+ *  恒真 → 一次 `pin ""` 把全库所有决策置顶（红队 1014 🟠）。 */
+export function setDecisionPinned(db: DB, projectId: string, fragment: string, pinned: boolean): number {
+  if (!fragment || !fragment.trim()) return 0;   // 空片段：拒绝，否则全库被置顶
+  // 预筛两种形态：原样 + JSON 双写反斜杠（覆盖路径类片段）
+  const esc = (s: string) => s.replace(/[\\%_]/g, (c: string) => '\\' + c);
+  const likeA = `%${esc(fragment)}%`;
+  const likeB = `%${esc(fragment.replace(/\\/g, '\\\\'))}%`;
+  const rows = db.prepare(`SELECT id, decisions FROM sessions WHERE project_id = ? AND decisions IS NOT NULL AND (decisions LIKE ? ESCAPE '\\' OR decisions LIKE ? ESCAPE '\\')`).all(projectId, likeA, likeB) as Array<{ id: string; decisions: string }>;
+  let changed = 0;
+  for (const r of rows) {
+    let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean }>;
+    try { decs = JSON.parse(r.decisions); } catch { continue; }
+    if (!Array.isArray(decs)) continue;
+    let touched = false;
+    for (const d of decs) {
+      if (typeof d?.text !== 'string' || !d.text.includes(fragment)) continue;
+      if (pinned) d.pinned = true;
+      else delete d.pinned;
+      touched = true;
+      changed++;
+    }
+    if (touched) db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?').run(JSON.stringify(decs), r.id);
+  }
+  return changed;
 }
 
 export interface UnresolvedRow { q: string; at: string; source: string; sessionId: string; title: string | null }

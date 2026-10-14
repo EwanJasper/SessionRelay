@@ -15,14 +15,14 @@ import { pc, fmtDate } from './ui.js';
 import { installWatchService } from './watch.js';
 
 /** 检测本机已安装的 AI 工具（跨平台路径检测） */
-interface DetectedSource {
+export interface DetectedSource {
   id: string;
   displayName: string;
   installed: boolean;
   path: string;
 }
 
-function detectSources(): DetectedSource[] {
+export function detectSources(): DetectedSource[] {
   const home = os.homedir();
   const platform = process.platform;
 

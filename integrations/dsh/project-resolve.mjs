@@ -163,7 +163,7 @@ export function resolveProjectRoot(envRoot) {
   return { root: null, candidates: reg, via: null }
 }
 
-// ── 自动接入（2026-10-14）──
+// ── 自动接入（2026-10-14 两轮迭代）──
 //
 // 用户诉求：新项目不用每次说"接入"。
 //
@@ -172,15 +172,16 @@ export function resolveProjectRoot(envRoot) {
 // 是截然不同的风险等级：绑定错会把决策写进错的库（不可逆），init 错只是多一个
 // 可删的小目录。
 //
-// 为什么仍然要设门槛：无差别自动 init 会在桌面/下载/盘符根目录留下一堆垃圾库，
-// 还会污染全局注册表。所以规则是——**只有强信号才自动**：
-//   · 从 cwd 向上找到第一个含 .git 的目录（inferProjectRoot 同款逻辑）
-//   · 那个目录没有 .sessionrelay → 才 auto-init 候选
-//   · 没有任何 .git → 不猜，走原来的"说一声接入"
-// 这样：clone 的仓库全自动；随手打开的文件夹零打扰。
-//
-// 上游 init 会写全局注册表（touchRegistry），所以误 init 的代价还包括注册表多一项。
-// 但注册表已有 TTL 剪枝（30 天 + 守护已死 → 自动清除），误 init 会自愈。
+// ═══ 规则的两次演化 ═══
+// 第一版（10-14 早）：**只有 .git 才自动**。理由是无差别 init 会在桌面/下载/盘符根
+//   留垃圾库、污染全局注册表（审计实测 16 个候选里 12 个是临时沙盒）。
+//   实测后果：用户新建的工作文件夹（无 .git）打开后只得到"尚未接入"，还得手动说接入。
+// 第二版（10-14 晚，用户拍板"都做"）：**放开到所有真实目录**，但用黑名单替代白名单：
+//   · 有 .git 仍向上找到仓库根（monorepo 子目录建在根上，不变）
+//   · 没有 .git 就用 cwd 本身——用户主动在 DSH 里打开这个文件夹就是最强信号
+//   · 黑名单挡掉四类不该建库的地方：临时目录、DSH 自己的安装/配置目录、
+//     npm 全局目录、盘符根
+//   放开的安全性由两件事兜底：init 可逆（删目录即消失）+ 注册表 TTL 剪枝自愈。
 
 /** 从 startDir 向上找第一个含 .git 的目录；找不到返回 null */
 export function findGitRoot(startDir) {
@@ -193,10 +194,41 @@ export function findGitRoot(startDir) {
   }
 }
 
-/** 是否应该自动接入：有 .git 且尚未建库 */
+/** 不该建库的地方：临时目录 / DSH 自身 / npm 全局 / 盘符根 */
+export function isInternalDir(dir) {
+  let d
+  try { d = path.resolve(dir).toLowerCase() } catch { return true }
+  // 盘符根（D:\、C:\）：在上面建库毫无意义
+  if (/^[a-z]:\\?$/.test(d)) return true
+  const home = os.homedir().toLowerCase()
+  const roaming = (process.env.APPDATA || path.join(home, 'appdata', 'roaming')).toLowerCase()
+  const blocked = [
+    os.tmpdir(),                                   // 临时目录（审计里 12/16 的垃圾来源）
+    path.join(home, '.dsh'),                        // DSH 配置/会话/技能
+    path.join(home, '.sessionrelay-registry'),      // 全局注册表自身
+    path.join(roaming, 'npm'),                      // npm 全局安装
+    path.join(home, 'AppData', 'Local', 'Programs', 'DeepSeek Harness'),
+    path.join(roaming, '@deepseek-ai'),
+    path.join(home, '.zcode'),
+  ]
+  for (const p of blocked) {
+    let bp
+    try { bp = path.resolve(p).toLowerCase() } catch { continue }
+    if (d === bp || d.startsWith(bp + path.sep)) return true
+  }
+  return false
+}
+
+/**
+ * 是否应该自动接入：目录真实存在、不在黑名单、且尚未建库。
+ * 有 .git → 用仓库根（monorepo 安全）；没有 → 用 cwd 本身。
+ */
 export function shouldAutoInit(startDir) {
-  const root = findGitRoot(startDir)
-  if (!root) return null
+  if (!startDir || typeof startDir !== 'string') return null
+  let root
+  try { root = findGitRoot(startDir) ?? path.resolve(startDir) } catch { return null }
+  if (!root || !fs.existsSync(root)) return null
+  if (isInternalDir(root)) return null
   if (fs.existsSync(path.join(root, '.sessionrelay', 'relay.sqlite'))) return null
   return root
 }

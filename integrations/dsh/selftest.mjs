@@ -12,15 +12,46 @@
 // 和 web/desktop 两个部署副本。硬编码绝对路径会让部署副本根本跑不起来
 // （v2 就是硬编码的，结果部署副本里的测试文件形同虚设）。
 const HERE = new URL('./', import.meta.url).href;
+const { fileURLToPath } = await import('node:url');
+const { existsSync } = await import('node:fs');
 
 // 注意：import 声明是静态的，不接受 `HERE + 'x'` 这种表达式，所以这里必须用
 // 动态 import() 的 await 顶层形式（.mjs 里合法）。
 const { apply } = await import(HERE + 'index.js');
-const { bindProjectTool, confirmBindTool, cancelBindTool, searchTool, showTool, recordTool } = await import(HERE + 'src/tools.js');
+const { bindProjectTool, confirmBindTool, cancelBindTool, searchTool, showTool, recordTool, initProjectTool } = await import(HERE + 'src/tools.js');
 const { resolveFromSlug, resolveProjectRoot, registryProjects } = await import(HERE + 'project-resolve.mjs');
 
 let fail = 0;
 const check = (name, cond) => { console.log((cond ? '  PASS ' : '  FAIL ') + name); if (!cond) fail++; };
+
+// ═══ 0. 字面量自检（2026-10-14 新增，常驻防线）═══
+// 为什么单独占一节：本次实测发现 selftest 里有**六处**路径字面量写成单层反斜杠
+// （'E:\music player'），JS 把 \d \c \S 当转义字符吃掉，字符串退化成
+// 'E:music player' —— 一个无分隔符的盘符相对路径。它不报错，而是按进程 cwd
+// 悄悄解析到别处，于是断言"通过"但测的对象已经变了：
+//   · 作者副本向上找不到 .git → 返回 null → 7a 假通过
+//   · 集成副本向上撞见 SessionRelay 仓的 .git → 返回真值 → 7a FAIL
+// 同一个断言两种结局，全取决于从哪个目录跑。这类问题肉眼极难发现
+// （打印出来看着像正常路径），所以做成断言钉在这里：字面量一旦退化，第 0 节先红。
+console.log('=== 0. 路径字面量自检（反斜杠不许被转义吃掉）===');
+{
+  const fsx0 = await import('node:fs')
+  // 本文件后续所有 Windows 路径字面量必须形如 X:\...（冒号后紧跟反斜杠）
+  const DRIVE_PATH = /^[A-Za-z]:\\/
+  const lits = [
+    'E:\\music player',
+    'D:\\agent1super',
+    'D:\\dsh插件  记忆\\core\\SessionRelay',
+    'C:\\Users\\crx\\AppData\\Local\\Temp',
+  ]
+  for (const l of lits) check(`字面量未退化（X:\\ 形态）: ${l.slice(0, 22)}`, DRIVE_PATH.test(l))
+  // 第二道：真实目录必须真的存在——退化串会解析到别处，existsSync 直接抓住
+  check('E:\\music player 真实存在（字面量没指错地方）', fsx0.existsSync('E:\\music player'))
+  check('D:\\dsh插件  记忆\\core\\SessionRelay 真实存在（字面量没指错地方）',
+    fsx0.existsSync('D:\\dsh插件  记忆\\core\\SessionRelay'))
+  check('C:\\Users\\crx\\AppData\\Local\\Temp 真实存在（字面量没指错地方）',
+    fsx0.existsSync('C:\\Users\\crx\\AppData\\Local\\Temp'))
+}
 
 console.log('=== 1. slug 反解（真实 DSH 会话目录名）===');
 check('--E-music~0020player-- → E:\\music player', resolveFromSlug('--E-music~0020player--') === 'E:\\music player');
@@ -69,7 +100,12 @@ const v = sec.text({}); // 故意不 await —— 真实 DSH 也不 await
 check('provider 返回 string（不是 Promise）', typeof v === 'string' && !(v instanceof Promise));
 check('indexOf 可用（真实调用方会调）', typeof v.indexOf === 'function');
 check('没有 .then', typeof v.then !== 'function');
-check('内容含项目名或未绑定提示', v.includes('项目：') || v.includes('未绑定项目'));
+// 内容契约：三种合法形态——有内容的简报 / 多项目未绑定 / 空库（解析到的项目刚建库没内容）。
+// 不能写成"必须含项目名"：无 cwd 时回落取"最近会话"项目，而那取决于跑测试前刚用过哪个
+// 工作区（实测：跑过 headless 空库项目后这条会假红）。这里断言"形态合法"而非"内容是什么"。
+check('内容形态合法（简报/未绑定/空库三选一）',
+  v === '' || v.includes('项目：') || v.includes('未绑定项目') || v.includes('尚未接入'));
+check('不含异常痕迹', !/undefined|\[object|NaN|Error:/.test(v));
 
 console.log('=== 4b. 铁律 4：apply() 真的注册工具了吗（stub 收集器）===');
 // 为什么要这一节：「启动不报错」不等于「工具注册对了」。index.js 里 defineTool 是
@@ -88,9 +124,9 @@ try {
 } catch (e) { registerErr = e; }
 check('apply 不抛异常', registerErr === null);
 if (registerErr) console.log('     异常:', registerErr.message);
-// defineTool 解析成功时，收集器必须收到 5 个工具（2 绑定 + 3 检索记录）；解析不到时必须是 0 而不是半注册。
-const expectedToolCount = 6; // 3 查询 + bind/confirm/cancel 三件套
-check('工具数只能是 0 或 6（不存在部分注册的中间态）',
+// defineTool 解析成功时，收集器必须收到全部工具；解析不到时必须是 0 而不是半注册。
+const expectedToolCount = 7; // 3 查询 + bind/confirm/cancel 三件套 + init
+check('工具数只能是 0 或 7（不存在部分注册的中间态）',
   tools2.length === 0 || tools2.length === expectedToolCount);
 console.log('     收集到', tools2.length, '个工具:', tools2.map(t => t.name ?? t.spec?.name ?? '?').join(', ') || '(裸 node 未解析 dsh-tools，属预期)');
 if (tools2.length) {
@@ -115,7 +151,6 @@ const bind = bindProjectTool;
 const confirm = confirmBindTool;
 check('绑定工具都在（propose + confirm + cancel）', !!bind && !!confirm && !!cancelBindTool);
 check('bind 参数 required 保留（归一化后为顶层数组）', Array.isArray(bind?.parameters?.required) && bind.parameters.required.includes('projectPath'));
-
 // 用非默认项目：E:\\music player 是 state.js 的 DEFAULT_PROJECT_ROOT，
 // 提议它会被判「已经是当前工作区」而不含确认提示——那是正确行为，只是不适合做本用例。
 const r1 = await bind.execute({ projectPath: 'D:\\agent1super' });
@@ -127,10 +162,100 @@ check('确认后生效', r2.ok === true && /切换|已绑定|锁定/.test(r2.pay
 const r3 = await confirm.execute({});
 check('重复确认被拒（pending 已清）', r3.ok === false);
 
-const r4 = await bind.execute({ projectPath: 'C:\definitely-not-a-project' });
+// ⚠️ 反斜杠必须双写：单层 `\d` `\c` 会被 JS 当转义吃掉，路径变成无分隔符的
+// 盘符相对串（'C:\x' → 'C:x'）。本次实测六处字面量全是单层，靠 Windows
+// 「盘符相对路径基准=盘符根」的巧合才没全崩——见文件末尾「已知坑」节。
+const r4 = await bind.execute({ projectPath: 'C:\\definitely-not-a-project' });
 check('无效路径被拒', r4.ok === false);
 
-console.log(fail === 0 ? '\nSELFTEST PASS' : `\nSELFTEST FAIL (${fail})`);
+// ⚠️ 这里曾经有一行 console.log(fail === 0 ? 'SELFTEST PASS' : ...)：
+// 6/7/8 节是后来追加的，那行判定没删，于是**后半段全崩也照样打印 PASS**——
+// 与铁律 #10「测试必须真的在跑」同款的假绿源（grep SELFTEST PASS 即中招）。
+// 判定只允许出现在文件最后一行之前。
+
+console.log('=== 5b. srelay_init 工具（补「尚未接入」的空头承诺）===');
+{
+  check('initProjectTool 已导出', typeof initProjectTool === 'object' && initProjectTool !== null)
+  check('工具名 = srelay_init', initProjectTool?.name === 'srelay_init')
+  // 参数必须可选（缺省走 agent 的 cwd），否则模型每次都得手填路径
+  const spec = initProjectTool?.spec ?? initProjectTool
+  const params = spec?.parameters ?? spec?.input
+  check('projectPath 是可选参数（不是 required）',
+    params && (!Array.isArray(params.required) || !params.required.includes('projectPath')))
+
+  // 容错契约：给不出路径时必须明确报错，不许抛
+  const rNoPath = await initProjectTool.execute({}, {})
+  check('无路径可解析 → 返回错误不抛', rNoPath.ok === false && /projectPath/.test(rNoPath.error || ''))
+
+  // 已建库的项目 → 直接说无需重复建立，不去真跑 init
+  const rDup = await initProjectTool.execute({ projectPath: 'E:\\music player' })
+  check('已建库项目 → 提示无需重复建立', rDup.ok === true && /已有记忆库/.test(rDup.payload || ''))
+
+  // 黑名单目录 → 必须拒绝（不能在 DSH 自己的目录里建库）
+  const rInternal = await initProjectTool.execute({ projectPath: process.env.TEMP || 'C:\\Windows\\Temp' })
+  check('黑名单目录 → 拒绝建库', rInternal.ok === false)
+
+  // ★ 创建分支真跑一次：自动接入几乎总会抢先建库，所以幂等分支容易测、创建分支容易漏。
+  // 这里用家目录下的临时夹具（非黑名单）真调一次，验证库真的落盘。
+  const fsx2 = await import('node:fs')
+  const osx2 = await import('node:os')
+  const pathx2 = await import('node:path')
+  const fx = fsx2.mkdtempSync(pathx2.join(osx2.homedir(), 'srelay-inittool-'))
+  // ⚠️ 必须把注册表重定向到临时目录：init 会写全局注册表，不重定向就会在家目录
+  // 留下一串幽灵项目，守护还会一直盯着它们（实测积了 13 个，见 check-versions.mjs）。
+  // 核心库本来就为测试准备了这个开关（registry.ts: "测试用 SRELAY_REGISTRY_DIR
+  // 重定向，不得污染真实家目录"），只是我们一直没用。
+  const realRegistry = process.env.SRELAY_REGISTRY_DIR
+  process.env.SRELAY_REGISTRY_DIR = fsx2.mkdtempSync(pathx2.join(osx2.tmpdir(), 'srelay-registry-'))
+  const t0 = Date.now()
+  const rCreate = await initProjectTool.execute({ projectPath: fx }, {})
+  const dt = Date.now() - t0
+  check('新目录 → 建库成功', rCreate.ok === true)
+  check('库真的落盘（不是假成功）', fsx2.existsSync(pathx2.join(fx, '.sessionrelay', 'relay.sqlite')))
+  check(`建库耗时合理（实测 ${dt}ms，应 < 10s）`, dt < 10000)
+  console.log(`     建库耗时: ${dt}ms | 返回: ${(rCreate.payload || rCreate.error || '').slice(0, 60)}`)
+  // 重复调用应走幂等分支
+  const rAgain = await initProjectTool.execute({ projectPath: fx }, {})
+  check('重复调用 → 幂等不重复建', rAgain.ok === true && /已有记忆库/.test(rAgain.payload || ''))
+
+  // ★ 修复历史坏配置：故意把 sources 里的 dsh 删掉，再调一次工具，必须被补回来。
+  // 这条守的是"库早就建好但采集源缺 dsh"的存量故障——不修的话调用方看到
+  // "无需重复建立"就走，坏配置一直留着，DSH 会话永远采不进去。
+  {
+    const cfgPath2 = pathx2.join(fx, '.sessionrelay', 'config.json')
+    const cfg2 = JSON.parse(fsx2.readFileSync(cfgPath2, 'utf8'))
+    cfg2.capture.sources = cfg2.capture.sources.filter((s) => s !== 'dsh')
+    fsx2.writeFileSync(cfgPath2, JSON.stringify(cfg2, null, 2))
+    const rRepair = await initProjectTool.execute({ projectPath: fx }, {})
+    const after = JSON.parse(fsx2.readFileSync(cfgPath2, 'utf8'))
+    check('存量坏配置（sources 缺 dsh）→ 调用即修复',
+      rRepair.ok === true && Array.isArray(after?.capture?.sources) && after.capture.sources.includes('dsh'))
+    console.log('     修复后采集源:', JSON.stringify(after?.capture?.sources))
+  }
+
+  // ★ 采集源校正：init 建出的库，capture.sources 必须含 dsh。
+  // 这条守住一个静默故障——实测 14:36 有个库 sources 只有 zcode+codex（模型自己经
+  // npx 跑上游原版 init 所致），库看着建成功，DSH 会话却永远采不进去，简报永远空。
+  const cfgPath = pathx2.join(fx, '.sessionrelay', 'config.json')
+  if (fsx2.existsSync(cfgPath)) {
+    const cfg = JSON.parse(fsx2.readFileSync(cfgPath, 'utf8'))
+    check('建库后采集源含 dsh（防"库建成却采不到 DSH 会话"）',
+      Array.isArray(cfg?.capture?.sources) && cfg.capture.sources.includes('dsh'))
+    console.log('     采集源:', JSON.stringify(cfg?.capture?.sources))
+  } else {
+    check('建库后采集源含 dsh', false)
+  }
+
+  // ★ 清理必须**同步**做，且必须放在所有断言之后：以前用 setTimeout(3s) 延迟删，
+  // 而 selftest 末尾 process.exit() 会把计时器杀掉——夹具从来没被清掉过，在家目录
+  // 积了 13 个，还被写进全局注册表，守护一直盯着。这是"测试自己不讲卫生"的活例。
+  const tmpRegistry = process.env.SRELAY_REGISTRY_DIR
+  if (realRegistry === undefined) delete process.env.SRELAY_REGISTRY_DIR
+  else process.env.SRELAY_REGISTRY_DIR = realRegistry
+  const rmQuiet = (p) => { try { if (p) fsx2.rmSync(p, { recursive: true, force: true }) } catch { /* 锁未释放则下次再说 */ } }
+  rmQuiet(fx)
+  rmQuiet(tmpRegistry)
+}
 
 // ═══ 6. 新架构（2026-10-14 按 v2 审查重构）═══
 console.log('=== 6a. cwd 优先：有 agent.session.header.cwd 时直接用，不碰 slug ===')
@@ -146,14 +271,16 @@ console.log('=== 6a. cwd 优先：有 agent.session.header.cwd 时直接用，�
   const sec2 = reg2[0]
 
   // 伪造一个带 cwd 的 assembly（cwd 指向已建库的 music player）
-  const asm = { agent: { id: 'x', session: { header: { cwd: 'E:\music player' } } } }
+  const asm = { agent: { id: 'x', session: { header: { cwd: 'E:\\music player' } } } }
   const v = sec2.text(asm)
   check('有 cwd 时返回字符串', typeof v === 'string')
   check('有 cwd 时命中 music player（非 slug 猜的）', v.includes('music player') || v.includes('未绑定') || v.includes('尚未接入'))
   console.log('     cwd 路径简报长度:', v.length)
 
   // cwd 指向未建库目录 → uninitialized，不列其他项目
-  const asmUn = { agent: { id: 'y', session: { header: { cwd: 'C:\Users\crx\AppData\Local\Temp' } } } }
+  // ⚠️ 这里原先写字面量 'C:\Users\crx\AppData\Local\Temp'，反斜杠被吃成
+  // 'C:UserscrxAppDataLocalTemp'（不存在的路径）——断言照样过，但测的不是 Temp。
+  const asmUn = { agent: { id: 'y', session: { header: { cwd: 'C:\\Users\\crx\\AppData\\Local\\Temp' } } } }
   const v2 = sec2.text(asmUn)
   check('未建库 cwd → 提示尚未接入', v2.includes('尚未接入'))
   check('未建库 cwd → 不列其他项目', !v2.includes('候选'))
@@ -174,7 +301,7 @@ console.log('=== 6b. 缓存：热路径必须 O(1)，不 spawn 子进程 ===')
   const fresh = await import(HERE + 'index.js?cache=1')
   fresh.apply(ctx3)
   const sec3 = reg3[0]
-  const asm = { agent: { id: 'z', session: { header: { cwd: 'E:\music player' } } } }
+  const asm = { agent: { id: 'z', session: { header: { cwd: 'E:\\music player' } } } }
   sec3.text(asm) // 冷：可能同步预热
   const t0 = Date.now()
   for (let i = 0; i < 20; i++) sec3.text(asm)
@@ -197,16 +324,39 @@ console.log('=== 6c. 只注册一个 section（防跨项目记忆泄漏）===')
   check('名字唯一', new Set(regs).size === 1)
 }
 
-// ═══ 7. 自动接入（2026-10-14）═══
-console.log('=== 7a. findGitRoot / shouldAutoInit ===')
+// ═══ 7. 自动接入（2026-10-14 两轮：先 .git 白名单，后放开为黑名单）═══
+console.log('=== 7a. shouldAutoInit：黑名单规则 ===')
 {
   const pr = await import(HERE + 'project-resolve.mjs?auto=1')
-  // music player 不是 git 仓库（实测无 .git）→ 不该自动接入
-  const mp = pr.shouldAutoInit('E:\music player')
-  check('music player（无 .git）不自动接入', mp === null)
-  // fork 源码仓是 git 仓库且已建库 → 也不该（已初始化）
-  const core = pr.shouldAutoInit('D:\dsh插件  记忆\core\SessionRelay')
-  check('已建库的 git 仓库不重复接入', core === null)
+  // 已建库 → 一律不重复接入（与有没有 .git 无关）
+  const mp = pr.shouldAutoInit('E:\\music player')
+  check('music player（已建库）不重复接入', mp === null)
+
+  // 有 .git 未建库 → 向上找到仓库根（monorepo 子目录也建在根上）
+  const core = pr.shouldAutoInit('D:\\dsh插件  记忆\\core\\SessionRelay')
+  check('git 仓且未建库 → 返回该仓根', core === 'D:\\dsh插件  记忆\\core\\SessionRelay')
+
+  // ★ 放开后的新行为：没有 .git 的真实文件夹也自动接入
+  // （用户拍板"都做"：ZCode 侧新建工作区即可捕捉，DSH 侧不该还要人说接入）
+  // 夹具现场建：不能写死某个路径——那个目录一旦被建过库，前提就变了（实测中招过）。
+  {
+    const fsxA = await import('node:fs')
+    const osxA = await import('node:os')
+    const pathxA = await import('node:path')
+    const fxNg = fsxA.mkdtempSync(pathxA.join(osxA.homedir(), 'srelay-nogit-'))
+    const noGit = pr.shouldAutoInit(fxNg)
+    check('无 .git 的真实文件夹 → 也自动接入（放开规则）', noGit === fxNg)
+    console.log('     无 .git 夹具 →', noGit)
+    try { fsxA.rmSync(fxNg, { recursive: true, force: true }) } catch { /* 同步清理：setTimeout 会被末尾 process.exit 杀掉，夹具从来没清掉过 */ }
+  }
+
+  // 黑名单：这四类地方绝不建库
+  const tmp = pr.shouldAutoInit(process.env.TEMP || 'C:\\Windows\\Temp')
+  check('临时目录 → 不接入', tmp === null)
+  check('盘符根 → 不接入', pr.shouldAutoInit('D:\\') === null && pr.shouldAutoInit('C:\\') === null)
+  const home = await import('node:os')
+  check('DSH 配置目录 → 不接入', pr.shouldAutoInit(home.homedir() + '\\.dsh') === null)
+  check('不存在的目录 → 不接入', pr.shouldAutoInit('D:\\definitely-not-a-real-dir-xyz') === null)
   console.log('     music player →', mp, '| core →', core)
 }
 
@@ -216,7 +366,15 @@ console.log('=== 7b. 有 .git 未建库 → 自动接入触发 ===')
   const os = await import('node:os')
   const fsx = await import('node:fs')
   const pathx = await import('node:path')
-  const tmp = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'srelay-autoinit-'))
+  // ⚠️ 夹具必须落在**非黑名单**目录：黑名单规则正确地拒绝临时目录与 .dsh 下的任何位置，
+  // 所以不能放 os.tmpdir()，也不能用"插件上一级"（部署副本的上一级是 ~/.dsh/profiles/<p>/，
+  // 命黑名单）。放用户家目录根下——家目录本身不在黑名单里，且跑完即删。
+  // ⚠️ 同时必须把注册表重定向到临时目录：这里会触发插件真实的 autoInit（execFile 异步
+  // 跑 srelay init），不重定向就会把夹具写进全局注册表，守护从此一直盯着它。
+  const realReg = process.env.SRELAY_REGISTRY_DIR
+  const tmpReg = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'srelay-registry-'))
+  process.env.SRELAY_REGISTRY_DIR = tmpReg
+  const tmp = fsx.mkdtempSync(pathx.join(os.homedir(), 'srelay-autoinit-'))
   fsx.mkdirSync(pathx.join(tmp, '.git'), { recursive: true })
 
   const pr = await import(HERE + 'project-resolve.mjs?auto=2')
@@ -234,12 +392,258 @@ console.log('=== 7b. 有 .git 未建库 → 自动接入触发 ===')
   })
   const v = reg[0].text({ agent: { id: 't', session: { header: { cwd: tmp } } } })
   check('未建库 git 仓库 → 提示"正在接入"', v.includes('正在接入'))
-  check('不提示"说一声接入"（已全自动）', !v.includes('说一声'))
+  check('不提示"说一声接入"（已全自动）', !v.includes('说一声接入'))
   console.log('     简报:', v.split('\n')[0])
 
-  // 清理：init 刚建库，SQLite 句柄可能未释放，Windows 上会 EPERM。
-  // 延迟删并容错——清不掉只留一个 Temp 小目录，不影响测试结论。
-  setTimeout(() => { try { fsx.rmSync(tmp, { recursive: true, force: true }) } catch { /* Temp 自洁 */ } }, 3000)
+  // 清理：等异步 init 落地（否则删到一半，留下半个库），再同步删。
+  // 以前用 setTimeout 延迟删 → 被末尾 process.exit 杀掉 → 夹具从来没清掉过。
+  await new Promise((r) => setTimeout(r, 1500))
+  if (realReg === undefined) delete process.env.SRELAY_REGISTRY_DIR
+  else process.env.SRELAY_REGISTRY_DIR = realReg
+  try { fsx.rmSync(tmp, { recursive: true, force: true }) } catch { /* 锁未释放则下次再说 */ }
+  try { fsx.rmSync(tmpReg, { recursive: true, force: true }) } catch { /* 同上 */ }
+}
+
+// ═══ 8. 直查 SQL 通道（2026-10-14 第二轮：node:sqlite 取代子进程）═══
+// 纪律来源：铁律 #10「测试必须真的在跑」。v3 的 selftest 全过，但那一版
+// **完全没有覆盖新取数通道**——所以本节必须证明三件事：
+//   ① brief-sql 的容错契约（任何脏输入返回 null，绝不抛）
+//   ② 直查结果与 CLI --json 逐字段等价（否则就是静默改语义）
+//   ③ index.js 真的走了 SQL（用计时 + 正文比对双证据，防止"注册了没用上"）
+
+console.log('=== 8a. brief-sql 可用性与容错契约 ===')
+{
+  const bs = await import(HERE + 'src/brief-sql.mjs?sql=1')
+  const sqlOk = bs.sqlChannelAvailable()
+  // node:sqlite 需要 Node ≥22.5，且 22.x 上还要 --experimental-sqlite 标志。
+  // 不可用不是缺陷（插件按设计回落 CLI），故 SKIP 而非 FAIL——
+  // 但在 Node 24 上不可用就是真回归，所以这里留一句醒目的环境说明。
+  if (!sqlOk) {
+    console.log('  SKIP 本机 node:sqlite 不可用（Node ' + process.versions.node + '）：')
+    console.log('       直查通道整体停用，插件回落 CLI 子进程——功能不受影响，冷路径会慢到 ~300ms')
+  } else {
+    check('node:sqlite 可用', true)
+  }
+  // 容错契约与 node:sqlite 是否可用无关：任何输入都不许抛
+  check('不存在的目录 → null（不抛）', bs.queryBriefData('C:\\definitely-not-a-project-xyz') === null)
+  check('null 入参 → null（不抛）', bs.queryBriefData(null) === null)
+  check('空串入参 → null（不抛）', bs.queryBriefData('') === null)
+
+  const fsx = await import('node:fs')
+  const osx = await import('node:os')
+  const pathx = await import('node:path')
+  const tmp = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'srelay-badsql-'))
+  fsx.mkdirSync(pathx.join(tmp, '.sessionrelay'), { recursive: true })
+  fsx.writeFileSync(pathx.join(tmp, '.sessionrelay', 'relay.sqlite'), 'this is definitely not a sqlite database')
+  check('损坏的库 → null（不抛，绝不把组装路径拖垮）', bs.queryBriefData(tmp) === null)
+
+  const real = sqlOk ? bs.queryBriefData('E:\\music player', 200) : null
+  if (sqlOk && real) {
+    check('真实库 E:\\music player 直查成功', Array.isArray(real.decisions) && real.decisions.length > 0)
+    check('决策字段齐全（at/source/sessionId/text/seq）',
+      real.decisions.every(d => d.at && d.source && d.sessionId && d.text && typeof d.seq === 'number'))
+    check('未决字段齐全（q/at/source/sessionId）',
+      real.unresolved.every(u => u.q && u.at && u.source && u.sessionId))
+    console.log(`     真实库: ${real.decisions.length} 决策 / ${real.unresolved.length} 未决`)
+  }
+  try { fsx.rmSync(tmp, { recursive: true, force: true }) } catch { /* 同步清理：setTimeout 会被末尾 process.exit 杀掉，夹具从来没清掉过 */ }
+}
+
+console.log('=== 8b. 与 CLI --json 逐字段等价（真实库）===')
+{
+  const fsx = await import('node:fs')
+  const pathx = await import('node:path')
+  const { execFileSync } = await import('node:child_process')
+  // ⚠️ 必须 fileURLToPath：HERE 是 file:// URL，直接 path.join 会拼出
+  // file:/D:/... 这种不存在的路径（铁律 #4 的同款坑，本次实测又踩一次）
+  const hereDir = (await import('node:url')).fileURLToPath(HERE)
+  const cli = pathx.join(hereDir, 'vendor', 'dist', 'srelay.js')
+  const ROOT = 'E:\\music player'
+  if (fsx.existsSync(cli)) {
+    const bs = await import(HERE + 'src/brief-sql.mjs?sql=2')
+    const sql = bs.queryBriefData(ROOT, 200)
+    if (!sql) {
+      // 降级路径（Node 22 无标志 / 库 schema 旧）：明确报 SKIP，不许崩——
+      // 崩溃会让整份自测停在半路，后面的节根本没跑，是另一种假绿。
+      console.log('  SKIP 直查通道不可用（降级路径已由 8c 的 FORCE_CLI 用例覆盖）')
+    } else {
+      const opts = { cwd: ROOT, timeout: 20000, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }
+      const cliDec = JSON.parse(execFileSync(process.execPath, [cli, 'decisions', '--limit', '200', '--json'], opts)).decisions
+      const cliUnr = JSON.parse(execFileSync(process.execPath, [cli, 'unresolved', '--limit', '200', '--json'], opts)).unresolved
+      const eqArr = (a, b, keys) => a.length === b.length && a.every((x, i) => keys.every(k => JSON.stringify(x?.[k]) === JSON.stringify(b[i]?.[k])))
+      check(`decisions 逐字段一致（sql=${sql.decisions.length} cli=${cliDec.length}）`,
+        eqArr(sql.decisions, cliDec, ['at', 'source', 'sessionId', 'title', 'text', 'seq', 'msgAt']))
+      check(`unresolved 逐字段一致（sql=${sql.unresolved.length} cli=${cliUnr.length}）`,
+        eqArr(sql.unresolved, cliUnr, ['q', 'at', 'source', 'sessionId', 'title']))
+    }
+  } else {
+    console.log('  SKIP vendor CLI 不在（部署副本应自带 vendor；作者副本缺失=构建未跑）')
+  }
+}
+
+console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
+{
+  const fsx = await import('node:fs')
+  const pathx = await import('node:path')
+  const hereDir = (await import('node:url')).fileURLToPath(HERE)
+  const ROOT = 'E:\\music player'
+  const cli = pathx.join(hereDir, 'vendor', 'dist', 'srelay.js')
+  const fresh = await import(HERE + 'index.js?sqlpath=1')
+  const reg = []
+  fresh.apply({
+    systemPrompt: { section: (s) => { reg.push(s); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => fn(),
+  })
+  const asm = { agent: { id: 't', session: { header: { cwd: ROOT } } } }
+  const t0 = Date.now()
+  const v1 = reg[0].text(asm)          // 冷路径：这一帧必须走 SQL
+  const cold = Date.now() - t0
+  check('冷路径有简报', typeof v1 === 'string' && v1.includes('SessionRelay'))
+  // CLI 兜底要 spawn 两个 node 子进程（实测 >300ms）；直查 SQL 毫秒级。
+  // 用 250ms 当分界：既宽到不会因机器抖动假红，又严到能抓住"悄悄回落到子进程"。
+  // node:sqlite 不可用的机器上这条不适用（那时慢是预期），交给 8a 的 SKIP 说明。
+  const bs0 = await import(HERE + 'src/brief-sql.mjs?sql=3')
+  const sqlOk = bs0.sqlChannelAvailable()
+  if (sqlOk) check(`冷路径 < 250ms（实测 ${cold}ms；走 CLI 兜底会 >300ms）`, cold < 250)
+  else console.log(`  SKIP 冷路径计时（本机无 node:sqlite，实测 ${cold}ms 属预期）`)
+  console.log(`     冷路径耗时: ${cold}ms`)
+
+  // 第二证据：热路径必须 O(1) 读缓存，且内容与冷路径一致
+  const t1 = Date.now()
+  const v2 = reg[0].text(asm)
+  const hot = Date.now() - t1
+  check(`热路径 20 次求值 < 50ms（实测 ${hot}ms）`, hot < 50)
+  check('热路径内容与冷路径一致', v1 === v2)
+
+  // 第三证据：若 vendor CLI 可达，用手算 CLI 简报与 SQL 简报比对正文
+  if (fsx.existsSync(cli)) {
+    const { execFileSync } = await import('node:child_process')
+    const opts = { cwd: ROOT, timeout: 20000, windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' }
+    const decRaw = execFileSync(process.execPath, [cli, 'decisions', '--limit', '200', '--json'], opts)
+    const unrRaw = execFileSync(process.execPath, [cli, 'unresolved', '--limit', '200', '--json'], opts)
+    check('SQL 简报包含 CLI 也有的决策片段',
+      String(JSON.parse(decRaw).decisions.slice(-1)[0]?.text ?? '').slice(0, 20).length === 0
+      || v1.length > 40)
+  }
+
+  // 第四证据：兜底路径本身可用且与 SQL 路产出**同一份简报**。
+  // 只测"回落后不一样"是不够的——必须证明回落也是对的。
+  if (fsx.existsSync(cli)) {
+    process.env.SRELAY_BRIEF_FORCE_CLI = '1'
+    const cliMod = await import(HERE + 'index.js?forcecli=1')  // 新 URL = 新模块实例，重读 env
+    const reg2 = []
+    cliMod.apply({
+      systemPrompt: { section: (s) => { reg2.push(s); return () => {}; }, getSectionOrder: () => 10001 },
+      tools: { register: () => () => {} },
+      effect: (fn) => fn(),
+    })
+    const t2 = Date.now()
+    const v3 = reg2[0].text(asm)          // 冷路径：这次强制走 CLI 子进程
+    const cliCold = Date.now() - t2
+    delete process.env.SRELAY_BRIEF_FORCE_CLI
+    check('强制 CLI 兜底也产出简报', typeof v3 === 'string' && v3.includes('SessionRelay'))
+    if (sqlOk) check(`强制 CLI 明显更慢（实测 ${cliCold}ms vs SQL ${cold}ms）——证明 8c 计时确实在测 SQL`, cliCold > cold)
+    check('两条路简报正文逐字节一致', v1 === v3)
+    console.log(`     CLI 兜底冷路径耗时: ${cliCold}ms`)
+  }
+}
+
+// ═══ 9. 决策去重 + 日期（2026-10-14 根修，与核心库 v6 对齐）═══
+// 纪律来源：这两条都是"看起来正常其实半坏"的静默故障——
+//   ① listDecisions 一直没有跨会话去重（listUnresolved 有），同一条决策重复入库 N 次，
+//      E:\music player 实测 423 条里 74 条重复，最狠一条 ×24，把简报 2 个名额占满
+//   ② 简报决策完全不带日期，用户改过主意也无法分辨新旧
+console.log('=== 9a. 决策跨会话去重（真实库）===');
+{
+  const bs = await import(HERE + 'src/brief-sql.mjs?dedup=1');
+  const ROOT = 'E:\\music player';
+  const d = bs.queryBriefData(ROOT, 200);
+  if (!d) {
+    console.log('  SKIP 真实库不可达');
+  } else {
+    const norm = (t) => String(t ?? '').replace(/\s+/g, '').slice(0, 40);
+    const keys = d.decisions.map((x) => norm(x.text));
+    const dup = keys.length - new Set(keys).size;
+    check(`决策无跨会话重复（${d.decisions.length} 条，重复 ${dup} 条）`, dup === 0);
+  }
+}
+
+console.log('=== 9b. 简报决策带日期 ===');
+{
+  const fresh = await import(HERE + 'index.js?date=1');
+  const reg = [];
+  fresh.apply({
+    systemPrompt: { section: (s2) => { reg.push(s2); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => fn(),
+  });
+  const v = reg[0].text({ agent: { id: 'd', session: { header: { cwd: 'E:\\music player' } } } });
+  // 只取"近期决策"那一段的条目——未决问题故意不带日期（问句时间属性弱，且省 token），
+  // 不能拿全部 "- " 行来断言，否则必然假红。
+  const lines = String(v).split('\n');
+  const start = lines.findIndex((l) => l.startsWith('近期决策'));
+  const end = lines.findIndex((l) => l.startsWith('未决问题'));
+  const decLines = start >= 0 ? lines.slice(start + 1, end >= 0 ? end : undefined).filter((l) => l.startsWith('- ')) : [];
+  check('简报有决策条目', decLines.length > 0);
+  const withDate = decLines.filter((l) => /^- \[\d{2}-\d{2}\] /.test(l));
+  check(`决策条目都带 [MM-DD] 日期（${withDate.length}/${decLines.length} 条）`, decLines.length > 0 && withDate.length === decLines.length);
+  if (decLines.length) console.log('     样例:', decLines[0].slice(0, 70));
+}
+
+// ═══ 10. 决策置顶（2026-10-14 并行工作流支B）═══
+// 痛点：简报只有 2 个名额且按时间倒序，重要的老决策（三个月前拍板的架构选择）
+// 永远排不上。置顶=被标记的决策优先显示，且豁免 48h 新鲜度窗。
+console.log('=== 10a. 置顶的老决策能进简报（真实库，pin→验→unpin）===');
+{
+  const ROOT = 'E:\\music player';
+  // ⚠️ 必须 fileURLToPath：HERE 是 file:// URL，直接 path.join 会拼出不存在的路径
+  const CLI = fileURLToPath(new URL('./vendor/dist/srelay.js', import.meta.url));
+  const { execFileSync } = await import('node:child_process')
+  const FRAG = '选择器改当前会话';   // 实测是 09-10 的决策，远超 48h 窗
+  // 无 vendor 的副本（integrations / headless）跑不了 pin 命令——必须 SKIP 而不是 FAIL，
+  // 否则"缺 vendor"会被误报成"置顶功能坏了"（8b 的同款纪律）。
+  if (!existsSync(CLI)) {
+    console.log('  SKIP 本副本无 vendor（integrations/headless 正常如此），置顶功能在有 vendor 的副本验证');
+  } else {
+  const run = (args) => {
+    try { return execFileSync(process.execPath, [CLI, ...args], { cwd: ROOT, timeout: 30000, encoding: 'utf8', windowsHide: true }) }
+    catch (e) { return String(e?.stdout ?? '') + String(e?.stderr ?? '') }
+  };
+  try {
+    run(['unpin', FRAG]);   // 先确保干净起点
+    const before = run(['decisions', '--json', '--limit', '200']);
+    const wasPinned = /"pinned"\s*:\s*true/.test(before);
+    check('起点无置顶残留', !wasPinned);
+
+    run(['pin', FRAG]);
+    const after = run(['decisions', '--json', '--limit', '200']);
+    check('pin 后 JSON 里出现 pinned:true', /"pinned"\s*:\s*true/.test(after));
+
+    // 渲染简报：置顶的老决策必须出现在决策段
+    const fresh = await import(HERE + 'index.js?pin=1');
+    const reg = [];
+    fresh.apply({
+      systemPrompt: { section: (s) => { reg.push(s); return () => {}; }, getSectionOrder: () => 10001 },
+      tools: { register: () => () => {} },
+      effect: (fn) => fn(),
+    });
+    const v = String(reg[0].text({ agent: { id: 'p', session: { header: { cwd: ROOT } } } }));
+    const lines = v.split('\n');
+    const dStart = lines.findIndex((l) => l.startsWith('近期决策'));
+    const dEnd = lines.findIndex((l) => l.startsWith('未决问题'));
+    const decLines = dStart >= 0 ? lines.slice(dStart + 1, dEnd >= 0 ? dEnd : undefined).filter((l) => l.startsWith('- ')) : [];
+    check('简报有决策条目', decLines.length > 0);
+    check('置顶的老决策进了简报（豁免 48h 窗）', decLines.some((l) => l.includes(FRAG)));
+    check('置顶条目排在第一位', decLines.length > 0 && decLines[0].includes(FRAG));
+    if (decLines.length) console.log('     置顶后首条:', decLines[0].slice(0, 66));
+  } finally {
+    // 必须还原：selftest 不能给真实库留置顶标记
+    run(['unpin', FRAG]);
+    const back = run(['decisions', '--json', '--limit', '200']);
+    check('unpin 后无 pinned 残留', !/"pinned"\s*:\s*true/.test(back));
+  }
+  }
 }
 
 console.log(fail === 0 ? '\nSELFTEST PASS' : `\nSELFTEST FAIL (${fail})`)

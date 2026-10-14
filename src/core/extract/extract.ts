@@ -273,15 +273,82 @@ export function extractKeyExchanges(msgs: Msg[]): KeyExchange[] {
   }));
 }
 
+// ── 注入块剥离（2026-10-14 根修）──
+//
+// 为什么必须做：DSH / ZCode 会把系统上下文（技能目录、环境信息、提醒）包在
+// <system-reminder>…</system-reminder> 里塞进**用户消息**。提取器按角色过滤
+// 也没用——它就在 user 消息正文里。实测后果（docs/现状与需求总核对表 §22）：
+// steel-manning 技能说明里的"再决定接受、修订或坚持"被当成用户决策，
+// 在 E:\music player 库里重复了 24+19 次，把简报的名额整个占满。
+//
+// 设计原则：只剥"确定是注入"的成对块，不做语义猜测——宁可漏，不能错杀真决策。
+const INJECTED_BLOCKS: RegExp[] = [
+  /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
+  /<reminder>[\s\S]*?<\/reminder>/gi,
+  /<env(?:ironment)?>[\s\S]*?<\/env(?:ironment)?>/gi,
+  /<(?:ctx|context)>[\s\S]*?<\/(?:ctx|context)>/gi,
+]
+
+// 技能目录行：`- \`skill-name\`: 描述…`。ZCode/DSH 把可用技能清单以 markdown 列表
+// 形式注入用户消息，**没有 XML 外壳**，所以上面的成对块规则抓不到。实测这些行的
+// 片段被提成决策和未决问题（steel-manning 的"再决定接受、修订或坚持"、executing-plans
+// 的 "Use when you have a written implementation plan…" 都这么来的），把简报名额占满。
+// 判据 = 反引号包**含连字符的小写名** + 冒号。
+// 为什么必须要求连字符：真技能 slug（steel-manning / executing-plans / ppt-master /
+// dsh-fast-lookup）全含连字符；而技术写作里常见的 `- \`config.json\`: 说明`、
+// `- \`useState\`: 说明`、`- \`AGENTS.md\``、`- \`postgres\`: 说明` 全不含。红队 1014
+// 实测后者会被整行剥掉，行内真决策静默丢失。同时去掉 i 标志——它原本让 [a-z0-9]
+// 匹配任意大小写，`AGENTS.md` 这类大写名因此中招。
+const SKILL_CATALOG_LINE = /^[ \t]*[-*+]\s*`[a-z0-9]+(?:-[a-z0-9]+)+`\s*[:：][^\n]*/gm
+
+export function stripInjected(text: string): string {
+  if (!text || typeof text !== 'string') return text
+  let out = text
+  for (const re of INJECTED_BLOCKS) out = out.replace(re, '\n')
+  out = out.replace(SKILL_CATALOG_LINE, '\n')
+  return out
+}
+
+/**
+ * 这段文本是否"看起来是注入内容"（供 doctor 体检用）。
+ * 与 stripInjected 共用同一批规则，避免"剥一套、判另一套"的两处漂移。
+ */
+export function looksInjected(text: string): boolean {
+  if (!text || typeof text !== 'string') return false
+  // ⚠️ 必须与 stripInjected 逐条同源，不能多也不能少。红队 1014 抓到两处不对称都出问题：
+  //   多一条 HTML 兜底 → 合法前端决策（"决定把 <div> 布局换成 <section>"）被判注入，
+  //     doctor 永久红灯且重算清不掉（因为 stripInjected 不剥 HTML）；
+  //   少识别无标签残片 → 真正要抓的那批污染（"再决定接受、修订或坚持"）一条都检不出。
+  // 现在的取舍：规则严格同源（绝不误报真决策），残片类污染改由 doctor 侧做
+  // "决策文本是否为某 SKILL.md 原文子串"的比对兜底。
+  for (const re of INJECTED_BLOCKS) { re.lastIndex = 0; if (re.test(text)) return true }
+  SKILL_CATALOG_LINE.lastIndex = 0
+  if (SKILL_CATALOG_LINE.test(text)) return true
+  return false
+}
+
+/**
+ * 整条消息列表的注入块清洗。**所有进入提取器的消息都必须先过这个函数**——
+ * 提取有多个入口（extractMessages 供实时捕获、recomputeSession 供历史重算），
+ * 任何一个入口漏掉它，注入块就会从那条路重新污染库（1014 实测：重算跑了 85 个
+ * 会话，数据一点没变，就是因为 recomputeSession 绕过了 extractMessages）。
+ */
+export function sanitizeMsgs(msgs: Msg[]): Msg[] {
+  return msgs.map((m) => ({ ...m, content: stripInjected(m.content) }))
+}
+
 export function extractMessages(msgs: Msg[]): ExtractedMeta {
-  const texts = msgs.map((m) => m.content);
+  // 先剥注入块，再进任何子提取器——决策/问题/话题/files 全部受益，
+  // 而且只需要在这一处做（根修，而不是每个提取器各打一个补丁）。
+  const clean = sanitizeMsgs(msgs);
+  const texts = clean.map((m) => m.content);
   return {
     files: extractFiles(texts),
-    topics: extractTopics(msgs),
-    decisions: extractDecisions(msgs),
-    questions: extractQuestions(msgs),
+    topics: extractTopics(clean),
+    decisions: extractDecisions(clean),
+    questions: extractQuestions(clean),
     codeBlockCount: countCodeBlocks(texts),
-    keyExchanges: extractKeyExchanges(msgs),
+    keyExchanges: extractKeyExchanges(clean),
   };
 }
 

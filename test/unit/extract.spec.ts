@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractFiles, extractTopics, extractDecisions, extractQuestions,
-  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, type Msg,
+  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, type Msg,
 } from '../../src/core/extract/extract.js';
 
 const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
@@ -215,5 +215,119 @@ describe('P4d · 未决问题显示归一化（1014：压口语不丢信息）',
     const q = extractQuestions([msg('user', '这个插件要怎么用起来？')]);
     expect(q).toHaveLength(1);
     expect(q[0].q).toContain('怎么用');
+  });
+});
+
+// ═══ 2026-10-14 根修：注入块剥离 + 决策去重 ═══
+// 背景：DSH/ZCode 把系统上下文（技能目录等）包在 <system-reminder> 里塞进 user
+// 消息正文，提取器按角色过滤也没用。实测 steel-manning 技能说明里的
+// "再决定接受、修订或坚持"被当成用户决策，在库里重复 24+19 次，占满简报名额。
+describe('stripInjected：注入块不许进提取', () => {
+  const msg = (role: 'user' | 'assistant', content: string) => ({ role, content, seqNum: 1 });
+
+  it('system-reminder 成对块被整块剥掉', () => {
+    const s = stripInjected('我们最终统一用 PostgreSQL。\n<system-reminder>\n- `steel-manning`: 先构建反方论证，再决定接受、修订或坚持\n</system-reminder>\n剩下这句是真的。');
+    expect(s).not.toContain('steel-manning');
+    expect(s).not.toContain('system-reminder');
+    expect(s).toContain('我们最终统一用 PostgreSQL');
+    expect(s).toContain('剩下这句是真的');
+  });
+
+  it('注入块里的"决定"不再被提成决策', () => {
+    const meta = extractMessages([msg('user',
+      '我们最终采用 PostgreSQL 作为主库。\n<system-reminder>\n- `steel-manning`: 先构建反方最强的忠实论证，写明同意与推翻条件，再决定接受、修订或坚持。\n</system-reminder>')]);
+    expect(meta.decisions).toHaveLength(1);
+    expect(meta.decisions[0].text).toContain('PostgreSQL');
+    expect(meta.decisions[0].text).not.toContain('修订或坚持');
+  });
+
+  it(' reminder / env / ctx 变体同样剥', () => {
+    expect(stripInjected('a<reminder>x</reminder>b')).toBe('a\nb');
+    expect(stripInjected('a<environment>x</environment>b')).toBe('a\nb');
+    expect(stripInjected('a<context>x</context>b')).toBe('a\nb');
+  });
+
+  it('没有注入块时原文不动（不能误伤正常消息）', () => {
+    const t = '我们改用 node:sqlite 直查，冷路径从 284ms 降到 5ms。';
+    expect(stripInjected(t)).toBe(t);
+  });
+
+  it('大小写不敏感', () => {
+    expect(stripInjected('a<System-Reminder>x</SYSTEM-REMINDER>b')).toBe('a\nb');
+  });
+});
+
+describe('决策跨会话去重（与 listUnresolved 同规）', () => {
+  const msg = (role: 'user' | 'assistant', content: string) => ({ role, content, seqNum: 1 });
+
+  it('同一会话里重复出现的同一条决策只留一条', () => {
+    const meta = extractMessages([
+      msg('user', '我们最终统一用 PostgreSQL。'),
+      msg('assistant', '好的。'),
+      msg('user', '我们最终统一用 PostgreSQL。'),
+    ]);
+    const same = meta.decisions.filter((d) => d.text.includes('PostgreSQL'));
+    expect(same).toHaveLength(1);
+  });
+
+  it('去重只按文本，不影响不同决策', () => {
+    const meta = extractMessages([
+      msg('user', '我们最终统一用 PostgreSQL。'),
+      msg('user', '我们最终统一用 REST 规范。'),
+    ]);
+    expect(meta.decisions).toHaveLength(2);
+  });
+});
+
+describe('技能目录行剥离（无 XML 外壳的第二种注入）', () => {
+  const msg = (role: 'user' | 'assistant', content: string) => ({ role, content, seqNum: 1 });
+
+  it('markdown 列表形态的技能目录行被剥掉', () => {
+    const s = stripInjected('好的，我们用 PostgreSQL。\n- `steel-manning`: 最强反方论证：先构建反方论证，再决定接受、修订或坚持\n- `ppt-master`: AI-driven presentation builder');
+    expect(s).not.toContain('steel-manning');
+    expect(s).not.toContain('ppt-master');
+    expect(s).not.toContain('修订或坚持');
+    expect(s).toContain('我们用 PostgreSQL');
+  });
+
+  it('executing-plans 那种英文技能描述同样剥', () => {
+    const s = stripInjected('- `executing-plans`: 有一份写好的实施计划要执行时使用。Use when you have a written implementation plan to execute with review checkpoints.');
+    expect(s.trim()).toBe('');
+  });
+
+  it('用户自己写的普通列表项不被误杀', () => {
+    const t = '- 第一件事：把数据库迁完\n- 第二件事：补测试';
+    expect(stripInjected(t)).toBe(t);
+  });
+
+  it('中文冒号形态也认', () => {
+    const s = stripInjected('- `foo-bar`: 某个技能的描述');
+    expect(s.trim()).toBe('');
+  });
+});
+
+describe('looksInjected：doctor 体检用的注入判定（与 stripInjected 同规则）', () => {
+  // ⚠️ 契约在 1014 红队后改过：looksInjected 必须与 stripInjected **逐条同源**。
+  // 旧版多一条"裸 HTML 标签"兜底，导致两个方向都出错——合法前端决策被判注入（doctor
+  // 永久红灯），而真正要抓的无标签残片又检不出。现在：成对块才判注入；裸标签残片
+  // （"…坚持</system-reminder>"这类）交给 doctor 侧的 SKILL.md 原文比对兜底。
+  it('成对的 system-reminder 块判为注入', () => {
+    const block = '<system-reminder>' + '\n' + '某技能说明' + '\n' + '</system-reminder>';
+    expect(looksInjected(block)).toBe(true);
+  });
+  it('裸闭合标签残片不判注入（由 doctor 的 SKILL.md 比对兜底，不在此误报）', () => {
+    expect(looksInjected('决定接受、修订或坚持</system-reminder>')).toBe(false);
+  });
+  it('技能目录行判为注入', () => {
+    expect(looksInjected('- `steel-manning`: 最强反方论证，先构建反方论证')).toBe(true);
+    expect(looksInjected('- `executing-plans`: Use when you have a written plan')).toBe(true);
+  });
+  it('合法前端决策不再被误判为注入（红队 1014 🟠4）', () => {
+    expect(looksInjected('决定把 `<div>` 布局换成 `<section>`')).toBe(false);
+  });
+  it('用户真话不判为注入（不能误报，否则体检天天叫）', () => {
+    expect(looksInjected('我们最终统一用 PostgreSQL 作为主库')).toBe(false);
+    expect(looksInjected('为什么模型只有那个3.8flash？')).toBe(false);
+    expect(looksInjected('改用 pwsh 直接 HTTPS 拉取，拿到 registry 原始 packument')).toBe(false);
   });
 });
