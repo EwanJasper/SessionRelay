@@ -153,6 +153,47 @@ const Q_MARK = /[？?]/;
 const Q_HINT = /(为什么|怎么|是否|要不要|还是|吗|什么|哪个|哪些|如何|多久|how|what|why|whether|which)/i;
 const UNRESOLVED_HINT = /(还没|尚未|待定|再定|不确定|没定|没有结论|后续|以后再)/;
 
+/**
+ * [fork 1014] 问题显示归一化：保留真问题，压掉口语啰嗦。
+ *
+ * 为什么不做"拒绝"：实测用户真实库的两条样本
+ *   "呃，就是active，就是这个现在这个UU配的这个档，这个我是有pro的...但是为什么没有那个呢？"
+ *   "还有那个谷歌那边，我们做的谷歌那边的话，为什么模型只有那个3.8flash？"
+ * 它们**不是垃圾**——"为什么没那个""为什么只有3.8flash"是真疑问，只是前面堆了口头填充。
+ * 试过用"填充物占比"阈值区分（噪声 0.55 vs 真问题短句 0.50），**实测分不开**，已撤。
+ *
+ * 所以改为压缩显示：剥掉句首填充与句中无信息量口头语，让同样的 90 字符预算
+ * 能装下真正的疑问内容。信息不丢，可读性提升。
+ */
+function normalizeQuestion(q: string): string {
+  let t = q.replace(/\s+/g, ' ').trim()
+  // 口语问句的形态是「一堆填充 + 真疑问在末尾」。从头删填充删不干净——
+  // 实测样本删完句首后 90 字符配额仍被中段 filler 吃光，真疑问被截掉。
+  // 改为**定位末句**：按标点切段，从后往前找第一个含疑问词/问号的段，
+  // 段太短就继续往前并段补上下文（避免只剩"为什么"这种没头没尾的残片）。
+  const segs = t.split(/(?<=[。！？!?，,；;])/).map(x => x.trim()).filter(Boolean)
+  if (segs.length > 1) {
+    let picked = ''
+    for (let i = segs.length - 1; i >= 0; i--) {
+      picked = segs[i] + picked
+      if (Q_HINT.test(segs[i]) || /[？?]\s*$/.test(segs[i])) {
+        // 命中疑问段：太短则往前并一段补主语
+        if (picked.replace(/[，。！？、\s]/g, '').length < 10 && i > 0) {
+          picked = segs[i - 1] + picked
+        }
+        break
+      }
+      if (picked.replace(/[，。！？、\s]/g, '').length >= 20) break
+    }
+    if (picked) t = picked
+  }
+  // 仍可能残留的句中口头语（不动疑问词本身）
+  t = t.replace(/(就是|的话|做的|那边|这边|目前|现在|然后|还有|不过|其实)(?=[^。！？]{0,6}(吗|呢|为什么|怎么|如何|是否|要不要|？|\?))/gu, '')
+  t = t.replace(/^(呃|哦|啊|嗯|呀|就是|那个|这个|还有|然后|其实|不过|但是)[，。！？、\s]*/u, '')
+  t = t.replace(/([，。！？、])+/gu, '$1')
+  return t.trim() || q
+}
+
 export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
   const total = msgs.length;
   const out: ExtractedMeta['questions'] = [];
@@ -168,7 +209,7 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
       if (/^>\s*\S/.test(s)) continue;
       const tailAsked = idx >= Math.floor(total * 0.7); // 会话尾部提问，大概率未被回答
       out.push({
-        q: s.replace(/\s+/g, ' ').trim().slice(0, 90),
+        q: normalizeQuestion(s).slice(0, 90),
         seq: m.seqNum,
         at: m.createdAt ?? undefined,
         unresolved: tailAsked || UNRESOLVED_HINT.test(s),

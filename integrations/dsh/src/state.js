@@ -8,8 +8,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** 默认主战场兜底路径 */
-export const DEFAULT_PROJECT_ROOT = process.env.SRELAY_PROJECT_ROOT || process.env.SRELAY_BRIEF_ROOT || 'E:\\music player'
+/**
+ * 默认项目根。**不再硬编码任何作者个人路径**——那会在所有探测都失败时
+ * 静默返回一个不属于用户的目录（审查报告 P0：直接破坏插件"注错比不注更糟"的承诺）。
+ * 现在只认 env；两者都没有就是 null，调用方必须显式处理"不知道"。
+ */
+export const DEFAULT_PROJECT_ROOT = process.env.SRELAY_PROJECT_ROOT || process.env.SRELAY_BRIEF_ROOT || null
 
 /** 内存态存储：支持按 scopeId 区分 */
 const activeProjects = new Map()
@@ -17,6 +21,17 @@ const pendingProposals = new Map()
 
 /** 可插拔的存储适配器（给主线 ZCode 预留） */
 let customStorageAdapter = null
+
+/**
+ * 生命周期钩子：由 index.js 在 ctx.effect 的 disposer 里调用。
+ * 模块级 Map 在 DSH 热重载（HMR）时不会自动释放——旧 fiber 的绑定/pending 状态
+ * 会残留，可能与新 fiber 的状态互相污染（审查报告指出的 HMR 风险）。
+ */
+export function disposeBindState() {
+  activeProjects.clear()
+  pendingProposals.clear()
+  customStorageAdapter = null
+}
 
 /**
  * 设置自定义存储适配器（主线扩展点）
@@ -36,7 +51,7 @@ export function getActiveProject(scopeId = 'default') {
     const val = customStorageAdapter.getActive(scopeId)
     if (val) return val
   }
-  return activeProjects.get(scopeId) || DEFAULT_PROJECT_ROOT
+  return activeProjects.get(scopeId) || DEFAULT_PROJECT_ROOT || null
 }
 
 /**
@@ -101,9 +116,11 @@ export function proposeProject(targetPath, scopeId = 'default') {
   }
 
   const normalized = check.normalizedPath
+  // current 可能为 null（无绑定、无 env——P0 修复后不再兜底硬编码路径）。
+  // 必须显式处理，否则 current.toLowerCase() 直接 TypeError。
   const current = getActiveProject(scopeId)
 
-  if (normalized.toLowerCase() === current.toLowerCase()) {
+  if (current && normalized.toLowerCase() === current.toLowerCase()) {
     return {
       ok: true,
       targetPath: normalized,

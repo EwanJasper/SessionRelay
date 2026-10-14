@@ -21,8 +21,9 @@ import type { Msg } from '../core/extract/extract.js';
 
 /** 提取规则族版本。任何会影响 decisions/questions/topics 语义的改动都必须递增。
  *  3 → 1013 转述/引用过滤 + 词中误命中守卫（审计 P4）。
+ *  5 → 1014 未决问题显示归一化（口语填充压缩，保留真疑问）。
  *  递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 4;
+export const EXTRACT_VERSION = 5; // v5 = 1014 未决问题显示归一化（末句定位 + 口语压缩）
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;

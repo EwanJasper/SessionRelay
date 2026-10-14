@@ -187,3 +187,33 @@ describe('P4c · 词中误命中补遗（简报实测暴露的新样本）', () 
     expect(d[0].text).toMatch(/渐进式披露/);
   });
 });
+
+describe('P4d · 未决问题显示归一化（1014：压口语不丢信息）', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-14T10:00:00Z' });
+
+  it('口语填充被压掉，真疑问保留', () => {
+    const q = extractQuestions([msg('user', '呃，就是active，就是这个现在这个UU配的这个档，这个我是有pro的，我有pro账号，但是为什么没有那个呢？')]);
+    expect(q).toHaveLength(1);                          // 不拒绝——这是真问题
+    expect(q[0].q).toMatch(/为什么没有那个/);            // 核心疑问保留
+    expect(q[0].q.length).toBeLessThan(56);              // 但比原文短
+  });
+
+  it('第二个样本同样压缩且保留疑问', () => {
+    const q = extractQuestions([msg('user', '还有那个谷歌那边，我们做的谷歌那边的话，为什么模型只有那个3.8flash？')]);
+    expect(q).toHaveLength(1);
+    expect(q[0].q).toMatch(/为什么模型只有/);
+  });
+
+  it('本来就干净的问题不被改动', () => {
+    const q = extractQuestions([msg('user', '为什么量化之后算术能力下降这么多？')]);
+    expect(q).toHaveLength(1);
+    expect(q[0].q).toBe('为什么量化之后算术能力下降这么多？');
+  });
+
+  it('短问句完整保留（注意：<8 字符被既有守卫挡掉，用 10 字符的真实短问）', () => {
+    const q = extractQuestions([msg('user', '这个插件要怎么用起来？')]);
+    expect(q).toHaveLength(1);
+    expect(q[0].q).toContain('怎么用');
+  });
+});

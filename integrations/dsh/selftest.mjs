@@ -131,4 +131,116 @@ const r4 = await bind.execute({ projectPath: 'C:\definitely-not-a-project' });
 check('无效路径被拒', r4.ok === false);
 
 console.log(fail === 0 ? '\nSELFTEST PASS' : `\nSELFTEST FAIL (${fail})`);
-process.exit(fail === 0 ? 0 : 1);
+
+// ═══ 6. 新架构（2026-10-14 按 v2 审查重构）═══
+console.log('=== 6a. cwd 优先：有 agent.session.header.cwd 时直接用，不碰 slug ===')
+{
+  const reg2 = []
+  const ctx2 = {
+    systemPrompt: { section: (s) => { reg2.push(s); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => { const d = fn(); return d }, // 记录 disposer
+  }
+  const fresh = await import(HERE + 'index.js?arch=1')
+  fresh.apply(ctx2)
+  const sec2 = reg2[0]
+
+  // 伪造一个带 cwd 的 assembly（cwd 指向已建库的 music player）
+  const asm = { agent: { id: 'x', session: { header: { cwd: 'E:\music player' } } } }
+  const v = sec2.text(asm)
+  check('有 cwd 时返回字符串', typeof v === 'string')
+  check('有 cwd 时命中 music player（非 slug 猜的）', v.includes('music player') || v.includes('未绑定') || v.includes('尚未接入'))
+  console.log('     cwd 路径简报长度:', v.length)
+
+  // cwd 指向未建库目录 → uninitialized，不列其他项目
+  const asmUn = { agent: { id: 'y', session: { header: { cwd: 'C:\Users\crx\AppData\Local\Temp' } } } }
+  const v2 = sec2.text(asmUn)
+  check('未建库 cwd → 提示尚未接入', v2.includes('尚未接入'))
+  check('未建库 cwd → 不列其他项目', !v2.includes('候选'))
+
+  // 无 cwd（诊断性 assembly）→ 回落 slug，不抛
+  const v3 = sec2.text({})
+  check('无 cwd 时回落且不抛', typeof v3 === 'string')
+}
+
+console.log('=== 6b. 缓存：热路径必须 O(1)，不 spawn 子进程 ===')
+{
+  const reg3 = []
+  const ctx3 = {
+    systemPrompt: { section: (s) => { reg3.push(s); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => fn(),
+  }
+  const fresh = await import(HERE + 'index.js?cache=1')
+  fresh.apply(ctx3)
+  const sec3 = reg3[0]
+  const asm = { agent: { id: 'z', session: { header: { cwd: 'E:\music player' } } } }
+  sec3.text(asm) // 冷：可能同步预热
+  const t0 = Date.now()
+  for (let i = 0; i < 20; i++) sec3.text(asm)
+  const dt = Date.now() - t0
+  check('热路径 20 次求值 < 50ms（实际 ' + dt + 'ms）', dt < 50)
+  console.log('     20 次热求值耗时:', dt + 'ms')
+}
+
+console.log('=== 6c. 只注册一个 section（防跨项目记忆泄漏）===')
+{
+  const regs = []
+  const ctx4 = {
+    systemPrompt: { section: (s) => { regs.push(s.name); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => fn(),
+  }
+  const fresh = await import(HERE + 'index.js?single=1')
+  fresh.apply(ctx4)
+  check('只注册 1 个 section', regs.length === 1)
+  check('名字唯一', new Set(regs).size === 1)
+}
+
+// ═══ 7. 自动接入（2026-10-14）═══
+console.log('=== 7a. findGitRoot / shouldAutoInit ===')
+{
+  const pr = await import(HERE + 'project-resolve.mjs?auto=1')
+  // music player 不是 git 仓库（实测无 .git）→ 不该自动接入
+  const mp = pr.shouldAutoInit('E:\music player')
+  check('music player（无 .git）不自动接入', mp === null)
+  // fork 源码仓是 git 仓库且已建库 → 也不该（已初始化）
+  const core = pr.shouldAutoInit('D:\dsh插件  记忆\core\SessionRelay')
+  check('已建库的 git 仓库不重复接入', core === null)
+  console.log('     music player →', mp, '| core →', core)
+}
+
+console.log('=== 7b. 有 .git 未建库 → 自动接入触发 ===')
+{
+  // 造一个临时 git 仓库（无 .sessionrelay）
+  const os = await import('node:os')
+  const fsx = await import('node:fs')
+  const pathx = await import('node:path')
+  const tmp = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'srelay-autoinit-'))
+  fsx.mkdirSync(pathx.join(tmp, '.git'), { recursive: true })
+
+  const pr = await import(HERE + 'project-resolve.mjs?auto=2')
+  const target = pr.shouldAutoInit(tmp)
+  check('有 .git 未建库 → 返回该项目根', target === tmp)
+  console.log('     自动接入目标:', target)
+
+  // 接进 index.js：cwd 指向它时应走 autoIniting
+  const fresh = await import(HERE + 'index.js?autoinit=1')
+  const reg = []
+  fresh.apply({
+    systemPrompt: { section: (s) => { reg.push(s); return () => {}; }, getSectionOrder: () => 10001 },
+    tools: { register: () => () => {} },
+    effect: (fn) => fn(),
+  })
+  const v = reg[0].text({ agent: { id: 't', session: { header: { cwd: tmp } } } })
+  check('未建库 git 仓库 → 提示"正在接入"', v.includes('正在接入'))
+  check('不提示"说一声接入"（已全自动）', !v.includes('说一声'))
+  console.log('     简报:', v.split('\n')[0])
+
+  // 清理：init 刚建库，SQLite 句柄可能未释放，Windows 上会 EPERM。
+  // 延迟删并容错——清不掉只留一个 Temp 小目录，不影响测试结论。
+  setTimeout(() => { try { fsx.rmSync(tmp, { recursive: true, force: true }) } catch { /* Temp 自洁 */ } }, 3000)
+}
+
+console.log(fail === 0 ? '\nSELFTEST PASS' : `\nSELFTEST FAIL (${fail})`)
+process.exit(fail === 0 ? 0 : 1)

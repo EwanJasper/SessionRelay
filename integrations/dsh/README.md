@@ -119,6 +119,25 @@ node vendor-srelay.mjs                 # fetch from npm
 node vendor-srelay.mjs --from <path>   # copy from an existing install (offline)
 ```
 
+## ⚠️ Prerequisite: the SessionRelay daemon must be running
+
+This plugin **reads** the memory database; it does not collect anything by itself.
+Collection is done by SessionRelay's `watch` daemon, which polls each adapter's
+source files every ~30 s. If the daemon is not running:
+
+- your ZCode / Claude Code sessions are **never captured**
+- the brief will be empty or stale, and it will look like a plugin bug
+
+Install the plugin **after** the daemon is up, and verify with:
+
+```bash
+cd "<your project>"
+node "<srelay>/dist/srelay.js" status      # 守护 line must not say 未运行
+```
+
+`status` prints `auto-capture 未运行` when the daemon is down. Register it with
+`srelay watch --install-service` (recommended) or run `srelay sync` as a one-off.
+
 ## Install
 
 The plugin is a DSH *bundle*: a package whose manifest declares
@@ -161,6 +180,19 @@ Four things bit us during development and are worth knowing before editing:
    (that is exactly how it survived one round of "verified offline" testing).
    Also build the path in one step; `dirname(fileURLToPath(url))` followed by
    `join(..., 'dist')` yields `vendor/dist/dist/...`.
+
+## Compatibility
+
+| Component | Tested | Notes |
+|---|---|---|
+| DeepSeek Harness | `0.2.0-rc.2` | The plugin's `text` provider depends on `systemPrompt.section()` and reads `assembly.agent.session.header.cwd`. Both are internal APIs — a DSH minor bump can change them, and the failure mode is **silent** (no brief, no error). |
+| Node.js | `^22.19.0 \|\| >=24.0.0` | Declared in `engines`, aligned with DSH's own constraint. |
+| SessionRelay | `0.5.1`+ (fork builds included) | Vendored by default; a global install is only a fallback. |
+
+**If the brief stops appearing after a DSH upgrade**, check in this order:
+1. `srelay status` — is the daemon alive?
+2. Does the project directory contain `.sessionrelay/relay.sqlite`?
+3. Set `SRELAY_BRIEF_DEBUG=1` and look for `[dsh-srelay-brief]` lines on stderr.
 
 ## Self-test
 

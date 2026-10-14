@@ -87,16 +87,24 @@ export function projectFromRecentSession(maxAgeMs = 24 * 3600_000) {
     cands.push({ slug: e.name, at: newest })
   }
   cands.sort((a, b) => b.at - a.at)
-  // 优先返回已建库的；同时记住"路径存在但未建库"的最近一个——
-  // 它是"当前在哪个项目"的强信号，不该被当成悬空处理（见 resolveProjectRoot 的 uninitialized）。
-  let uninitialized = null
+  // 规则：**最近活跃的会话说了算**，不是"谁先有库谁说了算"。
+  //
+  // 曾按"线性扫描、返回第一个有库的项目"实现，实测断在新工作区链路上：
+  // 用户在全新目录里跟 DSH 说话（该会话最新），代码却找到更旧的 music player
+  // （有库）并返回它 → 新目录永远等不到"说一声接入"的提示，简报也一直是旧项目的。
+  //
+  // 所以：取 cands[0]（已按 mtime 降序）中第一个能解析出真实路径的，再看它有没有库。
+  // 多项目同时开会话时这个信号本身就有歧义（DSH 不告诉插件"当前会话是哪个"），
+  // 那是已知限制；但单项目场景必须对。
   for (const c of cands) {
     const root = resolveFromSlug(c.slug)
     if (!root) continue
+    if (!fs.existsSync(root)) continue // 目录已删/被移动：跳过，看下一个
     if (fs.existsSync(path.join(root, '.sessionrelay', 'relay.sqlite'))) return root
-    if (!uninitialized && fs.existsSync(root)) uninitialized = root
+    // 最近的项目存在但没建库 → uninitialized（不要退回去找更旧的有库项目）
+    return { uninitialized: root }
   }
-  return uninitialized ? { uninitialized } : null
+  return null
 }
 
 /**
@@ -153,4 +161,42 @@ export function resolveProjectRoot(envRoot) {
   if (reg.length === 1) return { root: reg[0], via: 'registry-single' }
   // ④ 悬空：给出候选，交给用户/模型确认
   return { root: null, candidates: reg, via: null }
+}
+
+// ── 自动接入（2026-10-14）──
+//
+// 用户诉求：新项目不用每次说"接入"。
+//
+// 为什么可以自动：init 的代价极低且**可逆**——实测只建 166KB 的 .sessionrelay/
+// （config.json + relay.sqlite + stats.json），删掉目录就彻底消失。这与"自动绑定"
+// 是截然不同的风险等级：绑定错会把决策写进错的库（不可逆），init 错只是多一个
+// 可删的小目录。
+//
+// 为什么仍然要设门槛：无差别自动 init 会在桌面/下载/盘符根目录留下一堆垃圾库，
+// 还会污染全局注册表。所以规则是——**只有强信号才自动**：
+//   · 从 cwd 向上找到第一个含 .git 的目录（inferProjectRoot 同款逻辑）
+//   · 那个目录没有 .sessionrelay → 才 auto-init 候选
+//   · 没有任何 .git → 不猜，走原来的"说一声接入"
+// 这样：clone 的仓库全自动；随手打开的文件夹零打扰。
+//
+// 上游 init 会写全局注册表（touchRegistry），所以误 init 的代价还包括注册表多一项。
+// 但注册表已有 TTL 剪枝（30 天 + 守护已死 → 自动清除），误 init 会自愈。
+
+/** 从 startDir 向上找第一个含 .git 的目录；找不到返回 null */
+export function findGitRoot(startDir) {
+  let dir = path.resolve(startDir)
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+/** 是否应该自动接入：有 .git 且尚未建库 */
+export function shouldAutoInit(startDir) {
+  const root = findGitRoot(startDir)
+  if (!root) return null
+  if (fs.existsSync(path.join(root, '.sessionrelay', 'relay.sqlite'))) return null
+  return root
 }

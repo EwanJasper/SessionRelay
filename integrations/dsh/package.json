@@ -1,30 +1,13 @@
 {
-  "name": "@crx1146/dsh-sessionrelay",
-  "version": "0.1.0",
+  "name": "dsh-srelay-brief",
+  "version": "0.2.0",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
-  "description": "SessionRelay 项目记忆 → DSH 自动简报与记忆工具（本地优先 · 离线自包含 · 两段式安全绑定）",
-  "keywords": [
-    "dsh",
-    "deepseek",
-    "sessionrelay",
-    "memory",
-    "brief",
-    "system-prompt"
-  ],
-  "publishConfig": {
-    "access": "public"
+  "private": true,
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/rui08984-dot/dsh-sessionrelay.git"
-  },
-  "homepage": "https://github.com/rui08984-dot/dsh-sessionrelay#readme",
-  "bugs": {
-    "url": "https://github.com/rui08984-dot/dsh-sessionrelay/issues"
-  },
-  "author": "rui08984-dot",
   "dependencies": {
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
   },
@@ -32,19 +15,5 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  },
-  "files": [
-    "index.js",
-    "project-resolve.mjs",
-    "cordis.patch.yml",
-    "README.md",
-    "README.zh-CN.md",
-    "LICENSE",
-    "src/cli.js",
-    "src/tools.js",
-    "src/state.js",
-    "src/define-tool.js",
-    "src/index.js",
-    "vendor/**"
-  ]
+  }
 }
