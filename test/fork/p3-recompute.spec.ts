@@ -171,3 +171,71 @@ function countDecisions(db: DB): number {
   }
   return n;
 }
+
+// ── 1014 红队 F2：游标必须是会话 ID，不能是"已算几个位置" ──
+// 位置计数在批次间集合变动时会跳过会话：归档（每小时）/forget/resume 回滚都会让目标集
+// 缩小，OFFSET 相对集合过计一格，其后每个未算会话顺移，最后 progressed >= total 提前
+// 触发 finishVersion——被跳过的会话永远拿旧规则数据，而 extract_meta 说
+// version=N, remaining=0「已是最新」，doctor 的「提取规则版本」检查同样被骗。
+// 守护 6 小时一批、554 个目标会话要 72 小时追完，这 72 小时里归档与判定持续改集合。
+describe('重算游标：批次间集合变动不能跳过会话', () => {
+  function seedDb(): DB {
+    const db = new Database(':memory:') as unknown as DB;
+    seed(db);
+    return db;
+  }
+  // 造 12 个合规会话（confirmed + 有消息）
+  function fill(db: DB, n: number) {
+    for (let i = 0; i < n; i++) addSession(db, `s${String(i).padStart(2, '0')}`, [['user', '决定改用方案', 1]]);
+  }
+  // 把会话踢出目标集：置 cleanup_at 且 message_count=0（模拟 autoArchive 的真实形态）
+  function kick(db: DB, id: string) {
+    db.prepare("UPDATE sessions SET cleanup_at = '2026-10-14T00:00:00Z', message_count = 0 WHERE id = ?").run(id);
+  }
+
+  it('⑦ 已算过的会话离开集合后，后面的会话不被跳过', () => {
+    const db = seedDb();
+    fill(db, 12);
+    // 第一批（batch=4）算 s00..s03 —— 按 id 升序
+    recomputeExtractions(db, 4);
+    // 归档一个**已算过的**会话 → 目标集从 12 缩到 11，位置游标会从此错位
+    kick(db, 's00');
+    // 继续跑到完成
+    let guard = 0;
+    for (;;) {
+      const r = recomputeExtractions(db, 4);
+      if (r.recomputed === 0 && r.remaining === 0) break;
+      if (++guard > 50) throw new Error('未收敛');
+    }
+    // 11 个仍在集合内的会话必须全部带上 kind（即全部被 v9 规则重算过）
+    const rows = db.prepare('SELECT id, decisions FROM sessions WHERE cleanup_at IS NULL AND message_count > 0').all() as Array<{ id: string; decisions: string }>;
+    expect(rows.length).toBe(11);
+    for (const r of rows) {
+      let hasKind = false;
+      try { hasKind = (JSON.parse(r.decisions) as Array<{ kind?: string }>).every((d) => typeof d.kind === 'string'); } catch { /* 坏行 */ }
+      expect(hasKind, `会话 ${r.id} 未被重算（被游标跳过）`).toBe(true);
+    }
+    expect(extractVersionOf(db)).toBe(EXTRACT_VERSION);
+  });
+
+  it('⑧ 未算过的会话离开集合后，不影响其他会话', () => {
+    const db = seedDb();
+    fill(db, 12);
+    recomputeExtractions(db, 4);
+    // 归档一个**还没算到的**会话
+    kick(db, 's09');
+    let guard = 0;
+    for (;;) {
+      const r = recomputeExtractions(db, 4);
+      if (r.recomputed === 0 && r.remaining === 0) break;
+      if (++guard > 50) throw new Error('未收敛');
+    }
+    const rows = db.prepare('SELECT id, decisions FROM sessions WHERE cleanup_at IS NULL AND message_count > 0').all() as Array<{ id: string; decisions: string }>;
+    expect(rows.length).toBe(11);
+    for (const r of rows) {
+      let hasKind = false;
+      try { hasKind = (JSON.parse(r.decisions) as Array<{ kind?: string }>).every((d) => typeof d.kind === 'string'); } catch { /* 坏行 */ }
+      expect(hasKind, `会话 ${r.id} 未被重算`).toBe(true);
+    }
+  });
+});

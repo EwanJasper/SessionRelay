@@ -225,7 +225,13 @@ program
     const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
     const { recomputeExtractions, EXTRACT_VERSION } = await import('../capture/recompute.js');
     const { searchTextOf } = await import('../store/db.js');
+    // ⚠️ 必须调 loadConfig：分词器是进程级单例，只由 loadConfig 里的 applyTokenizer 设置。
+    // 漏掉它（红队 1014 F3 实测），--search-text 会按模块默认的 jieba 重写整个索引，
+    // 而同一项目的 search 按配置的 bigram 产查询词元——索引/查询词元不一致，
+    // 正是 tokenizer.ts 开头自称"中文检索最大的隐性 bug 源"的那件事，静默发生。
+    const { loadConfig } = await import('../shared/config.js');
     const root = requireRoot();
+    loadConfig(root);
     const db = openRelayDb(root);
     try {
       const batch = opts.batch ? Math.max(1, Number(opts.batch)) : 50;

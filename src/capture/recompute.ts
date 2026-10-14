@@ -35,8 +35,16 @@ import type { Msg } from '../core/extract/extract.js';
  *        症状是"索引胀大 + topics 变脏"而非简报出错，所以这个盲区一直没被发现。
  *        ⚠️ 只重算不清 search_text：那是消息插入时写的派生列，要清得走 rebuild 或
  *        定向刷新，见 README。
+ *  9 → 1014 红队回环修三个真缺陷（docs 红队报告 F1/F5/F9）：
+ *        F1 TAGLESS_INJECTED 改成**行界**匹配。原用续行匹配，而客户端真实格式是
+ *           "标记与正文同在一行"，实测只剥掉标记短语、70–84% 正文残留。
+ *        F5 SKILL_CATALOG_LINE 改成**≥3 行连续的块**判据。原单行判据把用户自己的
+ *           kebab-case 清单整行剥掉（实测 129 条消息中招，真决策既进不了 decisions
+ *           也进不了 search_text，双双失明）。
+ *        F9 `不用` 从否定标记族整体移除（实测 13% 的 negative 仅靠它命中，其中约
+ *           三分之二是用户指令/口语/保留型决策），并补词中误命中防护。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 8;
+export const EXTRACT_VERSION = 9;
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;
@@ -56,11 +64,16 @@ function ensureTable(db: DB): void {
     last_recomputed INTEGER NOT NULL DEFAULT 0,
     remaining INTEGER NOT NULL DEFAULT 0,
     progress INTEGER NOT NULL DEFAULT 0,
-    progress_version INTEGER NOT NULL DEFAULT 0
+    progress_version INTEGER NOT NULL DEFAULT 0,
+    cursor_id TEXT NOT NULL DEFAULT ''
   )`);
   const cols = db.prepare('PRAGMA table_info(extract_meta)').all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === 'progress_version')) {
     db.exec('ALTER TABLE extract_meta ADD COLUMN progress_version INTEGER NOT NULL DEFAULT 0');
+  }
+  // cursor_id：重算游标必须是会话 ID 而非位置数（红队 1014 F2）
+  if (!cols.some((c) => c.name === 'cursor_id')) {
+    db.exec("ALTER TABLE extract_meta ADD COLUMN cursor_id TEXT NOT NULL DEFAULT ''");
   }
 }
 
@@ -128,9 +141,18 @@ function remainingCount(db: DB): number {
  *  下次调用跳过前 progress 个。全部算完才把 version 提到 EXTRACT_VERSION。
  *  失败不抛：单会话异常跳过，本批已算的进度仍然保留，下周期继续。
  *
- *  ⚠️ progress 必须与 progress_version 配对使用。版本 bump 会让上一次未跑完的进度
- *  全部作废（那些会话是按旧规则算的），此时要从头开始——否则就会重演 1014 那个
- *  静默损坏：元数据说 v7 已完成，实际只有尾巴几十个会话是 v7 规则算的。 */
+ *  ⚠️ progress_version 必须与 progress 配对。版本 bump 会让上一次未跑完的进度全部作废
+ *  （那些会话是按旧规则算的），此时要从头开始——否则就会重演 1014 那个静默损坏：
+ *  元数据说 v7 已完成，实际只有尾巴几十个会话是 v7 规则算的。
+ *
+ *  ⚠️⚠️ 游标必须是**会话 ID**，不能是"已算几个位置"（红队 1014 F2）。
+ *  位置计数在批次间集合变动时会跳过会话：归档（每小时）、forget、resume 回滚都会让
+ *  目标集缩小，OFFSET 相对集合过计一格，其后每个未算会话顺移一格，最后
+ *  `progressed >= total` 提前触发 finishVersion——**被跳过的会话永远拿着旧规则数据，
+ *  而 extract_meta 说 version=N, remaining=0「已是最新」**，doctor 的「提取规则版本」
+ *  检查同样被骗。守护 6 小时一批、554 个目标会话要 72 小时才追完，这 72 小时里
+ *  归档与判定持续改集合——不是理论风险。
+ *  ID 游标不受集合变动影响：离开集合的会话只是不被重算（正确），没有任何会话被跳过。 */
 export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResult {
   ensureTable(db);
   const cur = extractVersionOf(db);
@@ -142,59 +164,69 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
     return { recomputed: 0, remaining: 0 };
   }
 
-  // 取本批：跳过已算的进度（progress 存在 extract_meta 里）。
-  // 但 progress 是在旧版本下累积的话，它指代的"已算完"毫无意义——一律作废重来。
-  const row = db.prepare('SELECT progress, progress_version FROM extract_meta WHERE id = 1').get() as
-    { progress?: number; progress_version?: number } | undefined;
+  // 取游标：上一个已算会话的 id。stale（版本不匹配）时作废重来。
+  const row = db.prepare('SELECT progress, cursor_id, progress_version FROM extract_meta WHERE id = 1').get() as
+    { progress?: number; cursor_id?: string; progress_version?: number } | undefined;
   const stale = (row?.progress_version ?? 0) !== EXTRACT_VERSION;
-  const skip = stale ? 0 : (row?.progress ?? 0);
-  if (stale && (row?.progress ?? 0) > 0) {
-    // 作废前留一行痕迹：这类"看起来正常其实只算了一半"的故障，最难查的就是没有日志
-    db.prepare('UPDATE extract_meta SET progress = 0, progress_version = ? WHERE id = 1').run(EXTRACT_VERSION);
+  const lastId = stale ? '' : (row?.cursor_id ?? '');
+  if (stale && (row?.cursor_id ?? '')) {
+    // 作废前留痕迹：这类"看起来正常其实只算了一半"的故障，最难查的就是没有日志
+    db.prepare('UPDATE extract_meta SET progress = 0, cursor_id = \'\', progress_version = ? WHERE id = 1').run(EXTRACT_VERSION);
   } else if (!row) {
-    db.prepare('INSERT INTO extract_meta (id, version, progress, progress_version) VALUES (1, ?, 0, ?)').run(cur, EXTRACT_VERSION);
+    db.prepare('INSERT INTO extract_meta (id, version, progress, cursor_id, progress_version) VALUES (1, ?, 0, \'\', ?)').run(cur, EXTRACT_VERSION);
   }
+  // ORDER BY id（稳定、唯一、永不变）而非 confirmed_at DESC——排序不影响正确性，
+  // 但 id 游标要求排序键与游标键一致，否则"id > lastId"会漏。
   const todo = db.prepare(
     `SELECT s.id, s.title FROM sessions s
-     WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0
-     ORDER BY s.confirmed_at DESC, s.id
-     LIMIT ? OFFSET ?`,
-  ).all(batch, skip) as Array<{ id: string; title: string | null }>;
+     WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0 AND s.id > ?
+     ORDER BY s.id
+     LIMIT ?`,
+  ).all(lastId, batch) as Array<{ id: string; title: string | null }>;
+
+  if (todo.length === 0) {
+    // 游标后面没有了 → 全部算完
+    finishVersion(db, 0);
+    return { recomputed: 0, remaining: 0 };
+  }
 
   let done = 0;
   for (const s of todo) {
     try { recomputeSession(db, s); done++; } catch { /* 单会话失败不阻塞整批 */ }
   }
 
-  const progressed = skip + done;
-  if (progressed >= total) {
-    // 全部算完 → 推进版本并清零进度
+  const newLast = todo[todo.length - 1].id;
+  if (todo.length < batch) {
+    // 取不满一批 → 这个游标下后面没有了（新会话会在下次调用时被 `id > lastId` 捞到，
+    // 但版本已推进所以会直接 return——与旧实现同语义，不引入新行为）
     finishVersion(db, done);
     return { recomputed: done, remaining: 0 };
   }
-  // 分批中：只推进进度，不碰 version（下次调用继续跳过已算的）
+  // 分批中：推进游标，不碰 version
   db.prepare(
-    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, progress_version) VALUES (1, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, cursor_id, progress_version) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        last_run_at = excluded.last_run_at,
        last_recomputed = excluded.last_recomputed,
        remaining = excluded.remaining,
        progress = excluded.progress,
+       cursor_id = excluded.cursor_id,
        progress_version = excluded.progress_version`,
-  ).run(cur, new Date().toISOString(), done, total - progressed, progressed, EXTRACT_VERSION);
-  return { recomputed: done, remaining: total - progressed };
+  ).run(cur, new Date().toISOString(), done, Math.max(0, total - done), (row?.progress ?? 0) + done, newLast, EXTRACT_VERSION);
+  return { recomputed: done, remaining: Math.max(0, total - done) };
 }
 
 function finishVersion(db: DB, done: number): void {
   db.prepare(
-    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, progress_version) VALUES (1, ?, ?, ?, 0, 0, ?)
+    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, progress_version, cursor_id) VALUES (1, ?, ?, ?, 0, 0, ?, '')
      ON CONFLICT(id) DO UPDATE SET
        version = ?,
        last_run_at = ?,
        last_recomputed = ?,
        remaining = 0,
        progress = 0,
-       progress_version = ?`,
+       progress_version = ?,
+       cursor_id = ''`,
   ).run(EXTRACT_VERSION, new Date().toISOString(), done, EXTRACT_VERSION,
        EXTRACT_VERSION, new Date().toISOString(), done, EXTRACT_VERSION);
 }

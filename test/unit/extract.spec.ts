@@ -279,30 +279,42 @@ describe('决策跨会话去重（与 listUnresolved 同规）', () => {
   });
 });
 
-describe('技能目录行剥离（无 XML 外壳的第二种注入）', () => {
-  const msg = (role: 'user' | 'assistant', content: string) => ({ role, content, seqNum: 1 });
+describe('技能目录块剥离（无 XML 外壳的第二种注入；≥3 行连续才算目录）', () => {
+  // 红队 1014 F5：单行判据把用户自己的 kebab-case 清单整行剥掉（实测 129 条消息中招），
+  //   '- `web-vitals`: 决定把前端监控库换成 web-vitals，弃用旧的自研埋点' —— 整行消失，
+  //   真决策既进不了 decisions 也进不了 search_text，双双失明。
+  // 故改成块判据（≥3 行连续）。客户端注入的目录是 10+ 行的长列表，用户自己的清单
+  // 通常 1-2 行且夹在散文里。实测分布：≥3 行 63 处 / 恰好 2 行 55 处 / 单行 5 处。
+  const CATALOG = [
+    '- `steel-manning`: 最强反方论证：先构建反方论证，再决定接受、修订或坚持',
+    '- `ppt-master`: AI-driven presentation builder',
+    '- `executing-plans`: 有一份写好的实施计划要执行时使用',
+    '- `paper-polish`: 顶刊标准润色',
+  ].join('\n');
 
-  it('markdown 列表形态的技能目录行被剥掉', () => {
-    const s = stripInjected('好的，我们用 PostgreSQL。\n- `steel-manning`: 最强反方论证：先构建反方论证，再决定接受、修订或坚持\n- `ppt-master`: AI-driven presentation builder');
+  it('≥3 行连续的技能目录块被剥掉', () => {
+    const s = stripInjected('好的，我们用 PostgreSQL。\n' + CATALOG);
     expect(s).not.toContain('steel-manning');
     expect(s).not.toContain('ppt-master');
     expect(s).not.toContain('修订或坚持');
     expect(s).toContain('我们用 PostgreSQL');
   });
 
-  it('executing-plans 那种英文技能描述同样剥', () => {
-    const s = stripInjected('- `executing-plans`: 有一份写好的实施计划要执行时使用。Use when you have a written implementation plan to execute with review checkpoints.');
-    expect(s.trim()).toBe('');
+  it('用户自己写的单行清单项不被误杀（红队 F5 的格式）', () => {
+    const t = '- `web-vitals`: 决定把前端监控库换成 web-vitals，弃用旧的自研埋点';
+    expect(stripInjected(t)).toContain('web-vitals');
+    expect(stripInjected(t)).toContain('弃用旧的自研埋点');
   });
 
-  it('用户自己写的普通列表项不被误杀', () => {
+  it('用户自己写的两行清单也不被误杀', () => {
+    const t = '- `deepseek-v4-flash-0731`: 认 `none`（实测能真关掉思考）\n- `zhipu-vision`: 聊天看图主力，默认档';
+    expect(stripInjected(t)).toContain('deepseek-v4-flash-0731');
+    expect(stripInjected(t)).toContain('zhipu-vision');
+  });
+
+  it('用户自己写的普通列表项不被误杀（无反引号，判据本来就不命中）', () => {
     const t = '- 第一件事：把数据库迁完\n- 第二件事：补测试';
     expect(stripInjected(t)).toBe(t);
-  });
-
-  it('中文冒号形态也认', () => {
-    const s = stripInjected('- `foo-bar`: 某个技能的描述');
-    expect(s.trim()).toBe('');
   });
 });
 

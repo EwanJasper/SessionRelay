@@ -93,12 +93,16 @@ const DECISION_RES: RegExp[] = [
 // ⚠️ 中文没有词边界，必须防词中误命中——与 DECISION_FALSE_POSITIVE（"决定论"≠决定）
 // 同一类病，实测已中招：
 //   "切换成功/切换成" 里含着 "换成" → 正面句被判否定
-//   "不放弃/绝不放弃" 里含着 "放弃" → 正面句被判否定
-// 故对这两个词加负向后视。Node ≥9 支持 lookbehind，engines 允许的版本都够。
-const NEGATIVE_MARKERS = /(?<![切])换成|(?<![不没未绝并])放弃|弃用|不再用|回退到|退回到|改用|换用|不采用|不用/;
-// 客套语不是决策语义（"不用感谢/不用客气"）——这类文本能进 decisions 说明上游抽取已误收，
-// 但标记不该再放大它。
-const NEGATIVE_FALSE_POSITIVE = /(不用感谢|不用客气|不用谢|无须放弃|不必放弃)/;
+//   "改用户配置" 里含着 "改用"（改-用-户）
+//   "无需放弃治疗" 里含着 "放弃"
+//   "并不弃用旧格式" 里含着 "弃用"
+// 故对这两个词加负向后视。
+// `不用` 已从标记族**整体移除**：红队 1014 F9 实测 453 条 negative 中 59 条（13%）
+// 仅靠它命中，人工判读约三分之二是用户对 AI 的指令/口语/保留型决策——
+// "你不用管过程"、"不用每章都烧朱雀额度"、"旧会话不用删，放着就行"（语义恰是保留）。
+// 信号太弱，误报远大于收益。ADR-001 记的"标记不该放大客套语"正是被它违反的。
+const NEGATIVE_MARKERS = /(?<![切])换成|(?<![不没未绝并需])放弃|弃用|不再用|回退到|退回到|改用|换用|不采用/;
+const NEGATIVE_FALSE_POSITIVE = /(改用户|改用途|无需放弃|不必放弃|并不弃用|未弃用|不放弃|绝不放弃|切换成功|切换成)/;
 
 /** 这条决策是否编码了"否掉一条路"（ADR-001）。只做标记，不做抽取。 */
 export function isNegativeDecision(text: string): boolean {
@@ -327,16 +331,28 @@ const INJECTED_BLOCKS: RegExp[] = [
   /<(?:ctx|context)>[\s\S]*?<\/(?:ctx|context)>/gi,
 ]
 
-// 技能目录行：`- \`skill-name\`: 描述…`。ZCode/DSH 把可用技能清单以 markdown 列表
-// 形式注入用户消息，**没有 XML 外壳**，所以上面的成对块规则抓不到。实测这些行的
-// 片段被提成决策和未决问题（steel-manning 的"再决定接受、修订或坚持"、executing-plans
-// 的 "Use when you have a written implementation plan…" 都这么来的），把简报名额占满。
-// 判据 = 反引号包**含连字符的小写名** + 冒号。
-// 为什么必须要求连字符：真技能 slug（steel-manning / executing-plans / ppt-master /
-// dsh-fast-lookup）全含连字符；而技术写作里常见的 `- \`config.json\`: 说明`、
-// `- \`useState\`: 说明`、`- \`AGENTS.md\``、`- \`postgres\`: 说明` 全不含。红队 1014
-// 实测后者会被整行剥掉，行内真决策静默丢失。同时去掉 i 标志——它原本让 [a-z0-9]
-// 匹配任意大小写，`AGENTS.md` 这类大写名因此中招。
+// 技能目录**块**：≥3 行连续的 `- \`name\`: 描述…`。ZCode/DSH 把可用技能清单以
+// markdown 列表形式注入用户消息，**没有 XML 外壳**，所以上面的成对块规则抓不到。
+//
+// ⚠️ 为什么必须要求"≥3 行连续"（红队 1014 F5，实测 129 条消息中招）：
+// 单行形态与用户自己的技术清单**无法区分**。实测被误吃的真内容：
+//   `- \`web-vitals\`: 决定把前端监控库换成 web-vitals，弃用旧的自研埋点`
+//   `- \`deepseek-v4-flash-0731\`: 认 \`none\`（实测能真关掉思考）+ low/medium/high 全套`
+//   `- \`zhipu-vision\`: 聊天看图主力，默认档`
+// 整行被剥 → 该行既进不了 decisions 也进不了 search_text，**真决策双双失明**。
+// 注释原先挑的反例（config.json / useState / AGENTS.md / postgres）都不含连字符，
+// 而真实技术写作里 kebab-case 标识符遍地（web-vitals / next-auth / vue-router /
+// vite-plugin-*），全部命中——那个辩护不成立。
+// 实测分布：≥3 行连续 63 处（客户端目录块）、恰好 2 行 55 处、单行 5 处。
+// 客户端注入的目录是 10+ 行的长列表，用户自己的清单通常 1-2 行且夹在散文里，
+// 故 ≥3 是安全的判据。同时去掉 i 标志——它原本让 [a-z0-9] 匹配任意大小写，
+// `AGENTS.md` 这类大写名因此中招。
+const SKILL_CATALOG_BLOCK = /(?:^[ \t]*[-*+]\s*`[a-z0-9]+(?:-[a-z0-9]+)+`\s*[:：][^\n]*\n){3,}/gm
+
+// 单行形态，**只供 doctor 检测用**（looksInjected），不用于剥离。
+// 理由：doctor 面对的是已入库的决策碎片（单行），而剥离面对的是整条消息（多行）——
+// 两者的正确判据不同。这是有意的分工，不是历史上那种" undocumented 的规则漂移"：
+// 漂移指的是同一职责两套规则，而这里职责本来就不同（一个防误杀、一个防漏检）。
 const SKILL_CATALOG_LINE = /^[ \t]*[-*+]\s*`[a-z0-9]+(?:-[a-z0-9]+)+`\s*[:：][^\n]*/gm
 
 // [fork 1014 深夜] 无标签注入：客户端把 XML 外壳**剥掉之后**才把系统上下文存进
@@ -348,24 +364,36 @@ const SKILL_CATALOG_LINE = /^[ \t]*[-*+]\s*`[a-z0-9]+(?:-[a-z0-9]+)+`\s*[:：][^
 //   · decisions 未被污染（该文本不含决策触发词）——所以这个盲区此前的症状是
 //     "索引胀大 + topics 变脏"，而不是简报出错，因此一直没被发现
 //
-// 判据：客户端每轮生成的样板句，逐字固定，与用户写的内容无关。段落间以空行分隔，
-// 故用 `(?:\n(?!\n)[^\n]*)*` 吃掉续行但不在空行处越过——宁可少剥，不能吃掉用户真话。
+// 判据：客户端每轮生成的样板句，逐字固定，与用户写的内容无关。
+// ⚠️ 一律用**行界**匹配，不用续行匹配。红队 1014 F1 实测：真实客户端格式是
+//    "标记与正文同在一行"——`Current DSH file policy: workspace-write. Any available
+//    operation … fails closed.` 续行匹配要求标记句行尾紧跟换行才吃后续行，同线时
+//    只命中字面标记，冒号后 70–84% 的正文原样留在索引和 topics 里（v8 声称剥干净，
+//    实际只剥了 5 个短语）。行界匹配的另一个方向也安全：不越过行尾，所以不存在
+//    "客户端把用户文字接在快照后就一起吃掉"的续行失效模式（F6）。
+// ⚠️ 行界匹配仍有一个残留风险：注入与用户文字**同在一条线上**时会一起剥（F7 的变体）。
+//    故加 CJK 护栏 `[^\n\u4e00-\u9fff]`——这些样板全是英文，而本项目用户内容是中文，
+//    匹配遇中文即停，用户文字完整保留。代价是英文用户内容若与样板同线仍会被一起吃，
+//    但那条路本就无解（样板与英文内容无法用字符类区分）。
 // ⚠️ 故意**不剥** "Here are the existing contents of your todo list: […]"——
 // 那是用户真实的待办状态，是信息不是样板（覆盖度盘点：506 条消息带计划类内容，
 // 而它正是这些内容的载体）。
+const NO_CJK = '\\u4e00-\\u9fff';
 const TAGLESS_INJECTED: RegExp[] = [
-  /The TodoWrite tool hasn't been used recently\.[\s\S]*?ignore if not applicable\.?/gi,
-  /Current runtime context\. This snapshot supersedes earlier runtime-context snapshots\.(?:\n(?!\n)[^\n]*)*/gi,
-  /Current DSH file policy:(?:\n(?!\n)[^\n]*)*/gi,
-  /Approval policy: ask\.(?:\n(?!\n)[^\n]*)*/gi,
-  /The active session goal is paused\.(?:\n(?!\n)[^\n]*)*/gi,
+  new RegExp(`The TodoWrite tool hasn't been used recently\\.[^\\n${NO_CJK}]*`, 'gi'),
+  new RegExp(`This is just a gentle reminder - ignore if not applicable\\.[^\\n${NO_CJK}]*`, 'gi'),
+  new RegExp(`Current runtime context\\.[^\\n${NO_CJK}]*`, 'gi'),
+  new RegExp(`Current DSH file policy:[^\\n${NO_CJK}]*`, 'gi'),
+  new RegExp(`Approval policy: ask\\.[^\\n${NO_CJK}]*`, 'gi'),
+  new RegExp(`The active session goal is paused\\.[^\\n${NO_CJK}]*`, 'gi'),
 ]
 
 export function stripInjected(text: string): string {
   if (!text || typeof text !== 'string') return text
   let out = text
   for (const re of INJECTED_BLOCKS) out = out.replace(re, '\n')
-  out = out.replace(SKILL_CATALOG_LINE, '\n')
+  // 用块判据（≥3 行连续）而非单行——单行会吃掉用户自己的 kebab-case 清单（F5）
+  out = out.replace(SKILL_CATALOG_BLOCK, '\n')
   for (const re of TAGLESS_INJECTED) out = out.replace(re, '\n')
   return out
 }
