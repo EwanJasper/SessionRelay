@@ -100,7 +100,7 @@ export function dshSessionsDir(cfg: RelayConfig): string {
 export function loadConfig(root: string): RelayConfig {
   const def = defaultConfig();
   const file = configFile(root);
-  if (!fs.existsSync(file)) return def;
+  if (!fs.existsSync(file)) { applyTokenizer(def); return def; }
   // [fork 0922] 配置损坏时给可读错误而非裸堆栈（doctor 把"config 可解析"当检查项，
   // 常规命令路径却拿不到指导信息——原实现 JSON.parse 直接抛）
   let raw: Record<string, unknown>;
@@ -109,7 +109,7 @@ export function loadConfig(root: string): RelayConfig {
   } catch (e) {
     throw new Error(`config.json 解析失败（${file}）：${(e as Error).message} —— 修复该文件，或删除后 srelay init 重建`);
   }
-  return {
+  const cfg: RelayConfig = {
     ...def,
     ...raw,
     capture: { ...def.capture, ...(raw.capture ?? {}) },
@@ -120,6 +120,30 @@ export function loadConfig(root: string): RelayConfig {
     archive: { ...def.archive, ...(raw.archive ?? {}) },
     recompute: { ...def.recompute, ...(raw.recompute ?? {}) },
   };
+  applyTokenizer(cfg);
+  return cfg;
+}
+
+/**
+ * 把配置里的分词器应用到进程级单例（ADR-002）。
+ *
+ * 为什么放在 loadConfig 这个唯一收口处：分词器的消费者遍布 CLI search、MCP、
+ * 守护的捕获写索引、recompute——逐个调用点接必漏一个，而漏掉的那个就是
+ * "配了 bigram 但这条路径还在用 jieba"的静默分叉（索引与查询词元不一致，
+ * 正是 tokenizer.ts 开头说的"中文检索最大的隐性 bug 源"）。
+ *
+ * ⚠️ 切换分词器后**必须重建索引**：已入库的 search_text 是旧分词器产的，
+ * 旧词元与新查询词元对不上，表现为"改了配置搜索结果变少/变空"且不报错。
+ * 用 srelay recompute 重算，或删库重建。
+ */
+function applyTokenizer(cfg: RelayConfig): void {
+  try {
+    // 动态 require 而非顶层 import：tokenizer.ts 只从本模块 import type（编译期擦除），
+    // 但惰性加载能确保即便将来有人把它改成运行时 import 也不会形成循环依赖。
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { setTokenizer } = require('../core/tokenize/tokenizer.js') as typeof import('../core/tokenize/tokenizer.js');
+    setTokenizer(cfg.search?.tokenizer ?? 'jieba');
+  } catch { /* 分词器不可用时保持默认，不阻塞配置加载 */ }
 }
 
 export function saveConfig(root: string, cfg: RelayConfig): void {

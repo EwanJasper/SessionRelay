@@ -5,10 +5,17 @@
 // 1. @node-rs/jieba v2 为类 API：Jieba.withDict(dict)，dict 来自 '@node-rs/jieba/dict'
 // 2. 单字 CJK 必须入索引（"按月"非词典词，切为 按|月 —— 短语查询 C5 依赖位置连续性）；
 //    单字仅在"非引号查询"侧丢弃（AND 词元无区分度）。引号短语保留完整 token 序列。
+//
+// ⚠️ config.ts 早就声明 search.tokenizer: 'jieba' | 'bigram'，但这里长期只有 jieba
+// 一条实现——配置里写 bigram 什么都不发生且不报错（ADR-002）。现已补齐。
 import { Jieba } from '@node-rs/jieba';
 import { dict } from '@node-rs/jieba/dict.js';
+import type { RelayConfig } from '../../shared/config.js';
+
+type TokenizerKind = RelayConfig['search']['tokenizer'];
 
 const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
+const IDENT_RE = /[a-z0-9_][a-z0-9_.\/\-]*/g;
 
 let jieba: Jieba | null = null;
 function getJieba(): Jieba {
@@ -35,6 +42,9 @@ export interface SegmentOptions {
 
 /** 单个 CJK 连续段 → 词元 */
 function segmentRun(run: string, keepSingles: boolean): string[] {
+  // ADR-002：bigram 路线完全不碰词典——零加载、零体积，也不受 jieba 上下文相关
+  // 切分的影响（同一子串在不同文档里可能被切成不同词，那是词级匹配的不稳定源）。
+  if (activeTokenizer === 'bigram') return segmentBigram(run, keepSingles);
   const words = getJieba().cutForSearch(run, true).map((w) => w.trim()).filter((w) => w.length > 0);
   if (keepSingles) return words;
   const multi = words.filter((w) => Array.from(w).length >= 2 || !Array.from(w).every((ch) => isCjkCode(ch.codePointAt(0)!)));
@@ -44,7 +54,38 @@ function segmentRun(run: string, keepSingles: boolean): string[] {
 /** 非 CJK 段 → 标识符形态词元（src/db/query.ts 保持单 token） */
 function pushNonCjk(part: string, out: string[]): void {
   if (!part) return;
-  for (const t of part.match(/[a-z0-9_][a-z0-9_.\/\-]*/g) ?? []) out.push(t);
+  IDENT_RE.lastIndex = 0;
+  for (const t of part.match(IDENT_RE) ?? []) out.push(t);
+}
+
+/**
+ * 纯 unigram+bigram 分词（ADR-002）——不依赖任何词典。
+ * 依据 SIGIR 1997《Chinese text retrieval without using a dictionary》：中文检索不需要
+ * 通用词典，bigram 在三套测试集上全胜 138,955 词的最大匹配词典。
+ *
+ * 本机实测（D:\agent1super，37818 条消息 / 65 个真实查询，两边各自建索引）：
+ *   召回打平（65/65 都是 100%），但 jieba 平均返回 38.5 条、bigram 只返回 3.0 条，
+ *   jieba 多出的 2270 条抽样判读绝大多数是噪声（命中"需要/什么/模型"这类常用词）。
+ *   所以词典没带来可测的召回收益。
+ *
+ * **但没有切成默认**：本测量的 ground truth 是"正文字面包含查询"，这个定义本身偏向
+ * bigram（它本质就是子串匹配），测不了"换个说法"的查询。paraphrase 场景未验证前不动默认。
+ */
+function segmentBigram(run: string, keepSingles: boolean): string[] {
+  const chars = Array.from(run);
+  const out: string[] = [];
+  if (keepSingles) for (const c of chars) out.push(c);
+  for (let i = 0; i + 1 < chars.length; i++) out.push(chars[i] + chars[i + 1]);
+  return out;
+}
+
+/** 当前生效的分词器（进程级缓存；配置在启动时读一次，改了要重启守护） */
+let activeTokenizer: TokenizerKind = 'jieba';
+export function setTokenizer(kind: TokenizerKind): void {
+  activeTokenizer = kind;
+}
+export function activeTokenizerKind(): TokenizerKind {
+  return activeTokenizer;
 }
 
 /** 文本 → 词元序列（索引与查询共用） */
