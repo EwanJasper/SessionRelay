@@ -515,8 +515,9 @@ export function refreshDecisionsIncremental(db: DB, id: string): boolean {
   const mergedDecs = [...existing, ...newDecs];
   let questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }> = [];
   try { questions = JSON.parse((db.prepare('SELECT key_questions FROM sessions WHERE id = ?').get(id) as { key_questions?: string } | undefined)?.key_questions ?? '[]'); } catch { questions = []; }
-  const qKeys = new Set(questions.map((q) => (q.q ?? '').slice(0, 40)));
-  const mergedQs = [...questions, ...newQs.filter((q) => !qKeys.has((q.q ?? '').slice(0, 40)))];
+  // [1015] 与其余写路径同规：走 dedupKey（标点/表格竖线一并剔掉），不再另用裸 slice(0,40)
+  const qKeys = new Set(questions.map((q) => dedupKey(q.q)));
+  const mergedQs = [...questions, ...newQs.filter((q) => !qKeys.has(dedupKey(q.q)))];
   const existingTags = (() => {
     const row = db.prepare('SELECT user_tags, topics FROM sessions WHERE id = ?').get(id) as { user_tags?: string | null; topics?: string | null } | undefined;
     try { return JSON.parse(row?.user_tags ?? '[]') as string[]; } catch { return []; }
@@ -524,8 +525,11 @@ export function refreshDecisionsIncremental(db: DB, id: string): boolean {
   let existingTopics: string[] = [];
   try { existingTopics = JSON.parse((db.prepare('SELECT topics FROM sessions WHERE id = ?').get(id) as { topics?: string | null } | undefined)?.topics ?? '[]') as string[]; } catch { existingTopics = []; }
   const topicsAndDecisions = [...existingTopics, ...mergedDecs.map((d) => d.text.slice(0, 30)), ...existingTags];
-  db.prepare('UPDATE sessions SET decisions = ?, key_questions = ?, meta_text = ? WHERE id = ?')
-    .run(JSON.stringify(mergedDecs), JSON.stringify(mergedQs), metaTextOf(s.title, topicsAndDecisions), id);
+  // [1015] 打版本戳：这是**第四条**写派生列的路径（judge 的增量刷新，每闲置 10 分钟必跑，最勤快的一条），
+  // 此前独独漏了打戳——于是 active 长活会话的 extracted_version 永远停在 0，看起来像"规则没生效"。
+  // 修的是这个，而不是放宽重算的状态过滤（那条不变量由回归测试 ⑤ 钉着：active 由 judge 管）。
+  db.prepare('UPDATE sessions SET decisions = ?, key_questions = ?, meta_text = ?, extracted_version = ? WHERE id = ?')
+    .run(JSON.stringify(mergedDecs), JSON.stringify(mergedQs), metaTextOf(s.title, topicsAndDecisions), EXTRACT_VERSION, id);
   return true;
 }
 
