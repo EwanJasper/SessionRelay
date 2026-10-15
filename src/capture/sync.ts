@@ -135,6 +135,14 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   } finally {
     if (own) db.close();
   }
+  // [1015 夜] 看板自动区刷新必须挂在**守护这条路径**上（runSync），不能只挂在 `srelay sync` 命令上——
+  // 实测守护进程跑的就是 runSync，于是「全自动」在真实使用里从没自动过（只有手动 sync 才会刷）。
+  // 契约不变：只重写模块列 = auto:todos 的行 + 只刷新本工具生成的图；人写的行一个字节不动。
+  // 动态 import 避免 capture→cli 的静态分层倒挂；失败不连坐捕获。
+  try {
+    const { syncKanbanAuto } = await import('../cli/kanban.js');
+    syncKanbanAuto(opts.projectRoot, opts.config);
+  } catch { /* 看板刷不新不影响捕获 */ }
   return result;
 }
 
