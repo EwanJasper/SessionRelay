@@ -38,7 +38,7 @@ export interface ExportResult {
 
 interface ExportData {
   sessions: HopSessionFile[];
-  decisions: Array<{ at: string; source: string; sessionId: string; title: string | null; text: string; seq: number }>;
+  decisions: Array<{ at: string; source: string; sessionId: string; title: string | null; text: string; seq: number; pinned?: boolean; kind?: 'decision' | 'negative' }>;
   topicMap: Record<string, string[]>;
   fileMap: Record<string, number>;
   messageCount: number;
@@ -91,7 +91,14 @@ function buildExportData(opts: ExportOptions): ExportData {
   }
 
   sessions.sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const decisions = sessions.flatMap((s) => s.decisions.map((d) => ({ at: d.at ?? s.created_at, source: s.source, sessionId: s.id, title: s.title, text: d.text, seq: d.seq })));
+  // [fork 1015] 这个投影**曾经是白名单**，把 pinned 与 kind 悄悄吃了：导出的 decisions 汇总里
+  // 置顶状态与"否掉一条路"的标记全丢，导入后用户置顶的东西从简报里消失、negative 退化成普通决策。
+  // 现在把用户态字段一并带上（仍是可选字段，老包读不到就是 undefined，语义同缺省）。
+  const decisions = sessions.flatMap((s) => s.decisions.map((d) => ({
+    at: d.at ?? s.created_at, source: s.source, sessionId: s.id, title: s.title, text: d.text, seq: d.seq,
+    ...(d.pinned !== undefined ? { pinned: d.pinned } : {}),
+    ...(d.kind !== undefined ? { kind: d.kind } : {}),
+  })));
   const topicMap: Record<string, string[]> = {};
   for (const s of sessions) for (const t of s.topics) (topicMap[t] ??= []).push(s.id);
   const fileMap: Record<string, number> = {};

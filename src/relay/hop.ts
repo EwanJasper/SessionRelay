@@ -33,7 +33,10 @@ export interface HopSessionFile {
   summary_rule: string | null;
   topics: string[];
   files: string[];
-  decisions: Array<{ text: string; seq: number; at?: string }>;
+  // [fork 1015] pinned（决策置顶，`srelay pin`）与 kind（ADR-001 否定性决策标记）是**用户态**，
+// 必须在跨机搬运时原样保留——它们是可选项（hop/1.0 向后兼容：老包没有这两个字段，读方当缺省处理），
+// 但**不许再被任何白名单投影丢掉**（历史 bug：metadata/decisions.json 的显式投影把它们吃了）。
+decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }>;
   questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }>;
   messages: Array<{ seq: number; role: string; content: string; createdAt: string | null }>;
 }

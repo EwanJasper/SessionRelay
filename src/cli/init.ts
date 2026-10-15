@@ -42,37 +42,45 @@ export function detectSources(): DetectedSource[] {
     ],
   };
 
+  // [fork 1015] 环境变量必须优先于内置默认路径。
+  // 病历：config.ts 早就承诺「环境变量 > config.json > 默认值」，init 的交互界面也明文让用户
+  // 去设 CODEX_DIR 之类，但 detectSources() 里全是硬编码路径 —— 用户按提示设了变量，
+  // 探测照样只看默认位置，于是「装了的源显示未安装」（或反过来），init 与 doctor 双双失聪。
+  // 这里不接 config.json（init 常常发生在还没有 config.json 的时候），只做 env > 默认。
+  const envFirst = (key: string, def: string): string => process.env[key]?.trim() || def;
+
   const checks: Array<{ id: string; name: string; paths: string[] }> = [
     {
       id: 'claude-code', name: 'Claude Code',
-      paths: [path.join(home, '.claude', 'projects')],
+      paths: [envFirst('CLAUDE_PROJECTS_DIR', path.join(home, '.claude', 'projects'))],
     },
     {
       id: 'zcode', name: 'ZCode',
-      paths: [path.join(home, '.zcode', 'cli', 'db', 'db.sqlite')],
+      paths: [envFirst('ZCODE_DB_PATH', path.join(home, '.zcode', 'cli', 'db', 'db.sqlite'))],
     },
     {
       id: 'dsh', name: 'DeepSeek Harness',
       // 会话按工作目录 slug 分组存放；探测目录本身即可判定源可用。
       // 此前漏了这一项：--yes 走「只选已安装的源」，故裸跑 srelay init 建出的库
       // 永远采不到 DSH 会话（适配器 src/adapters/dsh/ 早已存在，只差这个探测项）。
-      paths: [path.join(home, '.dsh', 'sessions')],
+      paths: [envFirst('DSH_SESSIONS_DIR', path.join(home, '.dsh', 'sessions'))],
     },
     {
       id: 'codex', name: 'Codex',
-      paths: [path.join(home, '.codex')],
+      paths: [envFirst('CODEX_DIR', path.join(home, '.codex'))],
     },
     {
       id: 'qoder', name: 'Qoder',
       paths: [
-        path.join(home, '.qoder-cn'),           // 中国版
+        envFirst('QODER_DIR', path.join(home, '.qoder-cn')),  // 中国版（env 优先）
         path.join(home, '.qoder'),              // 国际版
         path.join(home, '.qoder-cn', 'cache', 'projects'),  // 会话数据子目录
       ],
     },
     {
       id: 'trae', name: 'Trae（部分支持）',
-      paths: traePaths[platform] ?? traePaths.linux ?? [],
+      // TRAE_DIR 优先；未设时按平台候选逐个探测（Trae 各平台目录名不同，见上表）
+      paths: [...(process.env.TRAE_DIR?.trim() ? [process.env.TRAE_DIR.trim()] : []), ...(traePaths[platform] ?? traePaths.linux ?? [])],
     },
   ];
 

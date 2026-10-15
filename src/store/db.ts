@@ -734,7 +734,7 @@ export interface SessionFull {
   id: string; source: string; sourceSessionId: string; projectId: string; origin: string;
   state: string; title: string | null; createdAt: string; lastEventAt: string | null;
   messageCount: number; files: string[]; topics: string[];
-  decisions: Array<{ text: string; seq: number; at?: string }>;
+  decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }>;
   questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }>;
   summaryRule: string | null; userTags: string[]; author: string | null;
   importedFrom: string | null; originProject: string | null; contentHash: string | null;
@@ -762,7 +762,7 @@ export function getSessionFull(db: DB, id: string): SessionFull | undefined {
 export interface ImportedSessionInput {
   source: string; sourceSessionId: string; projectId: string;
   title: string | null; createdAt: string; lastEventAt: string | null;
-  messageCount: number; topics: string[]; decisions: Array<{ text: string; seq: number; at?: string }>;
+  messageCount: number; topics: string[]; decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }>;
   summaryRule: string | null; author: string | null; importedFrom: string | null; originProject: string | null;
   contentHash: string | null; sourceFile: string | null;
 }
