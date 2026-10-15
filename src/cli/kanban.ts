@@ -13,8 +13,10 @@
 //      否则插件读不到（解析器只认这几种 emoji 开头的状态）。
 import fs from 'node:fs';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import type { DB } from '../store/db.js';
 import { listUnresolved, UBIQUITOUS_FILES } from '../store/db.js';
+import { zcodeDbPath, type RelayConfig } from '../shared/config.js';
 
 export interface KanbanInitResult {
   path: string;
@@ -24,6 +26,99 @@ export interface KanbanInitResult {
 }
 
 const FILE_COL = '任务';
+
+// ───────────────────── 结构化待办 → 看板（2026-10-15 夜 · B1） ─────────────────────
+//
+// 为什么：看板段的本来目的是「计划/下一步」——b3 实测这是全库最大盲区（只捕获 3.3%）。
+// 而 ZCode 的 `todo` 表里**躺着真任务、真状态**（实测：主库 2059 条 / 进行中 187；
+// music 622 / 24；内容形如「渲染管线换 GeckoLib（几何/UV 正确，截图已确认）」）。
+// 之前的草稿只从文件清单/未决/会话标题里凑——那些是**盘点**不是计划，所以只能打 ⬜。
+// 这一批是**结构化来源**，因此允许用 🔄 进简报的看板段（这正是那段存在的意义）。
+//
+// 自动化契约：这些行带 `auto:todos` 模块标记，`syncKanbanAuto` 每次只重写这些行，
+// **人写的行一个字节都不动**（与「绝不覆盖」同一条纪律）。
+
+export interface TodoItem { content: string; status: string; updatedAt: number }
+
+const AUTO_MODULE = 'auto:todos'
+
+/** 读 ZCode 里本项目的近期待办。绝不抛：读不到返回 []。 */
+export function todoRowsOf(root: string, cfg: RelayConfig, days = 7, limit = 6): TodoItem[] {
+  try {
+    const p = zcodeDbPath(cfg)
+    if (!fs.existsSync(p)) return []
+    const z = new Database(p, { readonly: true })
+    try {
+      // ⚠️ 必须排除子代理/工作流子会话的待办——实测不加这条，抓到的 6 条全是子代理任务书里的
+      //    「Submit structured result」「汇总 unclear / unsupported / willAsk」（audit actor 的 todo）。
+      //    这跟决策侧同一个教训：**来源比内容更可靠**，而 task_type 就是来源的真值。
+      const rows = z.prepare(`
+        SELECT t.content AS content, t.status AS status, t.time_updated AS updatedAt
+        FROM todo t JOIN session s ON s.id = t.session_id
+        WHERE lower(s.directory) = lower(?) AND t.time_updated >= ?
+          AND coalesce(s.task_type, '') NOT IN ('subagent_child', 'workflow_child')
+        ORDER BY t.time_updated DESC LIMIT 200`).all(path.resolve(root), Date.now() - days * 86400000) as TodoItem[]
+      const seen = new Set<string>()
+      const out: TodoItem[] = []
+      // 进行中优先（简报只读带 🔄/⛔ 的行），同内容去重留最新
+      for (const pass of ['in_progress', 'pending']) {
+        for (const r of rows) {
+          if (r.status !== pass) continue
+          const k = String(r.content ?? '').trim()
+          if (!k || seen.has(k)) continue
+          seen.add(k)
+          out.push({ ...r, content: k })
+          if (out.length >= limit) return out
+        }
+      }
+      return out
+    } finally { try { z.close() } catch { /* 已关闭 */ } }
+  } catch { return [] }
+}
+
+/** 待办 → 看板行（进行中打 🔄 会被简报读取；待办打 ⬜ 不进简报）。 */
+export function renderTodoRows(todos: TodoItem[]): string[][] {
+  return todos.map((t) => [
+    String(t.content).slice(0, 34),
+    t.status === 'in_progress' ? '🔄 进行中' : '⬜ 待办',
+    AUTO_MODULE,
+    `来自 ZCode 待办（${new Date(t.updatedAt).toISOString().slice(5, 10)}）`,
+  ])
+}
+
+/** 把自动区（模块列 = auto:todos）替换成最新待办；**其余行逐字保留**。 */
+export function syncKanbanAuto(root: string, cfg: RelayConfig): { ok: boolean; reason: string; rows: number } {
+  const file = path.join(root, 'progress.md')
+  if (!fs.existsSync(file)) return { ok: false, reason: '没有 progress.md（先跑 srelay kanban init）', rows: 0 }
+  try {
+    const todos = todoRowsOf(root, cfg)
+    const fresh = renderTodoRows(todos)
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/)
+    const isSep = (l: string) => /^\|[-\s|:]+\|$/.test(l.trim())
+    const isAuto = (l: string) => l.trim().startsWith('|') && l.includes(AUTO_MODULE)
+    // 自动行插在**表格末尾**（而不是表头之后）：
+    // 实测插在开头会把人写的行挤出简报的 2 个名额（简报只读 🔄/⛔ 且按文件顺序取前 2 行）——
+    // 人写的项目级计划优先，自动的细粒度待办排后面。
+    const isRow = (l: string) => l.trim().startsWith('|')
+    const out: string[] = []
+    let dropped = 0
+    let lastRowIdx = -1
+    for (const l of lines) {
+      if (isAuto(l)) { dropped++; continue }
+      if (isRow(l)) lastRowIdx = out.length
+      out.push(l)
+    }
+    const at = lastRowIdx >= 0 ? lastRowIdx + 1 : out.length
+    out.splice(at, 0, ...fresh.map((r) => '| ' + r.join(' | ') + ' |'))
+    const next = out.join('\n')
+    const prev = lines.join('\n')
+    if (next === prev) return { ok: true, reason: '无变化', rows: fresh.length }
+    fs.writeFileSync(file, next, 'utf8')
+    return { ok: true, reason: `自动区已刷新（旧 ${dropped} 行 → 新 ${fresh.length} 行）`, rows: fresh.length }
+  } catch (e) {
+    return { ok: false, reason: '刷新失败：' + String((e as Error)?.message ?? e).slice(0, 80), rows: 0 }
+  }
+}
 
 /** 生成看板初稿。不写盘，纯计算——便于测试与 dry-run。 */
 export function renderKanbanDraft(opts: {

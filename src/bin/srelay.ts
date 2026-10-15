@@ -320,24 +320,33 @@ async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: 
 
 program
   .command('kanban')
-  .description('看板（progress.md）：init = 从已有数据起草一份初稿（已存在则绝不覆盖）')
+  .description('看板（progress.md）：init = 起草初稿（已存在则绝不覆盖）；sync = 只刷新自动区（来自 ZCode 待办），人写的行不动')
   .argument('[action]', 'init（默认）', 'init')
   .option('--root <dir>', '项目根（默认当前目录）')
   .option('--json', '机器格式')
   .action(async (action: string, opts: { root?: string; json?: boolean }) => {
     const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
-    const { writeKanbanDraft } = await import('../cli/kanban.js');
+    const { writeKanbanDraft, syncKanbanAuto } = await import('../cli/kanban.js');
     const { loadConfig } = await import('../shared/config.js');
-    if (action !== 'init') { console.error(pc.red('未知动作：' + action + '（只支持 init）')); process.exitCode = 1; return; }
+    if (action !== 'init' && action !== 'sync') { console.error(pc.red('未知动作：' + action + '（支持 init / sync）')); process.exitCode = 1; return; }
     const root = opts.root ? path.resolve(String(opts.root)) : requireRoot();
     const cfg = loadConfig(root);
     let db: ReturnType<typeof openRelayDb> | null = null;
     try { db = openRelayDb(root); } catch { db = null; }   // 没库也能生成（只写占位行）
     try {
+      if (action === 'sync') {
+        // 只刷新「自动区」（模块列 = auto:todos）：来自 ZCode 的真待办，人写的行一个字节不动。
+        const r = syncKanbanAuto(root, cfg);
+        if (opts.json) console.log(JSON.stringify(r, null, 2));
+        else console.log((r.ok ? '✅ ' : '⏭  ') + r.reason);
+        return;
+      }
       const r = writeKanbanDraft(root, db, cfg.identity.project_id ?? null);
-      if (opts.json) console.log(JSON.stringify(r, null, 2));
-      else if (r.created) console.log(`✅ 已生成看板初稿：${r.path}（${r.rows} 行）\n   此后由人维护；生成器只在文件不存在时写一次，绝不覆盖。`);
-      else console.log(pc.dim(`⏭  ${r.reason}\n   ${r.path}`));
+      // 初稿写完立刻填自动区（ZCode 待办）——这样「计划/下一步」段开箱就有真内容。
+      const auto = syncKanbanAuto(root, cfg);
+      if (opts.json) console.log(JSON.stringify({ ...r, auto }, null, 2));
+      else if (r.created) console.log(`✅ 已生成看板初稿：${r.path}（${r.rows} 行）\n   ${auto.reason}\n   此后由人维护；生成器只在文件不存在时写一次，绝不覆盖。`);
+      else console.log(pc.dim(`⏭  ${r.reason}\n   ${auto.reason}\n   ${r.path}`));
     } finally { try { db?.close() } catch { /* 已关 */ } }
   });
 

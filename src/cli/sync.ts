@@ -29,6 +29,14 @@ export async function cmdSync(opts: { backfill?: string; json?: boolean }): Prom
     const { digestSemantic } = await import('../search-svc/semantic.js');
     const { embedded } = await digestSemantic(db, cfg, { projectId: cfg.identity.project_id, limit: 100 });
     if (embedded > 0) console.log(pc.dim(`语义：补嵌 ${embedded} 个会话`));
+    // [1015 夜 · B1] 自动刷新看板的「自动区」（只动模块列 = auto:todos 的行，人写的行不碰）。
+    // 放在 sync 末尾 = 每次增量捕获后跟着刷新，守护跑 sync 时同样生效 ⇒ 全程无人工步骤。
+    // 绝不抛：看板刷不新不该影响捕获。
+    try {
+      const { syncKanbanAuto } = await import('./kanban.js');
+      const k = syncKanbanAuto(root, cfg);
+      if (k.ok && /刷新/.test(k.reason) && !opts.json) console.log(pc.dim(`看板：${k.reason}`));
+    } catch { /* 看板刷新失败不连坐捕获 */ }
   } finally {
     db.close();
   }

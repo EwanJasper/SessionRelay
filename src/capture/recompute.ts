@@ -215,7 +215,7 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   // 全程自动、无需人工；要丢弃骨架时手工清掉那一列即可。
   const prev = db.prepare('SELECT decisions, original_message_count FROM sessions WHERE id = ?')
     .get(s.id) as { decisions: string | null; original_message_count: number | null } | undefined;
-  if ((prev?.original_message_count ?? 0) > 0) {
+  if (prev && (prev.original_message_count ?? 0) > 0) {
     try {
       const kept = JSON.parse(prev.decisions ?? '[]') as Array<{ text?: string }>;
       const have = new Set(decisions.map((d) => dedupKey(d.text)));
