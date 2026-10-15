@@ -246,6 +246,26 @@ export async function cmdDoctor(): Promise<void> {
       }
     } catch (e) { checks.push(c('采集源覆盖', 'warn', (e as Error).message)); }
 
+    // ①.5 看板（progress.md）：简报里"计划/下一步"的唯一结构化来源
+    // 为什么单列一项：b3 的捕获率盘点实测「计划/下一步」只被捕获 3.3%（5763 条未捕获），
+    // 而 progress.md 的「进行中/阻塞」列正是这类信息的结构化来源。项目没有它，
+    // 简报里就永远没有"现在卡在哪"，而用户不会知道缺了什么。
+    try {
+      const kanbanPath = path.join(root, 'progress.md');
+      if (!fs.existsSync(kanbanPath)) {
+        checks.push(c('看板 progress.md', 'warn', '没有 progress.md —— 简报里不会有「进行中/阻塞」段',
+          '在项目根建 progress.md，用 | 任务 | 状态 | 模块 | 明细 | 表格；状态列带 ✅🔄⛔ 才会被读取'));
+      } else {
+        const kt = fs.readFileSync(kanbanPath, "utf8");
+        const krows = kt.split(/\r?\n/).map((l) => l.split("|").map((s) => s.trim()))
+          .filter((cols) => cols.length >= 5 && /^[✅🔄⛔⬜]/u.test(cols[2] ?? "") && /[🔄⛔]/u.test(cols[2] ?? ""));
+        checks.push(krows.length > 0
+          ? c('看板 progress.md', 'ok', `有 progress.md，进行中/阻塞 ${krows.length} 行`)
+          : c('看板 progress.md', 'warn', 'progress.md 存在，但没有任何带 🔄/⛔ 的行 —— 简报的看板段会是空的',
+            '给任务行的状态列加上 ✅/🔄/⛔/⬜（解析器只认这几个 emoji 开头的状态）'));
+      }
+    } catch (e) { checks.push(c('看板 progress.md', 'warn', (e as Error).message)); }
+
     // ② 提取版本：库落后于当前规则 → 历史数据还是旧规则算的
     try {
       const db0 = new Database(dbFile(root), { readonly: true });
