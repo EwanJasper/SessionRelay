@@ -287,7 +287,12 @@ function recentFilesText(root) {
     const body = rows
       .map((x) => {
         const name = x.file.length > 42 ? '…' + x.file.slice(-40) : x.file
-        return `${name}（${x.sessions} 场${x.decisions ? '/' + x.decisions + ' 条决策' : ''}）`
+        // [1015 夜 · 实测后撤掉「/N 条决策」] 那个数字**不是"这个文件被决策了几条"**：
+        // queryRecentFiles 把「整个会话的决策总数」累加到该会话提到的**每一个**文件上，
+        // 于是同一批会话里的文件显示一模一样的数（music 实测三个文件全是「40 场/103 条决策」）。
+        // 换成"决策文本里含文件名"呢？两库 × 前三名共 18 个条目实测 **0 条**命中——
+        // 两个口径都没有判别力，留着只会误导。实测全表见 docs/1015-深夜-最近在动-信号体检.md。
+        return `${name}（${x.sessions} 场）`
       })
       .join('｜')
     return '🗂 近 7 天反复在动：' + body
