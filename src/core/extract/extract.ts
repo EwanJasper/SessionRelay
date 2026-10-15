@@ -302,6 +302,156 @@ export function countCodeBlocks(texts: string[]): number {
   return Math.floor(n / 2);
 }
 
+// ── 环境事实 / 纠正更正抽取（Phase 2，方案 B 的判别式）──────────────────
+//
+// 为什么必须新建路径而不是给 decisions 打 kind：ADR-001 能赢的前提是"否定语义 43.6%
+// 已被 decisions 捕获，打标记零新增文本"。而环境事实只有 7%、纠正只有 9% 被现有四类
+// 捕获（现状与需求总核对表 §27）——给 decisions 打 kind:'fact' 最多抓住一成，等于没接。
+//
+// ⚠️ 这两个函数**当前不接入任何写路径**（extractForWrite / applyExtraction 都不调），
+// 只供 Phase 0 精度测量与单测使用。调研报告 §5 的规定：Phase 0 门禁不过就全停，
+// 不许"先接库再补精度"。接入前必须过的门禁（§4.5）：
+//   分组 precision 总 ≥90% 且最低族 ≥80%｜负对照库误报 ≤3 条｜supersede 正确率 ≥85%
+//
+// 判别式草案与九类误报源全部来自 docs/调研-环境事实与更正抽取-20261014.md §3.2/§3.3，
+// 那里的实测基数：收紧后候选密度 7.5%/3.3%，而 §27 人工盘点只有 3.1%/2.8%
+// → **判别式仍含 2–4 倍误报**，这就是为什么门禁是硬门槛而不是可选项。
+//
+// 设计原则（§4.4，全部复用现成机制，不另写一套——否则就是 ADR-002 坑一"两套索引"病）：
+//   · 三道守卫全过：plausibleDecision / DECISION_FALSE_POSITIVE / isQuotedSpeech
+//   · 负向后视防词中误命中（抄 NEGATIVE_MARKERS 的 (?<![切])换成 先例）
+//   · ASR 垃圾不做归一（会把 m o e 与真标识符搞混），让它们自然落空或落进误报统计
+
+/** 环境事实的主语族：只认"我/本机"——supersede 与抽取都因此收窄 */
+const ENV_SUBJECT = /(我|本机|这台|我的(?:电脑|机器|环境|机子)|咱)们?/;
+/** 规格名词族。**故意不含模型名**——"3.8 flash/27b/qwen9" 是高频噪声源（§3.3.H）。
+ *  `ctx` 在 §3.2 草案里没列，但 §3.4 的真实 supersede 案例 2 就是"把 qwen9 的 ctx
+ *  扩到 49152"——案例里有、草案里漏了，补上（slot 本就是可增长的软键表）。 */
+const ENV_SPEC = /(显存|显卡|GPU|内存|硬盘|磁盘|系统|Windows|Ubuntu|Linux|Mac|Node|Python|版本|ctx|盘|核|位|引擎|后端)/;
+/** 谓词族。`占[了用据]?[^。！？!?\n]{0,4}\d` 是 §3.4 真实案例 3（"开机启动占差不多 4 个 g"）
+ *  需要的形态——特意要求后面跟数字、且中间最多插 4 个字，避免裸"占"（占用/占比）
+ *  把网撒大。 */
+const ENV_PRED = /(是|为|有|装着?|安装在?|放在|跑着|用的是|配的是|扩到|升到|跑得动|跑不了|占[了用据]?[^。！？!?\n]{0,4}\d)/;
+/** 假设句排除（§3.3.A） */
+const ENV_HYPOTHETICAL = /(如果|假如|要是|假设|万一|若)/;
+/** 问助手而非陈述（§3.3.B）：句首"你/请问"或句末疑问 */
+const ENV_ASKING = /^(你|请问|帮忙问|问一下)|[吗？?]\s*$/;
+/** 规格值：数字+单位，或版本号形态 */
+const ENV_VALUE = /(\d+(?:\.\d+)?\s*(?:G|GB|MB|TB|g|m|k|K|M|G?B|核|位|线程|%|个)?|v?\d+\.\d+(?:\.\d+)?)/;
+
+export interface EnvFact {
+  /** 抽取文本（90 字符截断对齐，与 decisions 同款） */
+  text: string;
+  /** slot：规格名词（显存/内存/系统…），软 schema 可增长 */
+  slot: string | null;
+  /** 抽到的值（可能多个） */
+  values: string[];
+  seq: number;
+  at?: string;
+  /** 命中的模式族——精度按族分别报（§4.5：组内单独报，不报总平均） */
+  family: EnvFamily;
+}
+export type EnvFamily = 'subject-spec-pred' | 'spec-is-value' | 'installed-at';
+
+/** 环境事实抽取（Phase 2 方案 B）。只挖 user 消息——归属错位是头号误报源（§3.3.C） */
+export function extractEnvFacts(msgs: Msg[]): EnvFact[] {
+  const out: EnvFact[] = [];
+  const seen = new Set<string>();
+  for (const m of msgs) {
+    if (m.role !== 'user') continue;
+    for (const s of sentences(m.content)) {
+      if (s.length < 8) continue;
+      if (ENV_HYPOTHETICAL.test(s)) continue;              // 假设句
+      if (ENV_ASKING.test(s.trim())) continue;             // 问助手
+      if (isQuotedSpeech(s)) continue;                     // 转述他人
+      if (/^>\s*\S/.test(s)) continue;                     // blockquote 粘贴
+      const spec = s.match(ENV_SPEC);
+      if (!spec) continue;
+      const hasSubject = ENV_SUBJECT.test(s);
+      const hasPred = ENV_PRED.test(s);
+      if (!hasSubject || !hasPred) continue;
+      const vals = [...s.matchAll(new RegExp(ENV_VALUE.source, 'g'))].map((x) => x[0].trim()).filter(Boolean);
+      if (!vals.length) continue;
+      let text = s.replace(/\s+/g, ' ').trim();
+      if (text.length > 90) {
+        const w = text.slice(0, 90);
+        const i = Math.max(w.lastIndexOf('，'), w.lastIndexOf('、'), w.lastIndexOf('；'), w.lastIndexOf(' '));
+        text = i > 40 ? w.slice(0, i) : w;
+      }
+      text = text.replace(/[）)】」"'、，]+$/u, '').trim();
+      if (!plausibleDecision(text)) continue;
+      if (DECISION_FALSE_POSITIVE.test(text)) continue;
+      if (!quotesBalanced(s)) continue;
+      const key = text.slice(0, 20);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const family: EnvFamily = /(是|为)/.test(s) ? 'spec-is-value' : 'subject-spec-pred';
+      out.push({ text, slot: spec[0], values: vals.slice(0, 4), seq: m.seqNum, at: m.createdAt ?? undefined, family });
+      if (out.length >= 20) return out;
+    }
+  }
+  return out;
+}
+
+/** 纠正/更正的强触发族（§3.2）。故意不含裸"不是"——实测 1057 句含"不是"只有 11.9%
+ *  是"不是X而是Y"结构，上它等于按 88% 误报率接库（§3.3.I 的关键读数） */
+const CORR_STRONG = /(我说错|搞错|记错|理解错|弄错|说错|搞反|弄反|更正|纠正|应改为|有误)/;
+/** `没错` 是反向语义（§3.3.F 实测 9 条）——整体进 FP 名单，而不是裸匹配"错" */
+const CORR_FALSE_POSITIVE = /(没错|不错|过错|错过|过错方|不错过|怕错|防错|错别字检查|试错)/;
+/** 结构触发：不是X[，,]?(而是|是|应该是)Y */
+const CORR_STRUCT = /不是[^。！？!?\n]{1,20}[，,]?\s*(?:而是|应该是|应该是说|其实是)/;
+/** 语境触发：(上次|之前|先前|刚才|前面)[^。]{0,12}(错|不对|有误|失效|过时) */
+const CORR_CONTEXT = /(上次|之前|先前|刚才|前面)[^。！？!?\n]{0,12}(错|不对|有误|失效|过时)/;
+/** 语气触发：不对[啊吧呀，。！？] */
+const CORR_TONE = /不对[啊吧呀，。！？]/;
+/** tag 问句排除（§3.3.E 实测 160 条） */
+const CORR_TAG_Q = /(是不是|对不对|好不好|能不能|行不行|可不可以)/;
+
+export interface Correction {
+  text: string;
+  seq: number;
+  at?: string;
+  family: 'strong' | 'struct' | 'context' | 'tone';
+}
+
+/** 纠正/更正抽取（Phase 2 方案 B）。只挖 user 消息 */
+export function extractCorrections(msgs: Msg[]): Correction[] {
+  const out: Correction[] = [];
+  const seen = new Set<string>();
+  for (const m of msgs) {
+    if (m.role !== 'user') continue;
+    for (const s of sentences(m.content)) {
+      if (s.length < 8) continue;
+      if (CORR_FALSE_POSITIVE.test(s)) continue;
+      if (CORR_TAG_Q.test(s)) continue;
+      if (/^(不是|对不)/.test(s.trim()) && !CORR_STRUCT.test(s)) continue; // 句首"不是"=话轮标记
+      if (isQuotedSpeech(s)) continue;
+      if (/^>\s*\S/.test(s)) continue;
+      let family: Correction['family'] | null = null;
+      if (CORR_STRONG.test(s)) family = 'strong';
+      else if (CORR_STRUCT.test(s)) family = 'struct';
+      else if (CORR_CONTEXT.test(s)) family = 'context';
+      else if (CORR_TONE.test(s)) family = 'tone';
+      if (!family) continue;
+      let text = s.replace(/\s+/g, ' ').trim();
+      if (text.length > 90) {
+        const w = text.slice(0, 90);
+        const i = Math.max(w.lastIndexOf('，'), w.lastIndexOf('、'), w.lastIndexOf('；'), w.lastIndexOf(' '));
+        text = i > 40 ? w.slice(0, i) : w;
+      }
+      text = text.replace(/[）)】」"'、，]+$/u, '').trim();
+      if (!plausibleDecision(text)) continue;
+      if (!quotesBalanced(s)) continue;
+      const key = text.slice(0, 20);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ text, seq: m.seqNum, at: m.createdAt ?? undefined, family });
+      if (out.length >= 20) return out;
+    }
+  }
+  return out;
+}
+
 // ── key_exchanges：关键往返提取（归档后推导过程的中间粒度） ──
 // 规则优先级：含决策句的往返 > 含未决问题的提问 > 用户消息最长前 3 条。上限 8 组。
 export interface KeyExchange { userText: string; aiText: string; userSeq: number; reason: string }
@@ -418,6 +568,10 @@ const TAGLESS_INJECTED: RegExp[] = [
   new RegExp(`Current runtime context\\.[^\\n${NO_CJK}]*`, 'gi'),
   new RegExp(`Current DSH file policy:[^\\n${NO_CJK}]*`, 'gi'),
   new RegExp(`Approval policy: ask\\.[^\\n${NO_CJK}]*`, 'gi'),
+  // [fork 1015] 第三个注入盲区之一：DSH 的审批提示语。原规则只认 `Approval policy: ask.`
+  // 这一种措辞，而真实运行里还有 `Approval prompts are disabled in this session: ...`。
+  // 实测 music player 597 条消息带它，此前一条都没剥掉。
+  new RegExp(`Approval prompts are disabled in this session:[^\\n${NO_CJK}]*`, 'gi'),
   new RegExp(`The active session goal is paused\\.[^\\n${NO_CJK}]*`, 'gi'),
 ]
 
@@ -459,7 +613,34 @@ export function looksInjected(text: string): boolean {
  * 会话，数据一点没变，就是因为 recomputeSession 绕过了 extractMessages）。
  */
 export function sanitizeMsgs(msgs: Msg[]): Msg[] {
-  return msgs.map((m) => ({ ...m, content: stripInjected(m.content) }))
+  // 抽取路径：stripInjected + mneme 记忆块。索引路径（searchTextOf）只走 stripInjected，
+  // 故意保留 mneme 内容供检索——见 stripMnemeMemory 上方的取舍说明。
+  return msgs.map((m) => ({ ...m, content: stripMnemeMemory(stripInjected(m.content)) }))
+}
+
+// [fork 1015] 第三个注入盲区之二：DSH 的 mneme 记忆插件把它的跨会话记忆注入进
+// system prompt，客户端存进 user 消息。实测 music player **546 条**消息带它
+// （545 条 role=user），agent1super 只有 2 条——所以这个盲区只在装了 mneme 的
+// 项目上发作，此前从未被发现。
+//
+// 形态（实测样本）：
+//   [记忆库] 来自 dsh-mneme 的跨会话记忆（用户偏好与高优先级项目/决策）：
+//   - [project] 音乐生产项目上下文（重要性 4）：音乐生产项目涉及 ACE-Step / HOT-Step …
+//   - [preference] 用户偏好：安排长活爬虫棒精读论文全文（重要性 5）：…
+// 块以 `[记忆库]` 头开始、到第一个空行或文末结束。实测**无孤儿行**——
+// `- [project]`/`- [preference]`/`- [decision]` 全部在那 546 条之内，一个规则全覆盖。
+//
+// ⚠️ 为什么只在**抽取路径**剥、索引路径保留：块里的内容是真实的项目记忆
+// （用户偏好、项目上下文），剥出 search_text 会让 "ACE-Step" 这类词搜不到。
+// 但它**不是用户在本会话说的话**——留着它，抽取器会把 mneme 的记忆当成用户的
+// 拍板/事实收进库（Phase 2 Phase 0 实测：22–42% 的误报直接来自它）。
+// 这与 §27.3 对 todo list 的取舍同向：内容有检索价值，但不该被当成用户陈述。
+const MNEME_MEMORY_BLOCK = /\[记忆库\][\s\S]{0,4000}?(?:\n[ \t]*\n|$)/g;
+
+/** 只给抽取路径用的补充清洗：剥 mneme 记忆注入块。索引路径不走这个。 */
+export function stripMnemeMemory(text: string): string {
+  if (!text || typeof text !== 'string') return text
+  return text.replace(MNEME_MEMORY_BLOCK, '\n')
 }
 
 export function extractMessages(msgs: Msg[]): ExtractedMeta {

@@ -184,7 +184,7 @@ describe('serve 根解析信号链（design-serve-resolve）', () => {
     expect((parse(await c.callTool({ name: 'get_stats', arguments: { project: b.dir } }))).project).toBe(b.pid);
   }, 30000);
 
-  it('R6 零信号零候选：指导性错误 + howTo 提到 init / 环境变量（连接保持、16 工具照常列出）', async () => {
+  it('R6 零信号零候选：指导性错误 + howTo 提到 init / 环境变量（连接保持、全部工具照常列出（Phase 1 后为 13 个））', async () => {
     resetRegistry();
     const c = await startServe({ cwd: EMPTY });
     clients.push(c);

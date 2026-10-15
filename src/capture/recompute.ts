@@ -59,8 +59,22 @@ import type { Msg } from '../core/extract/extract.js';
  *          三个键名，实测漏 `"done": true`、`"evidence": "..."`，改为任意 `"key":`。
  *        同轮还在两个简报通道加了"子代理会话不进简报"（plugins/dsh/index.js 与
  *        ZCode brief-shared.mjs），那是**消费侧**过滤、零数据丢失，不走重算。
+ * 11 → 1015 治第三个注入盲区（Phase 2 Phase 0 实测发现，此前从未被发现是因为它只在
+ *        装了 DSH mneme 记忆插件的项目上发作——实测 music player 546 条消息带它、
+ *        545 条 role=user，而 agent1super 只有 2 条）：
+ *        A `Approval prompts are disabled in this session:` 进 TAGLESS_INJECTED。
+ *           原规则只认 `Approval policy: ask.` 一种措辞，实测 597 条消息带的是另一种。
+ *        B 新增 `stripMnemeMemory()`：剥 `[记忆库] 来自 dsh-mneme 的跨会话记忆…` 整块
+ *           （块以 [记忆库] 头起、到第一个空行或文末；实测无孤儿行，一个规则全覆盖）。
+ *           **只走抽取路径、不走索引路径**——块里是真实项目记忆（用户偏好/项目上下文），
+ *           剥出 search_text 会让 "ACE-Step" 这类词搜不到；但它不是用户在本会话说的话，
+ *           留着就会被抽取器当成用户的拍板收进库。Phase 2 Phase 0 实测：22–42% 的
+ *           环境事实/纠正误报直接来自它。
+ *        本轮同时实现了 Phase 2 的两个抽取器（extractEnvFacts/extractCorrections），
+ *        但**未接入任何写路径**——真实库精度门禁全面不过（见核对表 §32），按调研报告
+ *        §5"Phase 0 不过则全停"的规矩停下，登记重新评估条件。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 10;
+export const EXTRACT_VERSION = 11;
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;

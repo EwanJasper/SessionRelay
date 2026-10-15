@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractFiles, extractTopics, extractDecisions, extractQuestions,
-  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, isNegativeDecision, type Msg,
+  countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, isNegativeDecision,
+  extractEnvFacts, extractCorrections, sanitizeMsgs, stripInjected, stripMnemeMemory, type Msg,
 } from '../../src/core/extract/extract.js';
 
 const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
@@ -539,5 +540,162 @@ describe('stripInjected：无标签注入（客户端剥掉外壳后的系统上
     expect(looksInjected('Current runtime context. This snapshot supersedes earlier runtime-context snapshots.')).toBe(true);
     // 用户真话不能误报
     expect(looksInjected('我们决定改用 pwsh 直查 SQL，拿到 registry 原始 packument')).toBe(false);
+  });
+});
+
+// ── Phase 2 · 环境事实 / 纠正更正抽取 ──────────────────────────────────
+// 判别式与误报源清单来自 docs/调研-环境事实与更正抽取-20261014.md §3.2/§3.3。
+// ⚠️ 这两个函数当前**不接入任何写路径**，只供 Phase 0 精度测量。
+// 门禁（§4.5）：分组 precision 总 ≥90% 且最低族 ≥80%；负对照库 ≤3 条；supersede ≥85%。
+// 不过就停，登记重新评估条件——本项目已经两次"没量精度就接会灌噪声"。
+describe('P8 · extractEnvFacts：主语+规格+谓词三要素', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  it('「我显存只有 8G」抽成事实，slot=显存', () => {
+    const f = extractEnvFacts([msg('user', '我显存只有 8G，跑不动 35B')]);
+    expect(f).toHaveLength(1);
+    expect(f[0].slot).toBe('显存');
+    expect(f[0].values).toContain('8G');
+  });
+  it('「本机 Node 是 24」抽成事实', () => {
+    const f = extractEnvFacts([msg('user', '本机 Node 是 24，Python 3.13')]);
+    expect(f.length).toBeGreaterThanOrEqual(1);
+    expect(f.some((x) => x.slot === 'Node')).toBe(true);
+  });
+  it('「我把 ctx 扩到 49152」抽成事实（真实 supersede 案例）', () => {
+    const f = extractEnvFacts([msg('user', '我把 qwen9 的 ctx 扩到 49152，之前 32K 被吃满')]);
+    expect(f).toHaveLength(1);
+    expect(f[0].values).toContain('49152');
+  });
+  it('「现在开机启动 15 个 g」抽成事实（同槽两值并列）', () => {
+    const f = extractEnvFacts([msg('user', '我内存条加之前 16g 开机启动占差不多 4 个 g，现在开机启动 15 个 g')]);
+    expect(f.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── 九类误报源各至少一条（§3.3）──
+  it('A 假设句不抽：「如果升级了之后还能跑」', () => {
+    expect(extractEnvFacts([msg('user', '如果显存升级了之后还能跑吗')])).toHaveLength(0);
+  });
+  it('B 问助手不抽：整句都在问助手，没有陈述', () => {
+    expect(extractEnvFacts([msg('user', '你的是什么版本？')])).toHaveLength(0);
+  });
+  it('B 问句里夹带的真事实仍要抽（按句切分，不问的不冤枉好数据）', () => {
+    const f = extractEnvFacts([msg('user', '你的是什么版本？我的显存是 8G')]);
+    expect(f).toHaveLength(1);
+    expect(f[0].slot).toBe('显存');
+  });
+  it('C 归属错位不抽：助手报告粘进 user 消息', () => {
+    expect(extractEnvFacts([msg('user', '报告说本机现状：pwsh 未安装，显存 8GB 是旧数据')])).toHaveLength(0);
+  });
+  it('D 项目/小说内容不抽：「守门人不是同一个人活了30年」', () => {
+    expect(extractEnvFacts([msg('user', '守门人不是同一个人活了30年，而是三代人，这个设定很重要')])).toHaveLength(0);
+  });
+  it('H 模型名像规格不抽：「3.8 flash 需要多少显存」', () => {
+    // 主语族不命中（"3.8 flash"不是我/本机）→ 不收
+    expect(extractEnvFacts([msg('user', '3.8 flash 需要多少显存才能跑')])).toHaveLength(0);
+  });
+  it('assistant 消息不挖（归属错位是头号误报源）', () => {
+    expect(extractEnvFacts([msg('assistant', '我的显存是 8G，本机 Node 24')])).toHaveLength(0);
+  });
+  it('注入块不产出事实', () => {
+    const injected = '我显存 8G\nThe TodoWrite tool hasn\'t been used recently. This is just a gentle reminder - ignore if not applicable.';
+    const f = extractEnvFacts([msg('user', injected)]);
+    expect(f.every((x) => !/TodoWrite/.test(x.text))).toBe(true);
+  });
+});
+
+describe('P9 · extractCorrections：强触发族 + 结构/语境/语气', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  it('「我说错了」命中 strong', () => {
+    const c = extractCorrections([msg('user', '我说错了，那个结论要改')]);
+    expect(c).toHaveLength(1);
+    expect(c[0].family).toBe('strong');
+  });
+  it('「上次那个结论错了」命中 context', () => {
+    const c = extractCorrections([msg('user', '上次那个结论错了，得重新看')]);
+    expect(c).toHaveLength(1);
+    expect(c[0].family).toBe('context');
+  });
+  it('「不是X而是Y」命中 struct', () => {
+    const c = extractCorrections([msg('user', '这个不是bug，而是feature，文档要改')]);
+    expect(c).toHaveLength(1);
+    expect(c[0].family).toBe('struct');
+  });
+  it('「不对啊」命中 tone', () => {
+    const c = extractCorrections([msg('user', '不对啊，你搞反了方向')]);
+    expect(c).toHaveLength(1);
+  });
+
+  // ── 误报源 ──
+  it('F「没错」是反向语义，不抽', () => {
+    expect(extractCorrections([msg('user', '节点没错正常但是网站测试就说超时')])).toHaveLength(0);
+  });
+  it('E tag 问句不抽：「是不是这个嘛」', () => {
+    expect(extractCorrections([msg('user', '是不是这个嘛你看这个日式对不对嘛')])).toHaveLength(0);
+  });
+  it('I 句首「不是」=话轮标记，非纠正', () => {
+    expect(extractCorrections([msg('user', '不是那现在来说其实他不是就只有查文档吗')])).toHaveLength(0);
+  });
+  it('assistant 消息不挖', () => {
+    expect(extractCorrections([msg('assistant', '我说错了，刚才那条要改')])).toHaveLength(0);
+  });
+});
+
+// ── 第三个注入盲区（1015 Phase 2 Phase 0 实测发现）─────────────────────
+describe('P10 · 第三个注入盲区：mneme 记忆块 + Approval prompts 措辞', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  const MNEME = `呃派3个或者4个子代理你看一下
+A: 
+
+Q: ？
+A: 
+
+[记忆库] 来自 dsh-mneme 的跨会话记忆（用户偏好与高优先级项目/决策）：
+- [project] 音乐生产项目上下文（重要性 4）：音乐生产项目涉及 ACE-Step / HOT-Step 环境与电台账号计划。
+- [preference] 用户偏好：安排长活爬虫棒精读论文全文（重要性 5）：用户令：安排两人或更多长时间接续爬取最新相关论文全文。
+
+Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.
+
+Approval prompts are disabled in this session: actions that require approval are rejected automatically.`;
+
+  it('mneme 记忆块从抽取路径剥掉', () => {
+    const out = sanitizeMsgs([msg('user', MNEME)])[0].content;
+    expect(out).not.toMatch(/\[记忆库\]/);
+    expect(out).not.toMatch(/dsh-mneme/);
+    expect(out).not.toMatch(/- \[project\]/);
+    expect(out).not.toMatch(/- \[preference\]/);
+  });
+  it('剥掉 mneme 块后，用户自己的话还在', () => {
+    const out = sanitizeMsgs([msg('user', MNEME)])[0].content;
+    expect(out).toMatch(/派3个或者4个子代理/);
+  });
+  it('Approval prompts are disabled 也剥掉（原规则只认 Approval policy: ask.）', () => {
+    const out = sanitizeMsgs([msg('user', MNEME)])[0].content;
+    expect(out).not.toMatch(/Approval prompts are disabled/);
+    expect(out).not.toMatch(/Current DSH file policy/);
+  });
+  it('索引路径（stripInjected）保留 mneme 内容——有检索价值', () => {
+    // searchTextOf 走的是 stripInjected，不走 stripMnemeMemory，所以 ACE-Step 仍可搜到
+    expect(stripInjected(MNEME)).toMatch(/ACE-Step/);
+    expect(stripInjected(MNEME)).not.toMatch(/Approval prompts are disabled/);
+  });
+  it('mneme 块在文末（无尾随空行）也剥得掉', () => {
+    const t = '用户原话在这里\n[记忆库] 来自 dsh-mneme 的跨会话记忆：\n- [project] X（重要性 4）：Y';
+    const out = sanitizeMsgs([msg('user', t)])[0].content;
+    expect(out).not.toMatch(/\[记忆库\]/);
+    expect(out).toMatch(/用户原话在这里/);
+  });
+  it('不含 [记忆库] 的消息不受影响', () => {
+    const t = '我显存 8G，跑不动 35B，你查一下';
+    expect(sanitizeMsgs([msg('user', t)])[0].content).toBe(t);
+  });
+  it('Phase 2 的误报源因此减少：mneme 记忆不再被当成用户的环境事实', () => {
+    const msgs = sanitizeMsgs([msg('user', MNEME)]);
+    expect(extractEnvFacts(msgs)).toHaveLength(0);
   });
 });
