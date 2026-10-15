@@ -84,7 +84,9 @@ export function mapLine(lineText: string):
   if (t === 'user/message') {
     // [1015 夜 · 出口③] `user/message` 事件带 `data.source.kind` —— **注入内容在采集层就丢掉**。
     //
-    // 实测（本机 6534 事件的真实会话，tools/_probe_dsh_source.mjs）：kind 共 6 种，
+    // ⚠️ 口径（红队 A 复测纠正）：**单个会话**里见过 6 种 kind；全量真实语料（95,218 条 user/message）
+    //   实测有 **22 种**，且**没有一条缺 kind** ⇒ 下面那条回退口子在真实数据上不可达（保留只为老库/手工构造的库）。
+    // 单会话实测（6534 事件，tools/_probe_dsh_source.mjs）：kind 共 6 种，
     //   user 44 条/64329 字（你真正发的）、time-context 32/8138、agent-instructions 2/7574、
     //   runtime-context 2/780、model-selection 2/304、**compact-checkpoint 1/12144（上下文压缩摘要）**。
     //   注入类合计约 29K 字 = 该会话用户消息总量的 **45%** —— 与统计口径（45.85%）对得上。

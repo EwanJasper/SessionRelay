@@ -16,7 +16,7 @@
 //     重算只能基于残余消息 → 归档会话的脏数据不会被这机制清掉，那需要 rebuild。
 //   - 限流 + 可中断：每批 N 个会话，单批耗时计入守护周期压力；失败不抛，下周期继续。
 import type { DB } from '../store/db.js';
-import { summaryRule, extractFiles } from '../core/extract/extract.js';
+import { summaryRule, extractFiles, passesDecisionTextGuards } from '../core/extract/extract.js';
 import { extractForWrite, dedupKey } from '../store/db.js';
 import type { Msg } from '../core/extract/extract.js';
 
@@ -199,7 +199,23 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   // 重新污染库（1014 实测：重算跑了 85 个会话数据一点没变，就是因为这里绕过了
   // extractMessages 里的清洗）。
   const msgs = messagesOf(db, s.id);
-  if (msgs.length === 0) return;
+  if (msgs.length === 0) {
+    // [1015 夜 · 红队 A#3 修复] 正文为空（归档会话 / 只带决策不带消息的导入会话）时，
+    // **必须打戳再返回**：原先直接 return，于是这类会话永远 `extracted_version < 当前版本` ⇒
+    //   remaining 永久 ≥1、每批 recomputed 虚增、extract_meta.version 永不推进（两连跑实测）。
+    //
+    // [1015 夜 · 红队 B#1 修复] 顺带**按现行规则清理存量决策**：归档会话的正文已删，
+    //   重抽不可能，但它们当年按旧规则抽出来的噪声（如名词化「选择器是旧的」）会永久留在库里——
+    //   实测主库现存 4 条这样的残留。这里用纯文本级守卫重筛一遍（不依赖消息）。
+    try {
+      const row = db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(s.id) as { decisions: string | null } | undefined;
+      const kept = (JSON.parse(row?.decisions ?? '[]') as Array<{ text?: string }>).filter((d) => passesDecisionTextGuards(String(d.text ?? '')));
+      const before = (JSON.parse(row?.decisions ?? '[]') as unknown[]).length;
+      if (kept.length !== before) db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?').run(JSON.stringify(kept), s.id);
+    } catch { /* 坏 JSON：不阻塞 */ }
+    markAttempted(db, s.id);
+    return;
+  }
   // ⚠️ 必须走 extractForWrite：它一次做三件事——剥注入块、提取、并回既有 pinned。
   // 本路径曾自己调 extractDecisions 又自己 JSON.stringify 写列，结果用户置顶的决策
   // 在每次版本升级（v5→v6、将来的 v7…）时被全库静默擦掉（红队 1014 🔴，且本机
@@ -207,7 +223,9 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   const { decisions, questions, topics } = extractForWrite(db, s.id, msgs);
   // [1015 夜 · A1 自动合并] 归档后复活的会话：正文在归档时已被删除（只留决策骨架），
   // 而重算只能从「残存的新消息」里抽 ⇒ 直接写回会把骨架整个换掉。
-  // 实测规模：主库 210 场 / 676 条骨架决策、music 74 场 / 254 条、mc整合包 56 场 / 185 条。
+  // 实测规模（判据修正为 `> 0` 之后，2026-10-15 夜 + 红队复测）：
+  //   归档过 373/229/82 场，**归档后又复活 0 场** ⇒ 这条是**潜伏**风险；合并逻辑是给将来兜底。
+  //   ⚠️ 早先写的「主库 210 场/676 条」是判据用错（`IS NOT NULL` 命中默认值 0）得出的假数字，已作废。
   // 处置：**自动合并**——新抽出来的为准，骨架里没被覆盖的按原样补回（含 pinned 标记）。
   // 判据 `original_message_count > 0`：archive.ts 归档时把**归档前的消息数**写进这一列，复活不会清它。
   // ⚠️ 必须是 `> 0` 而不是 `IS NOT NULL`：该列 DDL 默认值是 **0**（db.ts:222/259），

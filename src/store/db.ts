@@ -675,6 +675,13 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         prev.atMs = atMs;
         if (prev.idx < 0) continue;   // 之前被 --kind 过滤掉：保持"整键不上"，不因时间更新而复活
         const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: prev.pinned || d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+        // [1015 夜 · 红队 A#2 修复] 覆写前**必须重判 --kind**：
+        //   原先直接 out[prev.idx] = row ⇒ `decisions --kind decision` 可能返回 kind='negative' 的行
+        //   （构造复现：同键两条，先到的 kind=decision、后到的 kind=negative 且时间更新）。
+        //   修法：覆写后若不满足 wantKind，就**放弃这次覆写**（保留原条目）——
+        //   原条目是按 wantKind 进来的，保留它即可维持"返回值全部符合过滤"的契约；
+        //   代价是 `--kind` 视图下这一键可能保留较旧那条（可接受，且比返回错 kind 轻）。
+        if (wantKind && row.kind !== wantKind) continue;
         out[prev.idx] = row;
         continue;
       }

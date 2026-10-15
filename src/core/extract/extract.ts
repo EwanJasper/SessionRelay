@@ -182,6 +182,20 @@ const DECISION_FALSE_POSITIVE = /(决定论|确定性|决定性|选择性注意|
 const NOUN_CHOICE_HEAD = /^选择[器框题项卡]/;
 const NOUN_CHOICE_VERB = /(改|换|切|调|设|放宽|收紧|加|删|走|定为|采用|升级|放弃|弃用|要|应)/;
 const NOUN_CHOICE_WINDOW = 4;
+/**
+ * [1015 夜 · 红队 B#1] 纯**文本级**守卫合集：只依赖决策文本本身、不需要原始消息。
+ * 用途：归档会话（正文已删、无法重抽）按现行规则清理存量决策。
+ * 刻意只收这三个——它们对「一段独立文本」有定义；quotesBalanced/parenDepthOk 判的是
+ * **抽取时的原始匹配串**，对已落库的文本只能近似，故不纳入（宁可不杀也不误杀）。
+ */
+export function passesDecisionTextGuards(text: string): boolean {
+  const t = String(text ?? '');
+  if (!plausibleDecision(t)) return false;
+  if (DECISION_FALSE_POSITIVE.test(t)) return false;
+  if (nounChoiceFalsePositive(t)) return false;
+  return true;
+}
+
 function nounChoiceFalsePositive(text: string): boolean {
   const s = text.trim();
   const m = s.match(NOUN_CHOICE_HEAD);

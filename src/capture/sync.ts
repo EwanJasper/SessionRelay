@@ -94,6 +94,20 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
         result.discovered++;
         if (ds.mtimeMs < backfillCutoffMs) continue;
 
+        // [1015 夜 · 红队 B#2a 修复] originHint 必须**每次 sync 都重判**，且要在「墓碑 / ignore / 水位线」
+        // 三道 continue **之前**——否则被它们挡下的会话永远拿不到新的分类。
+        // 病历：主库残留 33 场真值 workflow_child 的会话 origin 仍是 auto。它们是被
+        //   `.sessionrelayignore` 的 `title:workflow subagent` 规则挡下的（本次 sync 拦了 341 场），
+        //   根本走不到落库那段；另有一批空闲会话因水位线跳过同样拿不到新分类。
+        // 语义：ignore 管的是「别再存新内容」，**已存在的会话其分类应随时幂等收敛**；只动 origin 一列，
+        //   manual（用户显式 save）不可降级；墓碑会话早已不在库里，UPDATE 自然 0 行。
+        if (ds.originHint) {
+          try {
+            db.prepare("UPDATE sessions SET origin = ? WHERE source = ? AND source_session_id = ? AND origin != 'manual' AND origin IS NOT ?")
+              .run(ds.originHint, ds.source, ds.sourceSessionId, ds.originHint);
+          } catch { /* 单行失败不阻塞整批 */ }
+        }
+
         // 墓碑（forget 次级防线）：被遗忘会话的新字节直接丢弃，游标也不推进
         if (tombstones.has(`${ds.source}:${ds.sourceSessionId}`)) {
           result.blocked++;
