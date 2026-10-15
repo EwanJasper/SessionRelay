@@ -47,6 +47,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+// [fork 1015] 简报过滤器的单一权威源——与 ZCode 侧 brief-shared.mjs import 同一份文件。
+// 历史上两侧手抄导致过滤器漂移（DSH 多一条而 ZCode 没有，用户日常在 ZCode 侧干活）。
+import { passesBriefFilters } from './src/brief-filters.mjs'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
 import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
@@ -145,6 +148,10 @@ function itemsFromArray(arr, key, max) {
       return !/^(报告|原文|上文|上述|文档|该文|这篇|那份)/.test(t.trim())
         && !/被当成|误命中|被判为|不是决策|纯垃圾|噪声|伪影/.test(t)
     })
+    // [fork 1015] 七条规范过滤器（brief-filters.mjs 单一权威源，与 ZCode 侧同源）。
+    // 实测：主库只拦 6/1172、音乐库 5/490，全部是噪声、0 误杀，且正好覆盖
+    // Phase 3 治不掉的 3 条散文噪声（决定用 X"/作者点名表扬/按你在 Notes 里提议）。
+    .filter((d) => passesBriefFilters(d.text))
     .filter((d) => {
       // Phase 3 层①：子代理任务书会话的决策/未决不进简报（仍全量可检索）。
       // 置顶豁免——用户显式 pin 过的东西要尊重，与上面新鲜度窗同一规矩。

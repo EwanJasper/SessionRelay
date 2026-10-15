@@ -142,13 +142,20 @@ function queryUnresolved(db, projectId, limit) {
 }
 
 function openDb(file) {
+  // [fork 1015] timeout: 5000 —— node:sqlite 的 DatabaseSync 默认 busy_timeout 是 0，
+  // 遇到守护进程做增量 VACUUM 提交或 recompute 批量写 FTS 时会立刻抛 SQLITE_BUSY。
+  // 实测 node:sqlite **没有 db.pragma() 方法**（`db.pragma is not a function`），
+  // 所以不能照抄核心库 db.ts 的 `db.pragma('busy_timeout = 5000')` 写法，
+  // 只能用构造选项。（外部专家报告 2.6 / 本机核验 7 同结论。）
+  // 失败仍由 queryBriefData 的 try/catch 兜住并回落 CLI，不会挂住会话。
+  const opts = { readOnly: true, timeout: 5000 }
   // 先试只读：插件永远不写库，只读是最安全的姿态（也避免与守护进程争写锁）
   try {
-    return new DatabaseSync(file, { readOnly: true })
+    return new DatabaseSync(file, opts)
   } catch {
     // 只读失败（典型：WAL 的 -shm 不存在且目录不可写）→ 退回普通打开。
     // 仍只发 SELECT，不会写数据；这一步与 CLI 的 openExisting 同等姿态。
-    return new DatabaseSync(file)
+    return new DatabaseSync(file, { timeout: 5000 })
   }
 }
 

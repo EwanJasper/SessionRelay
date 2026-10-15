@@ -115,6 +115,15 @@ export interface ParsedQuery {
   units: string[][];
 }
 
+/**
+ * 查询解析：非引号 → 每个多字词元是独立 AND 单元；引号内 → 完整短语单元。
+ *
+ * [fork 1015] 剔除**冗余子词**：`cutForSearch` 会把"数据库"展开成
+ * `["数据","据库","数据库"]`，前两个是更长词元的子串。它们在索引里保留（保召回），
+ * 但查询里必须剔掉——否则会话级 AND 会被"数据"这种低区分度词元拖出一堆弱命中。
+ * 实测：`数据库重算游标` 的单元从 5 个（数据/据库/数据库/重算/游标）收到 3 个。
+ * （外部专家方案 3.5 的核心贡献，本机实测有效后合入。）
+ */
 export function parseQuery(query: string): ParsedQuery {
   const q = normalize(query);
   const units: string[][] = [];
@@ -122,13 +131,21 @@ export function parseQuery(query: string): ParsedQuery {
   const rest = q.replace(phraseRe, (_all, ph: string) => {
     const toks = segment(ph, { keepSingles: true });
     if (toks.length > 0) units.push(toks);
-    return ' ';
-  });
+    return ' '
+  })
   for (const piece of rest.split(' ')) {
-    if (!piece) continue;
-    for (const t of segment(piece, { keepSingles: false })) units.push([t]);
+    if (!piece) continue
+    for (const t of segment(piece, { keepSingles: false })) units.push([t])
   }
-  return { units };
+  // 冗余子词剔除：只作用于**非短语单元**（短语单元是用户显式加引号的，动不得）
+  const singles = units.filter((u) => u.length === 1).map((u) => u[0])
+  const redundant = new Set(singles.filter((t) => singles.some((o) => o !== t && o.length > t.length && o.includes(t))))
+  if (redundant.size > 0) {
+    const kept = units.filter((u) => u.length > 1 || !redundant.has(u[0]))
+    // 全被剔光（极端：查询只有一个被展开的词）→ 保留原样，别把查询弄空
+    if (kept.length > 0) return { units: kept }
+  }
+  return { units }
 }
 
 /** 单元 → FTS5 表达式：单 token 加引号；多 token 为短语（引号内空格连接） */

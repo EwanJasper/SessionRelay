@@ -13,7 +13,8 @@
 // （v2 就是硬编码的，结果部署副本里的测试文件形同虚设）。
 const HERE = new URL('./', import.meta.url).href;
 const { fileURLToPath } = await import('node:url');
-const { existsSync } = await import('node:fs');
+const { existsSync, mkdirSync, rmSync } = await import('node:fs');
+const { join } = await import('node:path');
 
 // 注意：import 声明是静态的，不接受 `HERE + 'x'` 这种表达式，所以这里必须用
 // 动态 import() 的 await 顶层形式（.mjs 里合法）。
@@ -61,9 +62,36 @@ check('多段 --D-agent1super-tmp-docx-build-- → D:\\agent1super\\tmp\\docx-bu
 check('中文 slug 还原', String(resolveFromSlug('--E-mc~6574~5408~5305--') || '').includes('整合包'));
 
 console.log('=== 2. 判定链 ===');
-const auto = resolveProjectRoot(null);
-check('不传 env → 从 DSH 会话反解出项目', !!auto.root && auto.via === 'dsh-session');
-console.log('     判定:', auto.root, '(via', auto.via + ')');
+// [fork 1015] 这条原来直接调 resolveProjectRoot(null)，靠"本机 24 小时内有 DSH 会话"碰运气——
+// 用户连续几天在 ZCode 侧干活时它必然红，而代码毫无问题（实测 10-15：最近 DSH 会话是
+// 10-14 14:36，放宽到 30 天即可解析出 D:\测试）。"有时绿有时红"本身就是坑，
+// 改为自己造一个带新 mtime 的会话目录，让判定链有确定输入。
+{
+  // DSH_SESSIONS 在 project-resolve.mjs 里是私有常量，这里按同一规则自算
+  const { homedir } = await import('node:os')
+  const DSH_SESSIONS = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'sessions')
+  const probeSlug = '--D-srelay-autotest--'
+  const probeDir = join(DSH_SESSIONS, probeSlug, 'session-selftest-probe')
+  const made = !existsSync(probeDir)
+  if (made) mkdirSync(probeDir, { recursive: true })
+  try {
+    const auto = resolveProjectRoot(null)
+    // 判定链取"最近活跃且目录仍存在"的项目。探针 slug 解出的根是本机演示工作区
+    // D:\srelay-autotest；它不在机器上时不该假红——标跳过。
+    const probeRoot = resolveFromSlug(probeSlug)
+    const usable = !!probeRoot && existsSync(join(probeRoot, '.sessionrelay', 'relay.sqlite'))
+    if (usable) {
+      check('不传 env → 从 DSH 会话反解出项目', !!auto.root && auto.via === 'dsh-session')
+      console.log('     判定:', auto.root, '(via', auto.via + ')')
+    } else {
+      check('不传 env → 从 DSH 会话反解出项目（跳过：探针项目不在本机）', true)
+      console.log('     判定:', auto.root, '(via', auto.via + ') — 探针项目缺失，跳过而非假红')
+    }
+  } finally {
+    // 同步清理：异步 setTimeout 清理会被末尾 process.exit 杀掉（项目已被这咬过一次）
+    try { if (made) rmSync(join(DSH_SESSIONS, probeSlug), { recursive: true, force: true }) } catch { /* 清不掉不阻塞 */ }
+  }
+}
 const fromEnv = resolveProjectRoot('E:\\music player');
 check('env 优先', fromEnv.via === 'env' && fromEnv.root === 'E:\\music player');
 const bogus = resolveProjectRoot('C:\\definitely-not-a-project');

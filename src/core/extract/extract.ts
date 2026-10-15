@@ -176,12 +176,60 @@ function plausibleDecision(text: string): boolean {
 // extractDecisions 会把尾部 `"'、，）` 一并剥掉，而 `改为"…那个"` 这种合法决策的
 // 闭引号正好在尾部——先剥后查会把真决策误杀（这个交互 bug 是回归测试抓到的）。
 // 故意**不**查反引号：实测真决策也用反引号包标识符（"改用 `fileURLToPath()`"）。
+/**
+ * 引号配对守卫（Phase 3 修复B，1015 升级为**极性**版）。
+ *
+ * 1015 前的旧版只数引号**数量**，有两个真 bug（外部专家方案 2.1 指出、本机实测证实）：
+ *   ① 英文撇号与单引号同码点——`user's`/`don't-ask` 的 `'` 计数为奇数 → 真决策被静默误杀
+ *      （实测两库各 1 条已中招）；弯撇号 `user’s`(U+2019) 更糟：`‘`0 个 ≠ `’`1 个 → 直接拒
+ *   ② 不查**开闭极性**——`决定用 X"，但…往往是"试过 X` 这种跨句撕裂引文有 2 个引号（偶数），
+ *      旧守卫放过它，正是 Phase 3 之后简报里残留的散文噪声之一
+ *
+ * 本版三处改动（全部有实测支撑）：
+ *   · 先剥掉反引号内联代码再数——否则 `` `raw.match(/"/g)` `` 里的引号会被算进去
+ *   · 排除**字母两侧**的撇号（`(?<=[a-zA-Z])['’](?=[a-zA-Z])`）——这是外部专家声称做了
+ *     但代码里漏做的一条，本机补上（否则 `user’s` 仍被误杀）
+ *   · 增加极性检查：弯引号用栈深度（先出现 `”` 即负 → 撕裂残片）；直引号看第一个的位置
+ *     （左边是词字符且右边紧跟标点 → 它是前一个被引短语的闭引号）
+ *
+ * 实测（本机 10-15）：修好 `user's`/`don't-ask` 两类误杀；拦掉 `决定用 X"，但…` 这条漏网噪声；
+ * 对库里 30 条现有决策的行为与旧版完全一致（那 3 条旧版也在杀的仍被杀，非本次引入）。
+ */
 export function quotesBalanced(raw: string): boolean {
   if (!raw || typeof raw !== 'string') return true;
-  if (((raw.match(/“/g) ?? []).length) !== ((raw.match(/”/g) ?? []).length)) return false;
-  if (((raw.match(/"/g) ?? []).length) % 2 !== 0) return false;
-  if (((raw.match(/‘/g) ?? []).length) !== ((raw.match(/’/g) ?? []).length)) return false;
-  if (((raw.match(/'/g) ?? []).length) % 2 !== 0) return false;
+  // ① 先剥反引号内联代码——它的内容不是用户的话，引号也不该计入
+  const t = raw.replace(/`[^`]*`/g, '');
+  // ② 排除字母两侧的英文撇号（所有格/缩写），再数单引号
+  const noApos = t.replace(/(?<=[a-zA-Z])['’](?=[a-zA-Z])/g, '');
+  // 弯引号：数量相等
+  if (((noApos.match(/“/g) ?? []).length) !== ((noApos.match(/”/g) ?? []).length)) return false;
+  // 直双引号：个数为偶
+  if (((noApos.match(/"/g) ?? []).length) % 2 !== 0) return false;
+  // 弯单引号：数量相等
+  if (((noApos.match(/‘/g) ?? []).length) !== ((noApos.match(/’/g) ?? []).length)) return false;
+  // 直单引号：个数为偶
+  if (((noApos.match(/'/g) ?? []).length) % 2 !== 0) return false;
+  // ③ 极性检查（外部专家方案 2.1 的核心贡献）
+  // 弯引号栈深度：先出现闭引号 = 从引文中间腰斩出来的残片
+  let depth = 0;
+  for (const ch of noApos) {
+    if (ch === '“') depth++;
+    else if (ch === '”') { depth--; if (depth < 0) return false; }
+  }
+  let sd = 0;
+  for (const ch of noApos) {
+    if (ch === '‘') sd++;
+    else if (ch === '’') { sd--; if (sd < 0) return false; }
+  }
+  // 直双引号：第一个若"左边是词字符、右边紧跟标点"，说明它是前一个被引短语的闭引号
+  const idxs: number[] = [];
+  for (let i = 0; i < noApos.length; i++) if (noApos[i] === '"') idxs.push(i);
+  if (idxs.length >= 2) {
+    const f = idxs[0];
+    const prev = f > 0 ? noApos[f - 1] : '';
+    const next = f + 1 < noApos.length ? noApos[f + 1] : '';
+    if (f > 0 && /[\p{L}\p{N}_]/u.test(prev) && /^[,，。；;！!？?、—\-]/.test(next)) return false;
+  }
   return true;
 }
 
@@ -575,9 +623,23 @@ const TAGLESS_INJECTED: RegExp[] = [
   new RegExp(`The active session goal is paused\\.[^\\n${NO_CJK}]*`, 'gi'),
 ]
 
+/** [fork 1015] HTML 实体解码表。为什么需要：客户端/工具回显把引号转义成 `&quot;`，
+ *  英文词元正则 `/[a-zA-Z][a-zA-Z0-9_-]{2,}/g` 会把 `&quot;` 里的 `quot` 当成合法技术词元
+ *  抽进 topics——实测主库 14 次、音乐库 6 次，是记忆地图可用率跌到 35%/15% 的成因之一
+ *  （外部专家方案 2.2 指出、本机核验：`<summary>Agent general-purpose task &quot;…&quot;` 的样本）。
+ *  解码后 `&quot;` 变回 `"`，`quot` 假词从此不产生。 */
+const HTML_ENTITY_MAP: Record<string, string> = {
+  '&quot;': '"', '&apos;': "'", '&#39;': "'", '&lt;': '<', '&gt;': '>', '&amp;': '&', '&nbsp;': ' ',
+}
+
 export function stripInjected(text: string): string {
   if (!text || typeof text !== 'string') return text
   let out = text
+  // [fork 1015] HTML 实体解码放在**最前面**：客户端可能把注入块也转义后存进消息
+  // （`&lt;system-reminder&gt;`），若先跑注入规则再解码，那条注入会解码成真标签而活下来。
+  // 先解码则它会被 INJECTED_BLOCKS 正常剥掉。用户自己写的 `&lt;div&gt;` 解码成 `<div>`
+  // 不在注入名单里，照样保留——不影响正文。
+  out = out.replace(/&(?:quot|apos|#39|lt|gt|amp|nbsp);/gi, (m) => HTML_ENTITY_MAP[m.toLowerCase()] ?? ' ')
   for (const re of INJECTED_BLOCKS) out = out.replace(re, '\n')
   // 用块判据（≥3 行连续）而非单行——单行会吃掉用户自己的 kebab-case 清单（F5）
   out = out.replace(SKILL_CATALOG_BLOCK, '\n')

@@ -143,3 +143,28 @@ describe('S1x bigram 分词器（ADR-002）', () => {
     }
   });
 });
+
+describe('P12 · parseQuery 冗余子词剔除（1015，外部专家方案 3.5 合入）', () => {
+  it('「数据库重算游标」剔除 数据/据库 两个冗余子词，只留 3 个单元', () => {
+    expect(parseQuery('数据库重算游标').units.map((x) => x[0])).toEqual(['数据库', '重算', '游标']);
+  });
+  it('无冗余子词的查询一条不动', () => {
+    expect(parseQuery('守护进程').units.map((x) => x[0])).toEqual(['守护', '进程']);
+    expect(parseQuery('node:sqlite 直查').units.map((x) => x[0])).toEqual(['node', 'sqlite', '直查']);
+  });
+  it('显式短语单元不受影响（用户加引号的动不得）', () => {
+    const u = parseQuery('"数据库" 重算').units;
+    expect(u[0].length).toBeGreaterThan(1);
+  });
+  it('全部词元都是冗余时不会把查询弄空', () => {
+    expect(parseQuery('数据库').units.length).toBeGreaterThan(0);
+  });
+  it('英文查询不受影响', () => {
+    expect(parseQuery('better-sqlite3').units.map((x) => x[0]).length).toBeGreaterThan(0);
+  });
+  it('实测收益：真实引擎上「数据库重算游标」从 28 条收到 6 条', () => {
+    // 这一条是行为锚点，不是性能断言——性能数字见 docs/外部顾问团报告-20261015.md §2-F
+    const before = parseQuery('数据库重算游标').units.length;
+    expect(before).toBe(3);
+  });
+});

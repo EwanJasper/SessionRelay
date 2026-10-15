@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   extractFiles, extractTopics, extractDecisions, extractQuestions,
   countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, isNegativeDecision,
-  extractEnvFacts, extractCorrections, sanitizeMsgs, stripInjected, stripMnemeMemory, type Msg,
+  extractEnvFacts, extractCorrections, sanitizeMsgs, stripInjected, stripMnemeMemory, quotesBalanced, type Msg,
 } from '../../src/core/extract/extract.js';
 
 const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
@@ -697,5 +697,102 @@ Approval prompts are disabled in this session: actions that require approval are
   it('Phase 2 的误报源因此减少：mneme 记忆不再被当成用户的环境事实', () => {
     const msgs = sanitizeMsgs([msg('user', MNEME)]);
     expect(extractEnvFacts(msgs)).toHaveLength(0);
+  });
+});
+
+describe('P11 · quotesBalanced 极性版（1015 升级：修撇号误杀 + 拦跨句撕裂引文）', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  // 旧版的两个真 bug（外部专家方案 2.1 指出，本机实测两库各 1 条已中招）
+  it('英文所有格（直撇号）不再误杀', () => {
+    expect(quotesBalanced("决定改用 user's local directory 存配置")).toBe(true);
+  });
+  it('英文缩写（直撇号）不再误杀', () => {
+    expect(quotesBalanced("不再用 don't-ask 模式")).toBe(true);
+  });
+  it('英文所有格（弯撇号 U+2019）不再误杀——这是外部专家声称做了但代码漏做的一条', () => {
+    expect(quotesBalanced('决定改用 user\u2019s local directory 存配置')).toBe(true);
+  });
+  it('反引号代码段内的引号不计入（旧版会误杀）', () => {
+    expect(quotesBalanced('改为匹配 `raw.match(/"/g)` 规则')).toBe(true);
+    expect(quotesBalanced("统一用 `sed 's/\"//g'` 处理")).toBe(true);
+  });
+
+  // 极性检查：跨句撕裂引文（Phase 3 之后简报里残留的散文噪声之一）
+  it('跨句撕裂引文（弯引号）被拒', () => {
+    expect(quotesBalanced('决定用 X\u201d，但对话里最值钱的往往是\u201c试过 X，失败了')).toBe(false);
+  });
+  it('跨句撕裂引文（直引号）被拒', () => {
+    expect(quotesBalanced('决定用 X"，但对话里最值钱的往往是"试过 X，失败了')).toBe(false);
+  });
+  it('先出现闭引号（弯）即拒', () => {
+    expect(quotesBalanced('决定\u201d写哪个库\u201c——绑定必须两段式')).toBe(false);
+  });
+
+  // 反向：合法真决策一件不能误伤
+  it('合法真决策「改为"…那个"」仍放过', () => {
+    expect(quotesBalanced('改为\u201c优先返回已建库的，同时记住路径存在但未建库的那个\u201d')).toBe(true);
+  });
+  it('合法真决策「决定"写哪个库"」仍放过', () => {
+    expect(quotesBalanced('决定"写哪个库"——绑定必须两段式')).toBe(true);
+  });
+  it('无反引号无引号的普通真决策仍放过', () => {
+    expect(quotesBalanced('改用 node:sqlite 同步直查 SQL（5ms）')).toBe(true);
+  });
+  it('端到端：英文所有格决策现在真能抽出来', () => {
+    const d = extractDecisions([msg('user', "我们决定改用 user's local directory 存配置")]);
+    expect(d).toHaveLength(1);
+    expect(d[0].text).toMatch(/user's local directory/);
+  });
+  it('端到端：跨句撕裂引文仍抽不出决策', () => {
+    const d = extractDecisions([msg('user', '决定用 X"，但对话里最值钱的往往是"试过 X，失败了')]);
+    expect(d).toHaveLength(0);
+  });
+});
+
+describe('P13 · HTML 实体解码（1015，消灭 topics 里的 quot 假词）', () => {
+  const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
+    ({ role, content, seqNum: seq, createdAt: '2026-10-15T10:00:00Z' });
+
+  it('&quot; 解码为 "，不再被英文词元正则拆出 quot 假词', () => {
+    const raw = '<summary>Agent general-purpose task &quot;调查 Flash-Next 参数&quot; completed.</summary>';
+    const clean = stripInjected(raw);
+    expect(clean).not.toMatch(/&quot;/);
+    expect(extractTopics([msg('user', clean)])).not.toContain('quot');
+  });
+  it('端到端：走 extractMessages（生产入口）不再产出 quot 假词', () => {
+    // 注意：extractTopics 本身不剥注入——生产链路是 extractMessages → sanitizeMsgs → extractTopics。
+    // 直接调 extractTopics 传原始文本是绕过链路，不是代码缺陷。
+    const raw = '<summary>Agent general-purpose task &quot;调查 Flash-Next 参数&quot; completed.</summary>';
+    const meta = extractMessages([msg('user', raw)]);
+    expect(meta.topics).not.toContain('quot');
+    expect(meta.topics).toContain('调查');
+  });
+  it('其余实体一并解码', () => {
+    const out = stripInjected('a &lt;div&gt; b &amp; c &#39;d&#39; &nbsp;e');
+    expect(out).toContain('<div>');
+    expect(out).toContain('&');
+    expect(out).toContain("'d'");
+    expect(out).not.toMatch(/&(?:quot|apos|#39|lt|gt|amp|nbsp);/);
+  });
+  it('用户自己写的 &lt;div&gt; 解码后仍保留（不在注入名单里）', () => {
+    expect(stripInjected('我在 HTML 里写了 &lt;div class=&quot;x&quot;&gt;')).toContain('<div class="x">');
+  });
+  it('解码不造出新伪标签：先剥注入再解码（顺序不能反）', () => {
+    const raw = '&lt;system-reminder&gt;这是注入&lt;/system-reminder&gt;正文';
+    const clean = stripInjected(raw);
+    expect(clean).not.toMatch(/system-reminder/);
+  });
+  it('解码后的引号参与 quotesBalanced 判定（不会误杀）', () => {
+    expect(quotesBalanced('我们决定改用 &quot;better-sqlite3&quot; 连接池')).toBe(true);
+  });
+  it('正常无实体文本不受影响', () => {
+    const t = '我显存 8G，跑不动 35B';
+    expect(stripInjected(t)).toBe(t);
+  });
+  it('直查 stripInjected 也能解码（不依赖 sanitizeMsgs）', () => {
+    expect(stripInjected('用 &quot;better-sqlite3&quot; 连接池')).toContain('"better-sqlite3"');
+    expect(stripInjected('用 &quot;better-sqlite3&quot; 连接池')).not.toContain('&quot;');
   });
 });
