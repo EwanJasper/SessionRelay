@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // srelay 入口（技术方案 T15：懒加载保启动预算）
+import path from 'node:path';
 import { Command } from 'commander';
 import pkg from '../../package.json' with { type: 'json' };
 const VERSION: string = pkg.version;
@@ -299,6 +300,29 @@ async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: 
     db.close();
   }
 }
+
+program
+  .command('kanban')
+  .description('看板（progress.md）：init = 从已有数据起草一份初稿（已存在则绝不覆盖）')
+  .argument('[action]', 'init（默认）', 'init')
+  .option('--root <dir>', '项目根（默认当前目录）')
+  .option('--json', '机器格式')
+  .action(async (action: string, opts: { root?: string; json?: boolean }) => {
+    const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
+    const { writeKanbanDraft } = await import('../cli/kanban.js');
+    const { loadConfig } = await import('../shared/config.js');
+    if (action !== 'init') { console.error(pc.red('未知动作：' + action + '（只支持 init）')); process.exitCode = 1; return; }
+    const root = opts.root ? path.resolve(String(opts.root)) : requireRoot();
+    const cfg = loadConfig(root);
+    let db: ReturnType<typeof openRelayDb> | null = null;
+    try { db = openRelayDb(root); } catch { db = null; }   // 没库也能生成（只写占位行）
+    try {
+      const r = writeKanbanDraft(root, db, cfg.identity.project_id ?? null);
+      if (opts.json) console.log(JSON.stringify(r, null, 2));
+      else if (r.created) console.log(`✅ 已生成看板初稿：${r.path}（${r.rows} 行）\n   此后由人维护；生成器只在文件不存在时写一次，绝不覆盖。`);
+      else console.log(pc.dim(`⏭  ${r.reason}\n   ${r.path}`));
+    } finally { try { db?.close() } catch { /* 已关 */ } }
+  });
 
 program
   .command('pin <text>')

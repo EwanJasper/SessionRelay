@@ -171,6 +171,20 @@ export async function cmdInit(opts: { backfill?: string; yes?: boolean; installS
 
   touchRegistry(root); // 全局注册表（design-serve-resolve §5）：serve 多项目解析的候选来源
 
+  // [1015 夜] 看板自动起草：简报的「计划/下一步」段唯一来源就是项目根的 progress.md，
+  // 而全仓库此前只有读、没有写——没人写就是空的（b3 实测该维度只捕获 3.3%，全库最大盲区）。
+  // 放在 init 里 = 新项目「开箱即有」；**已存在则绝不覆盖**（那是人手写的文件）。
+  // 插件对新工作区的自动接入走的也是 srelay init，所以那条路同样会自动拿到看板。
+  try {
+    const { writeKanbanDraft } = await import('./kanban.js');
+    const kdb = fs.existsSync(dbFile(root)) ? openExisting(dbFile(root)) : null;
+    try {
+      const k = writeKanbanDraft(root, kdb, projectIdOf(root));
+      if (k.created) console.log(pc.green('✓') + ` 已生成看板初稿 ${pc.dim(k.path)}（${k.rows} 行，此后由人维护）`);
+    } finally { try { kdb?.close(); } catch { /* 已关 */ } }
+  } catch { /* 看板生成失败不影响 init 主流程 */ }
+
+
   const cfg = loadConfig(root);
   const backfill = parseBackfill(opts.backfill ?? '30d');
   if (backfill === 0) {
