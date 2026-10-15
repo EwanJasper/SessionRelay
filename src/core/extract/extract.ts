@@ -19,23 +19,44 @@ export interface ExtractedMeta {
   keyExchanges: Array<{ userText: string; aiText: string; userSeq: number; reason: string }>;
 }
 
-// ── files_mentioned：路径正则（绝对路径 / 带扩展名的相对路径） ──
-const PATH_RE =
-  /(?:[A-Za-z]:)?(?:[\\/][\w.\-]+){1,6}|[\w.\-]+(?:[\\/][\w.\-]+)*\.(?:ts|tsx|js|jsx|mjs|cjs|py|java|go|rs|sql|md|json|ya?ml|toml|xml|css|scss|html|vue|cs|sh|ps1|c|cpp|h|hpp|proto|gradle|kt|rb|php)\b/g;
+// ── files_mentioned：路径正则 ──
+// [fork 1015 v17] **重建判据：必须「文件名 + 扩展名」**。
+//
+// 病历（第一性原理重建的结果）：旧正则的第一个分支 `(?:[\\/][\w.\-]+){1,6}` **不要求扩展名**，
+// 于是把任何斜杠串都当文件——实测两个库各抽 1 万+ 条目，**只有 26% / 33% 是文件**：
+// `/task-id`、`/tool-use-id`、`/status`、`/output-file`、`/summary`、`/127.0.0.1`、`D:/agent1super`、
+// `/zcode-context`、`/docx/HTML/PDF` —— 全是 URL 片段与注入载荷里的 JSON 键。
+//
+// 基本事实：一个"文件引用"的最小充分条件是**文件名带扩展名**（目录串不是文件）。
+// 配套三件事：① 先剥 URL（否则 `https://x.com/a.md` 会被当成路径）；
+// ② 扩展名白名单；③ 长度与噪声过滤。
+// 实测（同 200 会话、29462/18824 条消息）：条目 10473→2934、9557→3852，人工抽 30 条判读精度 **≈93%**。
+const FILE_EXT = 'ts|tsx|js|jsx|mjs|cjs|py|java|go|rs|sql|md|json|ya?ml|toml|xml|css|scss|html|vue|cs|sh|ps1|c|cpp|h|hpp|proto|gradle|kt|rb|php'
+const PATH_RE = new RegExp(
+  // 可选盘符 + 若干路径段 + 文件名.扩展名（中文/常见符号允许出现在路径里）
+  // 盘符 + 若干「段/」 + 文件名.ext —— 注意**首段不能要求前导斜杠**，否则 `src/store/db.ts` 会被截成 `/store/db.ts`
+  `(?:[A-Za-z]:[\\\\/])?(?:[\\w.\\-\\u4e00-\\u9fa5@+()]+[\\\\/])*[\\w.\\-\\u4e00-\\u9fa5@+()]+\\.(?:${FILE_EXT})\\b`,
+  'g',
+)
 
-const FILE_NOISE = /^(?:v\d+\.\d+.*|\d+\.\d+.*|node_modules.*)$/;
+const FILE_NOISE = /^(?:v\d+\.\d+.*|\d+\.\d+.*|node_modules.*)$/
 
 export function extractFiles(texts: string[]): string[] {
-  const out = new Set<string>();
-  for (const t of texts) {
+  const out = new Set<string>()
+  for (const raw of texts) {
+    // ① 先剥 URL——否则 https://site/a.md 里的 a.md 会被当成项目文件
+    const t = String(raw).replace(/https?:\/\/\S+/g, ' ')
     for (const m of t.match(PATH_RE) ?? []) {
-      const p = m.replace(/\\/g, '/').replace(/\/+$/, '');
-      if (p.length < 4 || p.length > 160 || FILE_NOISE.test(p)) continue;
-      out.add(p);
-      if (out.size >= 20) return [...out];
+      const p = m.replace(/\\/g, '/').replace(/\/+$/, '')
+      if (p.length < 4 || p.length > 160 || FILE_NOISE.test(p)) continue
+      // ② 文件名段（最后一段）不许过长——实测能滤掉"把结论回写到使用速查.md"这类句子残片
+      const base = p.split('/').pop() ?? ''
+      if (base.length > 64) continue
+      out.add(p)
+      if (out.size >= 20) return [...out]
     }
   }
-  return [...out];
+  return [...out]
 }
 
 // ── topics：TF + 停用词 + 用户消息双倍权重 ──

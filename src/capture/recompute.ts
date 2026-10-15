@@ -16,7 +16,7 @@
 //     重算只能基于残余消息 → 归档会话的脏数据不会被这机制清掉，那需要 rebuild。
 //   - 限流 + 可中断：每批 N 个会话，单批耗时计入守护周期压力；失败不抛，下周期继续。
 import type { DB } from '../store/db.js';
-import { summaryRule } from '../core/extract/extract.js';
+import { summaryRule, extractFiles } from '../core/extract/extract.js';
 import { extractForWrite } from '../store/db.js';
 import type { Msg } from '../core/extract/extract.js';
 
@@ -114,6 +114,12 @@ import type { Msg } from '../core/extract/extract.js';
  *        实测（真实库全量决策、去重后）：agent1super 判拒 35 条、music 13 条，逐条读完**全是碎片，
  *        0 条真决策被误杀**（唯一 borderline 是一条"决定】① …"枚举残片，本身已残缺）。
  *        先剥反引号内联代码再判——`foo()` 里的 ) 是代码不是文本（与 quotesBalanced 同处理）。
+ * 17 → 1015 files 抽取**第一性原理重建**：旧正则不要求扩展名，把任何斜杠串当文件
+ *        （`/task-id`、`/tool-use-id`、`/status`、`/127.0.0.1`、`D:/agent1super`、`/zcode-context`），
+ *        实测两个库各抽 1 万+ 条目、**只有 26% / 33% 是文件**。
+ *        新判据：必须「文件名 + 扩展名」；先剥 URL；文件名段 ≤64 字（滤句子残片）。
+ *        同批还修了重算路径：`recomputeSession` 此前**不写 files_mentioned**，于是 files 规则一改，
+ *        历史行永远拿不到新结果（这次实测踩到）。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
 
 import { EXTRACT_VERSION } from '../core/extract/version.js';
@@ -199,17 +205,21 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   // 在每次版本升级（v5→v6、将来的 v7…）时被全库静默擦掉（红队 1014 🔴，且本机
   // 实测正在发生）。sanitizeMsgs 也已内含，不必在外部再剥一次。
   const { decisions, questions, topics } = extractForWrite(db, s.id, msgs);
+  // [v17] 顺带刷新 files_mentioned——重算此前只写 decisions/questions/topics/summary_rule，
+  // 于是 files 列的规则一改，历史行永远拿不到新结果（本轮重建 files 抽取时实测踩到）。
+  const files = extractFiles(msgs.map((m) => m.content));
   const summary = summaryRule(s.title, {
     files: [], topics, decisions, questions, codeBlockCount: 0, keyExchanges: [],
   }, { messageCount: msgs.length, source: 'recompute', firstAt: new Date(0).toISOString(), lastAt: null });
   // [v14] 打版本戳：这一行从此**自报**"我的派生列是哪个规则版本算的"。
   // 判据、进度、doctor 的逐会话检查全部读它，不再依赖任何库级游标。
   db.prepare(
-    'UPDATE sessions SET decisions = ?, key_questions = ?, topics = ?, summary_rule = ?, extracted_version = ? WHERE id = ?',
+    'UPDATE sessions SET decisions = ?, key_questions = ?, topics = ?, files_mentioned = ?, summary_rule = ?, extracted_version = ? WHERE id = ?',
   ).run(
     JSON.stringify(decisions),
     JSON.stringify(questions),
     JSON.stringify(topics),
+    JSON.stringify(files),
     summary,
     EXTRACT_VERSION,
     s.id,

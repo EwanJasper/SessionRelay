@@ -237,12 +237,19 @@ program
       const batch = opts.batch ? Math.max(1, Number(opts.batch)) : 50;
       // 一路跑到跟上版本：守护是 6 小时一批，576 会话的库要 72 小时——等不起。
       // recomputeExtractions 幂等，连续调用只是把同一个调用重复跑完。
-      let total = 0, guard = 0;
+      let total = 0, guard = 0, failed = 0;
       for (;;) {
         const r = recomputeExtractions(db, batch);
         total += r.recomputed;
+        failed += r.failed;
         if (r.recomputed === 0 && r.remaining === 0) break;
         if (++guard > 2000) { console.error(pc.red('超过 2000 批，中止（应有异常）')); process.exitCode = 1; break; }
+      }
+      // [v17] 提取抛异常会被逐会话 catch 掉并打版本戳（避免每周期对同一个坏会话无限重试）——
+      // 那意味着**系统性 bug 也会伪装成"重算成功"**：本轮实测一个漏传参数的 UPDATE 让全库 557 个
+      // 会话"重算"完却什么都没变。所以这里必须把 failed 显式说出来，别让它在静默里过关。
+      if (failed > 0) {
+        console.error(pc.yellow(`⚠️  有 ${failed} 个会话提取抛异常（已打版本戳跳过，它们的派生列没更新）`));
       }
       // [fork 1014] search_text 是消息插入时写的派生列，recompute 本来不碰它——
       // 于是清洗规则改了（如 v8 剥无标签注入）之后， topics 干净了而索引照样脏。
