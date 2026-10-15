@@ -196,6 +196,27 @@ check('重复确认被拒（pending 已清）', r3.ok === false);
 const r4 = await bind.execute({ projectPath: 'C:\\definitely-not-a-project' });
 check('无效路径被拒', r4.ok === false);
 
+// ═══ 12. 最近在动哪些文件（v17+）═══
+// 为什么断言它：这一行的输入是 files_mentioned，而那个列刚被重建过（v17）。
+// 一旦上游再动抽取口径，这里要么静默变空（用户什么也看不到），要么变成垃圾——
+// 两者都能被这条双向断言抓到。
+console.log('=== 12. 「最近在动哪些文件」这一行 ===');
+{
+  const fresh = await import(HERE + 'index.js?recent=1');
+  const fn = fresh.__testRecentFilesText;
+  if (typeof fn !== 'function') {
+    console.log('  SKIP 未导出 __testRecentFilesText');
+  } else {
+    const ROOT = 'E:\\music player';
+    const line = String(fn(ROOT) ?? '');
+    check('返回字符串且要么空要么以 🗂 开头（' + (line ? line.slice(0, 34) + '…' : '空') + '）',
+      line === '' || line.startsWith('🗂 近 7 天反复在动：'));
+    check('不含到处都出现的文件（AGENTS.md/config.json/SKILL.md）',
+      !/(AGENTS\.md|config\.json|SKILL\.md|package\.json)/.test(line));
+    if (line) check('每个条目都带会话数「N 场」', /（\d+ 场/.test(line));
+  }
+}
+
 // ⚠️ 这里曾经有一行 console.log(fail === 0 ? 'SELFTEST PASS' : ...)：
 // 6/7/8 节是后来追加的，那行判定没删，于是**后半段全崩也照样打印 PASS**——
 // 与铁律 #10「测试必须真的在跑」同款的假绿源（grep SELFTEST PASS 即中招）。

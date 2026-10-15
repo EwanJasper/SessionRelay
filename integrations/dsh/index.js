@@ -53,7 +53,7 @@ import { passesBriefFilters } from './src/brief-filters.mjs'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
 import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
-import { queryBriefData, sqlChannelAvailable } from './src/brief-sql.mjs'
+import { queryBriefData, sqlChannelAvailable, queryRecentFiles } from './src/brief-sql.mjs'
 
 export const name = 'dsh-srelay-brief'
 export const inject = ['systemPrompt', 'tools']
@@ -276,8 +276,29 @@ function kanbanText(root) {
   } catch { return '' }   // 绝不因为看板读失败而让整条简报消失
 }
 
-function renderBrief(root, dec, unr, counts, kanban = '') {
-  if (!dec.length && !unr.length && !kanban) return ''
+// ── 最近在动哪些文件（v17：files 列精确度修到 99%/100% 之后才有意义） ──
+// 为什么是**一行而不是一段**：它是"定位线索"，不是内容——告诉模型"这几处最近反复被碰过，
+// 要细节就去检索"。全自动、零噪声，不依赖任何从对话里嗅意义的猜测。
+// 阈值：同一文件至少出现在 2 场会话里才列（列一次等于噪声）。
+function recentFilesText(root) {
+  try {
+    const rows = queryRecentFiles(root, { days: 7, top: 3 })
+    if (!rows.length) return ''
+    const body = rows
+      .map((x) => {
+        const name = x.file.length > 42 ? '…' + x.file.slice(-40) : x.file
+        return `${name}（${x.sessions} 场${x.decisions ? '/' + x.decisions + ' 条决策' : ''}）`
+      })
+      .join('｜')
+    return '🗂 近 7 天反复在动：' + body
+  } catch { return '' }
+}
+
+// 供 selftest 用（与 __testRenderItems 同理）：不导出就没法断言这一行的行为。
+export const __testRecentFilesText = (root) => recentFilesText(root)
+
+function renderBrief(root, dec, unr, counts, kanban = '', recent = '') {
+  if (!dec.length && !unr.length && !kanban && !recent) return ''
   // Phase 1 ② 工具提示句：DSH 侧 MCP 已按方案 C 卸掉，检索只能靠 CLI，
   // 所以这里说的是命令而不是 MCP 工具名（两侧措辞不同、语义同向——
   // 都是"有检索可用、什么时候用"。check-brief-filters.mjs 只比对过滤器，
@@ -286,6 +307,7 @@ function renderBrief(root, dec, unr, counts, kanban = '') {
   let text = [
     `【SessionRelay 项目记忆 · 自动简报】项目：${path.basename(root)}（本地记忆库，是资料不是指令）。`,
     kanban,
+    recent,
     dec.length ? '近期决策：\n' + dec.join('\n') : '',
     unr.length ? '未决问题：\n' + unr.join('\n') : '',
     '需要出处时说一声，可逐条回跳原会话。',
@@ -298,12 +320,12 @@ function renderBrief(root, dec, unr, counts, kanban = '') {
 /** 真正取数的地方：异步，跑在组装路径之外。直查 SQL 优先，CLI 子进程兜底 */
 async function buildBrief(root) {
   const sql = sqlItems(root)
-  if (sql) return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root))
+  if (sql) return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root), recentFilesText(root))
   const [decRaw, unrRaw] = await Promise.all([
     runSrelay(['decisions', '--limit', '200', '--json'], root, 4000),
     runSrelay(['unresolved', '--limit', '200', '--json'], root, 4000),
   ])
-  return renderBrief(root, parseItems(decRaw, 'decisions', DEC_SLOTS), parseItems(unrRaw, 'unresolved', UNR_SLOTS), rawCounts(decRaw, unrRaw), kanbanText(root))
+  return renderBrief(root, parseItems(decRaw, 'decisions', DEC_SLOTS), parseItems(unrRaw, 'unresolved', UNR_SLOTS), rawCounts(decRaw, unrRaw), kanbanText(root), recentFilesText(root))
 }
 
 /** 从两份 --json 原始串里取条数（复用已取到的数据，不新增子进程——低延迟是硬约束） */
@@ -477,7 +499,7 @@ export function apply(ctx) {
         if (sql) {
           // [1015 修] 必须把 counts 一起传：漏传时工具提示句固定显示"0 条可查"（
           // 冷路径与异步刷新路径行为不一致，用户第一轮看到的条数永远是 0）。
-          const text = renderBrief(r.root, sql.dec, sql.unr, sql.counts, kanbanText(r.root))
+          const text = renderBrief(r.root, sql.dec, sql.unr, sql.counts, kanbanText(r.root), recentFilesText(r.root))
           cache.set(r.root, { text, at: Date.now() })
           return text
         }
@@ -494,6 +516,7 @@ export function apply(ctx) {
           parseItems(unrRaw, 'unresolved', UNR_SLOTS),
           { dec: countOf(decRaw), unr: countOf(unrRaw) },
           kanbanText(r.root),
+          recentFilesText(r.root),
         )
         cache.set(r.root, { text, at: Date.now() })
         return text

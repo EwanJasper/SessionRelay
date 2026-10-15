@@ -186,6 +186,63 @@ export function queryBriefData(root, limit = 200) {
   }
 }
 
+/**
+ * [1015 v17+] 「最近在动哪些文件」——**零模型、纯结构化**。
+ *
+ * 为什么加它：b3 的捕获率盘点实测「计划/下一步」只捕获 3.3%（5763 条未捕获），
+ * 而 v17 把 files_mentioned 的精度从 26%/33% 修到 99%/100% 之后，
+ * "最近动过哪些文件"就成了**可观测量**——它是全自动、零噪声的定位线索，
+ * 不依赖任何"从对话里嗅意义"的猜测。
+ *
+ * 口径：近 N 天内被 mentioning 过的文件，按「出现过该文件的会话数」降序；
+ * 同时给出这些会话里的决策条数（让模型知道"值不值得去搜"）。
+ * 绝不抛：这是 prompt 组装路径上的函数。返回 [] = 无数据/不可用。
+ */
+export function queryRecentFiles(root, { days = 7, top = 3, maxSessions = 300 } = {}) {
+  if (!root || typeof root !== 'string') return []
+  if (!DatabaseSync) return []
+  const file = path.join(root, RELAY_DIR, DB_FILE)
+  if (!fs.existsSync(file)) return []
+  let db = null
+  try {
+    db = openDb(file)
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString()
+    const rows = db.prepare(`SELECT files_mentioned, decisions, coalesce(last_event_at, created_at) AS t
+      FROM sessions
+      WHERE files_mentioned IS NOT NULL AND files_mentioned != '[]' AND coalesce(last_event_at, created_at) >= ?
+      ORDER BY t DESC LIMIT ?`).all(cutoff, maxSessions)
+    const agg = new Map()
+    for (const r of rows) {
+      let files = [], decs = 0
+      try { files = JSON.parse(r.files_mentioned) } catch { continue }
+      try { decs = JSON.parse(r.decisions || '[]').length } catch { decs = 0 }
+      for (const f of files) {
+        if (typeof f !== 'string' || f.length < 4) continue
+        const cur = agg.get(f) || { file: f, sessions: 0, decisions: 0 }
+        cur.sessions += 1
+        cur.decisions += decs
+        agg.set(f, cur)
+      }
+    }
+    // 噪声过滤（实测）：AGENTS.md / config.json / SKILL.md 这类到处都出现的文件，
+    // 会把真正的「在动什么」挤掉——测出来主库前三名全是它们，纯噪声。
+    // 用 basename 白名单剔除（同一份 AGENTS.md 可能有多条路径写法）。
+    const UBIQUITOUS = new Set(['AGENTS.md', 'CLAUDE.md', 'SKILL.md', 'README.md', 'README.en.md',
+      'package.json', 'package-lock.json', 'config.json', 'tsconfig.json', 'progress.md',
+      'settings.json', 'vitest.config.ts', 'pnpm-lock.yaml'])
+    return [...agg.values()]
+      // 只出现过 1 场会话的文件不进简报（列一次等于噪声；≥2 才说明是"反复在动"）
+      .filter((x) => !UBIQUITOUS.has(String(x.file).split('/').pop() || ''))
+      .filter((x) => x.sessions >= 2)
+      .sort((a, b) => b.sessions - a.sessions || b.decisions - a.decisions)
+      .slice(0, top)
+  } catch {
+    return []
+  } finally {
+    try { db?.close() } catch { /* 已关闭或从未打开 */ }
+  }
+}
+
 /** node:sqlite 是否可用（Node < 22.5 / 22.x 无标志时为 false，调用方据此走 CLI） */
 export function sqlChannelAvailable() {
   if (!DatabaseSync) return false
