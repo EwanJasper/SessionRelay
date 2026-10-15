@@ -34,6 +34,23 @@ export function resetConn(): void {
 // 会话列表并错误入库（0922 晚实测污染：music 42→559、novel 15→495）。
 const discoverCache = new Map<string, { mtimeMs: number; rows: DiscoveredSession[] }>();
 
+/**
+ * [1015 夜 · 出口③第一刀] ZCode **自己就标了会话目的**（`session.task_type`）——不要再拿标题猜。
+ *
+ * 病历：原实现用 `/^workflow subagent/i` 匹配标题来判定「这是施工日志不是项目会话」。
+ * 实测对拍（tools/_probe_zcode_purpose_leak.mjs，2026-10-15）：
+ *   · 主库 zcode 源 568 场里，真值 subagent_child 的 **382 场全部漏过标题正则**，贡献 **254 条决策**（占全库 27%）；
+ *   · 对照库漏 69 场 / 54 条决策；
+ *   · 反向（标题像子代理但真值不是）：**0 场**。
+ * 即：真值就在库里，我们却在猜，而且漏掉了绝大多数。
+ * task_type 取值（本机实测分布）：subagent_child 754 / workflow_child 595 / interactive 209 /
+ * selection_side_chat 12 / fork 1。只把「子代理/工作流子会话」判为 workflow ——
+ * selection_side_chat（划词侧问）是用户自己驱动的，interactive 是正常会话，都不动。
+ */
+export function isSubagentKind(t: string | null | undefined): boolean {
+  return t === 'subagent_child' || t === 'workflow_child'
+}
+
 export function discover(projectRoot: string, dbPath: string): DiscoveredSession[] {
   if (!fs.existsSync(dbPath)) return [];
   const st = fs.statSync(dbPath);
@@ -42,9 +59,20 @@ export function discover(projectRoot: string, dbPath: string): DiscoveredSession
   if (hit && hit.mtimeMs === st.mtimeMs) return hit.rows;
   const z = getConn(dbPath);
   try {
-    const rows = z
-      .prepare('SELECT id, title, time_created, time_updated FROM session WHERE lower(directory) = lower(?)')
-      .all(path.resolve(projectRoot)) as Array<{ id: string; title: string; time_created: number; time_updated: number }>;
+    // ⚠️ task_type 是较新版本才有的列：老库上直接 SELECT 会抛，整条采集链会静默变空
+    // （实测：test/integration/capture.spec.ts 与 forget/resurrection.spec.ts 的假库都没有这列，
+    //   9 条测试当场红）。所以缺列时**退回旧查询**，判据自动降级为标题正则——老库照常工作。
+    type Row = { id: string; title: string; task_type: string | null; time_created: number; time_updated: number };
+    let rows: Row[];
+    try {
+      rows = z
+        .prepare('SELECT id, title, task_type, time_created, time_updated FROM session WHERE lower(directory) = lower(?)')
+        .all(path.resolve(projectRoot)) as Row[];
+    } catch {
+      rows = (z
+        .prepare('SELECT id, title, time_created, time_updated FROM session WHERE lower(directory) = lower(?)')
+        .all(path.resolve(projectRoot)) as Array<Omit<Row, 'task_type'>>).map((r) => ({ ...r, task_type: null }));
+    }
     const out = rows.map((r) => ({
       source: SOURCE_ID,
       sourceSessionId: r.id,
@@ -55,8 +83,9 @@ export function discover(projectRoot: string, dbPath: string): DiscoveredSession
       sizeBytes: 0,
       mtimeMs: r.time_updated,
       // [fork 0924] 工作流子代理会话标注 origin=workflow：它们是施工日志不是项目会话，
-      // 决策提取/检索默认排除（mc整合包实测：88% 决策碎片来自它们）
-      originHint: /^workflow subagent/i.test(r.title ?? '') ? ('workflow' as const) : undefined,
+      // 决策提取/检索默认排除（mc整合包实测：88% 决策碎片来自它们）。
+      // [1015 夜] 判据换成**库里的真值** task_type；标题正则只作老库/缺字段时的兜底。
+      originHint: (isSubagentKind(r.task_type) || /^workflow subagent/i.test(r.title ?? '')) ? ('workflow' as const) : undefined,
     }));
     discoverCache.set(cacheKey, { mtimeMs: st.mtimeMs, rows: out });
     return out;

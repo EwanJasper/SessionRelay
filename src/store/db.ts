@@ -327,12 +327,16 @@ export function upsertCapturedSession(
       s.lastEventAt, s.sourceFile, metaTextOf(s.title ?? null), new Date().toISOString());
     return { id, isNew: true, prevState: 'active', title: s.title ?? null };
   }
-  // 标题为空时允许补填（首条用户消息晚到）；origin 显式传入时更新（手动 save 覆盖 auto）
+  // 标题为空时允许补填（首条用户消息晚到）；origin 显式传入时更新（手动 save 覆盖 auto）。
+  // [1015 夜] 但 **'manual' 不可被自动判据降级** —— 与 pinned 同族：用户显式做过的动作优先级最高。
+  // 病历：ZCode 适配器改成读 task_type 真值后重跑一次 sync，382 场会话从 auto 改判 workflow，
+  // 其中 **10 场原本是用户手动 save 的**（manual 36→26）被一起盖掉。显式保存过的会话不该被自动规则吞掉。
+  const ORIGIN_SET = "origin = CASE WHEN origin = 'manual' THEN 'manual' ELSE COALESCE(?, origin) END";
   if (!existing.title && s.title) {
-    db.prepare('UPDATE sessions SET title = ?, meta_text = ?, last_event_at = ?, synced_at = ?, origin = COALESCE(?, origin) WHERE id = ?')
+    db.prepare(`UPDATE sessions SET title = ?, meta_text = ?, last_event_at = ?, synced_at = ?, ${ORIGIN_SET} WHERE id = ?`)
       .run(s.title, metaTextOf(s.title), s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
   } else {
-    db.prepare('UPDATE sessions SET last_event_at = ?, synced_at = ?, origin = COALESCE(?, origin) WHERE id = ?')
+    db.prepare(`UPDATE sessions SET last_event_at = ?, synced_at = ?, ${ORIGIN_SET} WHERE id = ?`)
       .run(s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
   }
   return { id: existing.id, isNew: false, prevState: existing.state, title: existing.title ?? s.title ?? null };
