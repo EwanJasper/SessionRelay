@@ -233,6 +233,30 @@ export function quotesBalanced(raw: string): boolean {
   return true;
 }
 
+/**
+ * 括号**极性**守卫（[fork 1015]，与 quotesBalanced 的极性检查同族）。
+ *
+ * 病历（m1 简报审计逐条溯源）：`弃用）、\`backups\gh-clones-20261013\`（冗余 clone` 这类残片
+ * 能进库，是因为旧守卫只数**数量**——它恰好 1 个 `）`、1 个 `（`，数量配对，于是放行；
+ * 但顺序是"先闭后开"，说明它是从 `（已弃用）、…（冗余 clone）` 这种长句里**从括号内部截出来**的。
+ * 同族样本：`采用宿主探测）；Z9 PR #3 拆三批方案 ✅；Z10 …（当时 260 passed`。
+ *
+ * 判据：从左到右扫，任何时刻闭括号多于开括号 = 撕裂残片 → 拒。
+ * 先剥反引号内联代码——`foo()` 里的 `)` 是代码不是文本（与 quotesBalanced 同处理）。
+ */
+export function parenDepthOk(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return true;
+  const t = raw.replace(/`[^`]*`/g, '');
+  const OPEN = '（(「『【';
+  const CLOSE = '）)」』】';
+  let depth = 0;
+  for (const ch of t) {
+    if (OPEN.includes(ch)) depth++;
+    else if (CLOSE.includes(ch)) { depth--; if (depth < 0) return false; }
+  }
+  return true;
+}
+
 export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
   const out: ExtractedMeta['decisions'] = [];
   const seen = new Set<string>();
@@ -256,6 +280,7 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         // [fork 1015] Phase 3 修复B：引号配对必须在**剥离前**的原始匹配文本上判——
         // 上一行的尾部剥离会把 `改为"…那个"` 的闭引号一起剥掉，先剥后查会误杀真决策
         if (!quotesBalanced(hit[0])) break;
+        if (!parenDepthOk(hit[0])) break; // [fork 1015] 括号极性：先闭后开=从括号内部截出的残片
         if (!plausibleDecision(text)) break; // [fork 0922] 残片拒收
         if (DECISION_FALSE_POSITIVE.test(text)) break; // [fork 1013] 词中误命中（"决定论"≠决定）
         if (isQuotedSpeech(s)) break; // [fork 1013] 转述他人文本不是我的决策（P4）
