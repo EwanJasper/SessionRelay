@@ -324,9 +324,10 @@ program
   .argument('[action]', 'init（默认）', 'init')
   .option('--root <dir>', '项目根（默认当前目录）')
   .option('--html', 'graph 时同时生成 architecture.html（可离线打开）')
-  .option('--out <file>', 'graph 的输出文件名（默认 architecture.mmd）')
+  .option('--d2', 'graph 时额外产出 board.d2（装了 d2 二进制可一键导出 SVG/PNG）')
+  .option('--out <file>', 'graph 的输出路径（默认 <项目>/.sessionrelay/board/board.mmd）')
   .option('--json', '机器格式')
-  .action(async (action: string, opts: { root?: string; json?: boolean; html?: boolean; out?: string }) => {
+  .action(async (action: string, opts: { root?: string; json?: boolean; html?: boolean; d2?: boolean; out?: string }) => {
     const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
     const { writeKanbanDraft, syncKanbanAuto, writeKanbanGraph } = await import('../cli/kanban.js');
     const { loadConfig } = await import('../shared/config.js');
@@ -337,7 +338,7 @@ program
     try { db = openRelayDb(root); } catch { db = null; }   // 没库也能生成（只写占位行）
     try {
       if (action === 'graph') {
-        const g = writeKanbanGraph(root, { html: opts.html, out: opts.out ? String(opts.out) : undefined });
+        const g = writeKanbanGraph(root, { html: opts.html, d2: opts.d2, out: opts.out ? String(opts.out) : undefined });
         if (opts.json) console.log(JSON.stringify({ ok: g.ok, reason: g.reason, nodes: g.nodes, htmlPath: g.htmlPath }, null, 2));
         else console.log((g.ok ? '✅ ' : '⏭  ') + g.reason + (g.ok ? `（${g.nodes} 个节点）` : ''));
         return;
