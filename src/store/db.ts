@@ -865,14 +865,22 @@ export function insertImportedSession(db: DB, s: ImportedSessionInput): { id: st
   if (existing) sid = `${s.sourceSessionId}#imp-${Date.now().toString(36)}`;
   const id = require$sessionId(s.source, sid);
   const metaText = metaTextOf(s.title, [...s.topics, ...s.decisions.map((d) => d.text.slice(0, 30))]);
+  // [1015 夜 · 版本对齐] 导入路径必须**自报版本**——这是 decisions 的第 5 个写入方，
+  // 原先 INSERT 列清单里没有 extracted_version，于是它落在 DEFAULT 0 = 「落后于当前规则」。
+  // 危害不是「不重算」，而是**会被盲目重算**：
+  //   recompute 的选取条件是 extracted_version < 当前版本 AND message_count > 0，
+  //   而导入的 messageCount 来自 HOP 包——若包是**只带决策不带消息**的交接（协议允许），
+  //   message_count>0 成立却没有 messages 行 ⇒ 重算从 0 条消息里重新提取 ⇒ **把导入的决策清空**。
+  // 打当前版本 = 「这是一份来自别处的快照，别拿本地规则重刷它」，语义与 capture 路径一致。
+  // 若将来确要用本地规则重抽，手工把 extracted_version 置 0 再 recompute 即可。
   db.prepare(`
     INSERT INTO sessions (id, source, source_session_id, project_id, origin, state, title, created_at, last_event_at,
                           message_count, topics, decisions, summary_rule, meta_text, author, imported_from,
-                          origin_project, content_hash, source_file, confirmed_at)
-    VALUES (?, ?, ?, ?, 'imported', 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          origin_project, content_hash, source_file, confirmed_at, extracted_version)
+    VALUES (?, ?, ?, ?, 'imported', 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, s.source, sid, s.projectId, s.title, s.createdAt, s.lastEventAt ?? s.createdAt,
     s.messageCount, JSON.stringify(s.topics), JSON.stringify(s.decisions), s.summaryRule, metaText,
-    s.author, s.importedFrom, s.originProject, s.contentHash, s.sourceFile, new Date().toISOString());
+    s.author, s.importedFrom, s.originProject, s.contentHash, s.sourceFile, new Date().toISOString(), EXTRACT_VERSION);
   return { id, skipped: false };
 }
 

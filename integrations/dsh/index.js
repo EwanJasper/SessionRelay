@@ -54,6 +54,7 @@ import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
 import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
 import { queryBriefData, sqlChannelAvailable, queryRecentFiles } from './src/brief-sql.mjs'
+import { passesUnresolvedFilters } from './src/brief-filters.mjs'
 
 export const name = 'dsh-srelay-brief'
 export const inject = ['systemPrompt', 'tools']
@@ -156,6 +157,10 @@ function itemsFromArray(arr, key, max) {
     // 实测：主库只拦 6/1172、音乐库 5/490，全部是噪声、0 误杀，且正好覆盖
     // Phase 3 治不掉的 3 条散文噪声（决定用 X"/作者点名表扬/按你在 Notes 里提议）。
     .filter((d) => passesBriefFilters(textOf(d)))
+    // [1015 夜 U-A] 未决段专用过滤（四条：图形残片 / 口语转写 / 截断 / 从句残片）。
+    // 实测 agent1super 14 天池 36→32（死 4 条全是噪声）、music 8→8（零误杀）。
+    // 置顶条目豁免：与下面两层同规矩——用户显式 pin 过的东西要尊重。
+    .filter((d) => (key === 'decisions' || d.pinned === true) ? true : passesUnresolvedFilters(textOf(d)))
     .filter((d) => {
       // Phase 3 层①：子代理任务书会话的决策/未决不进简报（仍全量可检索）。
       // 置顶豁免——用户显式 pin 过的东西要尊重，与上面新鲜度窗同一规矩。
