@@ -81,7 +81,9 @@ function queryDecisions(db, projectId, limit) {
     const topics = jsonArray(r.topics)
     void topics
     for (const d of jsonArray(r.decisions)) {
-      const key = (d.text ?? '').replace(/\s+/g, '').slice(0, 40)
+      // [1015 修] 与核心库 dedupKey 同规：标点与表格竖线一并剔掉（只去空白会让"被表格符号切分"的
+  // 同一句话算两条 → 简报双显）。改这里必须同时改 core/SessionRelay/src/store/db.ts 的 dedupKey。
+  const key = String(d.text ?? '').replace(/[\s，。！？、,.!?;；:：|｜]+/g, '').slice(0, 40)
       if (key && seen.has(key)) continue
       if (key) seen.add(key)
       out.push({
@@ -127,7 +129,7 @@ function queryUnresolved(db, projectId, limit) {
   for (const r of rows) {
     for (const q of jsonArray(r.key_questions).filter((x) => x.unresolved)) {
       // 同一问题跨会话去重（简报曾同条双显）——键与核心库逐字一致
-      const key = (q.q ?? '').replace(/\s+/g, '').slice(0, 40)
+      const key = String(q.q ?? '').replace(/[\s，。！？、,.!?;；:：|｜]+/g, '').slice(0, 40)
       if (key && seen.has(key)) continue
       if (key) seen.add(key)
       collected.push({ q: q.q, at: q.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title })

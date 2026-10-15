@@ -423,14 +423,25 @@ export function apply(ctx) {
       try {
         const sql = sqlItems(r.root)
         if (sql) {
-          const text = renderBrief(r.root, sql.dec, sql.unr)
+          // [1015 修] 必须把 counts 一起传：漏传时工具提示句固定显示"0 条可查"（
+          // 冷路径与异步刷新路径行为不一致，用户第一轮看到的条数永远是 0）。
+          const text = renderBrief(r.root, sql.dec, sql.unr, sql.counts)
           cache.set(r.root, { text, at: Date.now() })
           return text
         }
         const opts = { cwd: r.root, timeout: COLD_SYNC_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }
         const decRaw = execFileSync(NODE, [SRELAY, 'decisions', '--limit', '200', '--json'], opts)
         const unrRaw = execFileSync(NODE, [SRELAY, 'unresolved', '--limit', '200', '--json'], opts)
-        const text = renderBrief(r.root, parseItems(decRaw, 'decisions', DEC_SLOTS), parseItems(unrRaw, 'unresolved', UNR_SLOTS))
+        // [1015 修] 兜底路也要给 counts——否则同一份简报在两条路上**差一个提示句**：
+        // SQL 路显示真实条数、CLI 路固定显示 0，selftest 的"两路逐字节一致"立刻抓住。
+        // 口径与 SQL 路对齐：取 CLI JSON 的 count（= 本次取回的原始条数，未过过滤链）。
+        const countOf = (raw) => { try { const j = JSON.parse(raw); return Number(j?.count ?? 0) || 0 } catch { return 0 } }
+        const text = renderBrief(
+          r.root,
+          parseItems(decRaw, 'decisions', DEC_SLOTS),
+          parseItems(unrRaw, 'unresolved', UNR_SLOTS),
+          { dec: countOf(decRaw), unr: countOf(unrRaw) },
+        )
         cache.set(r.root, { text, at: Date.now() })
         return text
       } catch {

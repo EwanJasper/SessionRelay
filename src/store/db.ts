@@ -267,6 +267,17 @@ export function openExisting(file: string): DB {
   return db;
 }
 
+/**
+ * 跨会话去重键（决策与问题共用）。
+ *
+ * ⚠️ [1015 修] 原实现只去空白（`replace(/\s+/g, "").slice(0, 40)`），于是"同一句话被表格符号/
+ * 不同标点切分"的两个版本会算成两条 —— 实测简报里同一条决策双显，`brief-sql.mjs` 那侧同因同果。
+ * 现在把**标点与表格竖线**一并剔掉。键长保持 40 字符不变（改长度会改变与历史行为的可比性）。
+ * 三处调用点（listDecisions / listUnresolved / 本文件的合并路径）与插件侧 brief-sql.mjs 必须同规。
+ */
+export function dedupKey(s: string | null | undefined): string {
+  return String(s ?? '').replace(/[\s，。！？、,.!?;；:：|｜]+/g, '').slice(0, 40);
+}
 export function metaTextOf(title: string | null | undefined, topics: string[] = []): string {
   return searchTextOf([title ?? '', ...topics].join(' '));
 }
@@ -498,7 +509,7 @@ export function refreshDecisionsIncremental(db: DB, id: string): boolean {
   // 技能目录垃圾从最高频的 pending 路径原样写回库（红队 1014 🔴）。且本路径每闲置
   // 10 分钟必跑，是四个写入方里最勤快的那个。
   const extracted = extractForWrite(db, id, msgs);
-  const newDecs = extracted.decisions.filter((d) => !existing.some((e) => e.text === d.text));
+  const newDecs = extracted.decisions.filter((d) => !existing.some((e) => dedupKey(e.text) === dedupKey(d.text)));
   const newQs = extracted.questions;
   if (newDecs.length === 0 && newQs.length === 0) return true;
   const mergedDecs = [...existing, ...newDecs];
@@ -632,7 +643,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
     try { decs = JSON.parse(r.decisions); topics = JSON.parse(r.topics ?? '[]'); } catch { continue; }
     if (filter?.topic && !topics.includes(filter.topic) && !r.title?.includes(filter.topic)) continue;
     for (const d of decs) {
-      const key = (d.text ?? '').replace(/\s+/g, '').slice(0, 40);
+      const key = dedupKey(d.text);
       if (!key) continue;
       const wasPinned = seen.get(key) === true;
       if (seen.has(key)) {
@@ -642,7 +653,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         if (d.pinned === true && !wasPinned) {
           seen.set(key, true);
           for (let i = out.length - 1; i >= 0; i--) {
-            if ((out[i].text ?? '').replace(/\s+/g, '').slice(0, 40) === key) { out[i].pinned = true; break; }
+            if (dedupKey(out[i].text) === key) { out[i].pinned = true; break; }
           }
         }
         continue;
@@ -719,7 +730,7 @@ export function listUnresolved(db: DB, projectId: string, limit = 20): Unresolve
     try { qs = JSON.parse(r.key_questions); } catch { continue; }
     for (const q of qs.filter((x) => x.unresolved)) {
       // [fork 0924] 同一问题在多个会话被捕获时去重（简报曾同条双显）
-      const key = (q.q ?? '').replace(/\s+/g, '').slice(0, 40);
+      const key = dedupKey(q.q);
       if (key && seenQ.has(key)) continue;
       if (key) seenQ.add(key);
       out.push({ q: q.q, at: q.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title });
