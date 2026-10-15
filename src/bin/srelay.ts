@@ -234,6 +234,19 @@ program
   });
 
 program
+  .command('bench-extract')
+  .description('抽取快照与零标注 Diff 门禁：--save 存基线、--diff latest 看改规则后谁被剔除/谁被新增')
+  .option('--root <dir>', '项目根（默认当前目录）')
+  .option('--save <file>', '快照写到指定文件（默认 .sessionrelay/bench/<版本>-<时间>.json）')
+  .option('--diff <file>', '与基线快照对比（latest = 最近一次快照）')
+  .option('--limit <n>', '逐条列出上限，默认 40')
+  .option('--json')
+  .action(async (opts) => {
+    const { cmdBenchExtract } = await import('../cli/bench.js');
+    await cmdBenchExtract({ ...opts, limit: opts.limit ? Number(opts.limit) : undefined });
+  });
+
+program
   .command('recompute')
   .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
   .option('--batch <n>', '每批会话数，默认 50')
