@@ -320,20 +320,28 @@ async function cmdPinDecision(fragment: string, pinned: boolean, opts: { json?: 
 
 program
   .command('kanban')
-  .description('看板（progress.md）：init = 起草初稿（已存在则绝不覆盖）；sync = 只刷新自动区（来自 ZCode 待办），人写的行不动')
+  .description('看板（progress.md）：init = 起草初稿（绝不覆盖）；sync = 只刷新自动区（ZCode 真待办）；graph = 一键出图（Mermaid 依赖图，--html 附可离线打开的页面）')
   .argument('[action]', 'init（默认）', 'init')
   .option('--root <dir>', '项目根（默认当前目录）')
+  .option('--html', 'graph 时同时生成 architecture.html（可离线打开）')
+  .option('--out <file>', 'graph 的输出文件名（默认 architecture.mmd）')
   .option('--json', '机器格式')
-  .action(async (action: string, opts: { root?: string; json?: boolean }) => {
+  .action(async (action: string, opts: { root?: string; json?: boolean; html?: boolean; out?: string }) => {
     const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
-    const { writeKanbanDraft, syncKanbanAuto } = await import('../cli/kanban.js');
+    const { writeKanbanDraft, syncKanbanAuto, writeKanbanGraph } = await import('../cli/kanban.js');
     const { loadConfig } = await import('../shared/config.js');
-    if (action !== 'init' && action !== 'sync') { console.error(pc.red('未知动作：' + action + '（支持 init / sync）')); process.exitCode = 1; return; }
+    if (!['init', 'sync', 'graph'].includes(action)) { console.error(pc.red('未知动作：' + action + '（支持 init / sync / graph）')); process.exitCode = 1; return; }
     const root = opts.root ? path.resolve(String(opts.root)) : requireRoot();
     const cfg = loadConfig(root);
     let db: ReturnType<typeof openRelayDb> | null = null;
     try { db = openRelayDb(root); } catch { db = null; }   // 没库也能生成（只写占位行）
     try {
+      if (action === 'graph') {
+        const g = writeKanbanGraph(root, { html: opts.html, out: opts.out ? String(opts.out) : undefined });
+        if (opts.json) console.log(JSON.stringify({ ok: g.ok, reason: g.reason, nodes: g.nodes, htmlPath: g.htmlPath }, null, 2));
+        else console.log((g.ok ? '✅ ' : '⏭  ') + g.reason + (g.ok ? `（${g.nodes} 个节点）` : ''));
+        return;
+      }
       if (action === 'sync') {
         // 只刷新「自动区」（模块列 = auto:todos）：来自 ZCode 的真待办，人写的行一个字节不动。
         const r = syncKanbanAuto(root, cfg);
