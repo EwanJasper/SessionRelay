@@ -320,6 +320,15 @@ function normalizeQuestion(q: string): string {
 export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
   const total = msgs.length;
   const out: ExtractedMeta['questions'] = [];
+  // [fork 1015] 同会话内近似去重。
+  // 病历：真实库实测 music player 的未决问题里 **30.9%** 是近似重复（97 条里 30 条）、
+  // 全部问题 19.6% 重复；agent1super 分别为 1.1% / 3.5%。
+  // 危害不在存储，在**简报**：未决段只有 3 个名额且按时间取最新，
+  // 同一个问题被逐字重复几遍，等于把真问题挤出窗口。
+  // 键取「去空白与标点后的前 28 字」——实测足以合并"同一句被不同标点切分"的形态，
+  // 又不会把两个不同的短问题合并（短问题 28 字已覆盖全文）。
+  const seenQ = new Set<string>();
+  const qKey = (s: string): string => s.replace(/[\s，。！？、,.!?;；:：]/g, '').slice(0, 28);
   msgs.forEach((m, idx) => {
     if (m.role !== 'user') return;
     for (const s of sentences(m.content)) {
@@ -331,8 +340,12 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
       // [fork 1013] markdown blockquote：粘贴的报告段落常以 > 开头
       if (/^>\s*\S/.test(s)) continue;
       const tailAsked = idx >= Math.floor(total * 0.7); // 会话尾部提问，大概率未被回答
+      const qText = normalizeQuestion(s).slice(0, 90);
+      const k2 = qKey(qText);
+      if (!k2 || seenQ.has(k2)) continue; // 同会话内已收过近似问题
+      seenQ.add(k2);
       out.push({
-        q: normalizeQuestion(s).slice(0, 90),
+        q: qText,
         seq: m.seqNum,
         at: m.createdAt ?? undefined,
         unresolved: tailAsked || UNRESOLVED_HINT.test(s),

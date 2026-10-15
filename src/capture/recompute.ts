@@ -104,6 +104,10 @@ import type { Msg } from '../core/extract/extract.js';
  *        全部解耦；重算查询不再需要游标，也不需要"猜单行状态"。
  *        同时把常量搬到 core/extract/version.ts（store/db.ts 写派生列要打版本戳，
  *        常量留在本文件会让 store 反向依赖 capture）。本文件原样 re-export。
+ * 15 → 1015 未决问题**同会话内近似去重**（实测真实库：music player 未决 30.9% 是近似重复、
+ *        全部问题 19.6%；agent1super 为 1.1% / 3.5%）。危害不在存储而在简报——
+ *        未决段只有 3 个名额且取最新，重复项会把真问题挤出窗口。
+ *        键 = 去空白与标点后的前 28 字（足以合并"同一句被不同标点切分"，不会合并不同的短问题）。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
 
 import { EXTRACT_VERSION } from '../core/extract/version.js';
