@@ -88,7 +88,8 @@ describe('P3 · 提取规则版本与分批重算', () => {
     recomputeExtractions(db);
     expect(extractVersionOf(db)).toBe(EXTRACT_VERSION);
     const r = recomputeExtractions(db);
-    expect(r).toEqual({ recomputed: 0, remaining: 0 });
+    // [v14] RecomputeResult 增加 failed 计数（提取抛异常被跳过的会话数），行为不变
+    expect(r).toEqual({ recomputed: 0, remaining: 0, failed: 0 });
   });
 
   it('④ 归档会话（cleanup_at 非空）不进重算队列——正文已删，无从重算', () => {

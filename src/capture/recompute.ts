@@ -91,8 +91,23 @@ import type { Msg } from '../core/extract/extract.js';
  *           「数据库重算游标」会话命中 28 → 6 条（↓79%），其余查询一条不变。
  *           （注：ADR-002 记的"jieba 平均返回 38.5 条"在本机复测为 6–100 条，
  *           因为引擎早已做会话级 AND；专家的两阶段 MSM 解决的是我们没有的问题，未合入。）
+ * 14 → 1015 重算判据改为**逐会话自报** sessions.extracted_version（Bug-2 根治）：
+ *        原判据是「库级 extract_meta.progress_version + ORDER BY s.id 的字典序游标」，
+ *        隐含假设"新进入目标集的会话 ID 一定大于当前游标"。会话 ID 是随机 16 位 hex，
+ *        字典序与时间序无关（实测真实库按时间相邻对里 273/580 是逆序），于是：
+ *        分批重算跑到中途时，任何**状态流转（active→confirmed）进来且 ID 更小**的会话
+ *        会被 `s.id > ?` 永久跳过；而收尾时元数据照样写 remaining=0 / version=最新，
+ *        doctor 的「提取规则版本」检查全绿 —— 静默数据损坏的教科书形态。
+ *        本机实跑复现（真实库副本 + 哨兵列）：id=011e2072f56de9a9 的会话被漏算，
+ *        哨兵原封不动，而 extract_meta 显示 v13 已完成。
+ *        现改为 sessions.extracted_version 自报状态，与集合变动、ID 形态、归档、forget
+ *        全部解耦；重算查询不再需要游标，也不需要"猜单行状态"。
+ *        同时把常量搬到 core/extract/version.ts（store/db.ts 写派生列要打版本戳，
+ *        常量留在本文件会让 store 反向依赖 capture）。本文件原样 re-export。
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
-export const EXTRACT_VERSION = 13;
+
+import { EXTRACT_VERSION } from '../core/extract/version.js';
+export { EXTRACT_VERSION };
 
 /** 每批重算的会话数：兼顾单批耗时与中断粒度（50 会话实测在 ms 级） */
 const BATCH_SIZE = 50;
@@ -120,9 +135,21 @@ function ensureTable(db: DB): void {
     db.exec('ALTER TABLE extract_meta ADD COLUMN progress_version INTEGER NOT NULL DEFAULT 0');
   }
   // cursor_id：重算游标必须是会话 ID 而非位置数（红队 1014 F2）
+  // [v14] 已被 sessions.extracted_version 取代（判据不再需要游标），保留列只为兼容旧库。
   if (!cols.some((c) => c.name === 'cursor_id')) {
     db.exec("ALTER TABLE extract_meta ADD COLUMN cursor_id TEXT NOT NULL DEFAULT ''");
   }
+
+  // [v14] 会话级版本列：判据从"库级游标猜单行状态"改为"单行自报状态"。
+  // 存量行一律留 0 → 升级后首次会全量重算一遍（秒级）。这是**刻意**的：
+  // 旧游标漏掉的那些会话，我们没有任何可靠办法反推它的数据是哪个版本算的，
+  // 与其做一次无法验证的"存量认账"，不如全量重算一遍。
+  const scols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+  if (!scols.some((c) => c.name === 'extracted_version')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN extracted_version INTEGER NOT NULL DEFAULT 0');
+  }
+  // 复合索引：重算查询的判据+过滤列，避免全表扫（581 会话时无所谓，10 万时有关）。
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_extractver ON sessions(extracted_version, state)');
 }
 
 /** 本库记录的重算版本（无记录 = 0，视为全新库/未初始化） */
@@ -135,8 +162,11 @@ export function extractVersionOf(db: DB): number {
 export interface RecomputeResult {
   /** 本批实际重算的会话数 */
   recomputed: number;
-  /** 是否还有待重算的会话（false = 已全部跟上 EXTRACT_VERSION） */
+  /** 还有多少会话没跟上 EXTRACT_VERSION（0 = 全部跟上） */
   remaining: number;
+  /** [v14] 本批提取抛异常、被跳过并打了版本戳的会话数。
+   *  旧实现是"游标越过即放弃"，但**不留任何痕迹**；现在至少能被看见（>0 会告警）。 */
+  failed: number;
 }
 
 /** 取一个待重算会话的当前消息（用于重新跑提取器）。 */
@@ -162,15 +192,26 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   const summary = summaryRule(s.title, {
     files: [], topics, decisions, questions, codeBlockCount: 0, keyExchanges: [],
   }, { messageCount: msgs.length, source: 'recompute', firstAt: new Date(0).toISOString(), lastAt: null });
+  // [v14] 打版本戳：这一行从此**自报**"我的派生列是哪个规则版本算的"。
+  // 判据、进度、doctor 的逐会话检查全部读它，不再依赖任何库级游标。
   db.prepare(
-    'UPDATE sessions SET decisions = ?, key_questions = ?, topics = ?, summary_rule = ? WHERE id = ?',
+    'UPDATE sessions SET decisions = ?, key_questions = ?, topics = ?, summary_rule = ?, extracted_version = ? WHERE id = ?',
   ).run(
     JSON.stringify(decisions),
     JSON.stringify(questions),
     JSON.stringify(topics),
     summary,
+    EXTRACT_VERSION,
     s.id,
   );
+}
+
+/** [v14] 提取失败时也打版本戳：与旧实现"游标越过即永久放弃"同语义（避免每个周期
+ *  对同一个坏会话无限重试），但这次至少留下可观测的计数（RecomputeResult.failed）。 */
+function markAttempted(db: DB, id: string): void {
+  try {
+    db.prepare('UPDATE sessions SET extracted_version = ? WHERE id = ?').run(EXTRACT_VERSION, id);
+  } catch { /* 打戳失败不阻塞整批 */ }
 }
 
 /** 剩余待重算会话数（版本已跟上时为 0）。 */
@@ -178,90 +219,78 @@ function remainingCount(db: DB): number {
   // 三个状态都要：confirmed 已定案、pending/pending_end 是判定链中间态（闲置>10min 等
   // 6h 冷却）。此前只算 confirmed+pending，漏掉 pending_end——实测 5 个会话的污染决策
   // 因此永远重算不掉（1014）。已归档的 cleanup_at 非空/message_count=0，正确排除。
+  // [v14] 判据从"在目标集里"改为"**没跟上当前规则版本**"——前者会漏掉游标越过的会话。
   return (db.prepare(
     `SELECT COUNT(*) AS n FROM sessions s
-     WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0`,
-  ).get() as { n: number }).n;
+     WHERE s.extracted_version < ? AND s.state IN ('confirmed', 'pending', 'pending_end')
+       AND s.cleanup_at IS NULL AND s.message_count > 0`,
+  ).get(EXTRACT_VERSION) as { n: number }).n;
 }
 
 /** 跑一批重算（守护按需调用；幂等——重跑同一批只是再算一遍同样的规则）。
- *  分批推进：每批算 batch 个会话，把「已算过的会话数」写进 extract_meta.progress，
- *  下次调用跳过前 progress 个。全部算完才把 version 提到 EXTRACT_VERSION。
- *  失败不抛：单会话异常跳过，本批已算的进度仍然保留，下周期继续。
  *
- *  ⚠️ progress_version 必须与 progress 配对。版本 bump 会让上一次未跑完的进度全部作废
- *  （那些会话是按旧规则算的），此时要从头开始——否则就会重演 1014 那个静默损坏：
- *  元数据说 v7 已完成，实际只有尾巴几十个会话是 v7 规则算的。
+ *  ⚠️ [v14] 判据在**会话行**上（sessions.extracted_version < EXTRACT_VERSION），不在库级游标上。
+ *  旧实现是 progress_version + `ORDER BY s.id` 的字典序游标，隐含假设"新进入目标集的会话
+ *  ID 一定大于当前游标"——而 ID 是随机 16 位 hex，字典序与时间序无关（真实库实测相邻逆序
+ *  273/580）。批次中途任何"ID 更小的会话进入目标集"都会被永久跳过，收尾时元数据仍写
+ *  remaining=0 / version=最新，doctor 全绿。本机用真实库副本 + 哨兵列实跑复现过（见文件头 v14）。
  *
- *  ⚠️⚠️ 游标必须是**会话 ID**，不能是"已算几个位置"（红队 1014 F2）。
- *  位置计数在批次间集合变动时会跳过会话：归档（每小时）、forget、resume 回滚都会让
- *  目标集缩小，OFFSET 相对集合过计一格，其后每个未算会话顺移一格，最后
- *  `progressed >= total` 提前触发 finishVersion——**被跳过的会话永远拿着旧规则数据，
- *  而 extract_meta 说 version=N, remaining=0「已是最新」**，doctor 的「提取规则版本」
- *  检查同样被骗。守护 6 小时一批、554 个目标会话要 72 小时才追完，这 72 小时里
- *  归档与判定持续改集合——不是理论风险。
- *  ID 游标不受集合变动影响：离开集合的会话只是不被重算（正确），没有任何会话被跳过。 */
+ *  也不能再用 `if (cur >= EXTRACT_VERSION) return` 提前退出：库版本已最新时单行仍可能落后
+ *  ——那正是本次要治的形态。steady state 下这里只多一次带索引的 COUNT。
+ *
+ *  失败不抛：单会话异常跳过并打版本戳（与旧实现"游标越过即放弃"同语义，避免每周期对
+ *  同一个坏会话无限重试），但计数会出现在 RecomputeResult.failed 里，不再无痕。 */
 export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResult {
   ensureTable(db);
   const cur = extractVersionOf(db);
-  if (cur >= EXTRACT_VERSION) return { recomputed: 0, remaining: 0 };
 
   const total = remainingCount(db);
   if (total === 0) {
-    finishVersion(db, 0);
-    return { recomputed: 0, remaining: 0 };
+    // 全部跟上：把库级版本推进到当前规则版本（doctor 的「提取规则版本」读它）
+    if (cur < EXTRACT_VERSION) finishVersion(db, 0);
+    return { recomputed: 0, remaining: 0, failed: 0 };
   }
 
-  // 取游标：上一个已算会话的 id。stale（版本不匹配）时作废重来。
-  const row = db.prepare('SELECT progress, cursor_id, progress_version FROM extract_meta WHERE id = 1').get() as
-    { progress?: number; cursor_id?: string; progress_version?: number } | undefined;
-  const stale = (row?.progress_version ?? 0) !== EXTRACT_VERSION;
-  const lastId = stale ? '' : (row?.cursor_id ?? '');
-  if (stale && (row?.cursor_id ?? '')) {
-    // 作废前留痕迹：这类"看起来正常其实只算了一半"的故障，最难查的就是没有日志
-    db.prepare('UPDATE extract_meta SET progress = 0, cursor_id = \'\', progress_version = ? WHERE id = 1').run(EXTRACT_VERSION);
-  } else if (!row) {
-    db.prepare('INSERT INTO extract_meta (id, version, progress, cursor_id, progress_version) VALUES (1, ?, 0, \'\', ?)').run(cur, EXTRACT_VERSION);
-  }
-  // ORDER BY id（稳定、唯一、永不变）而非 confirmed_at DESC——排序不影响正确性，
-  // 但 id 游标要求排序键与游标键一致，否则"id > lastId"会漏。
   const todo = db.prepare(
     `SELECT s.id, s.title FROM sessions s
-     WHERE s.state IN ('confirmed', 'pending', 'pending_end') AND s.cleanup_at IS NULL AND s.message_count > 0 AND s.id > ?
+     WHERE s.extracted_version < ? AND s.state IN ('confirmed', 'pending', 'pending_end')
+       AND s.cleanup_at IS NULL AND s.message_count > 0
      ORDER BY s.id
      LIMIT ?`,
-  ).all(lastId, batch) as Array<{ id: string; title: string | null }>;
+  ).all(EXTRACT_VERSION, batch) as Array<{ id: string; title: string | null }>;
 
   if (todo.length === 0) {
-    // 游标后面没有了 → 全部算完
+    // 有 remaining 却选不出行 = 目标集口径不一致（例如列被外部写成 NULL）。
+    // 不静默：把库版本推进避免守护空转，remaining 原样返回让人看得见。
     finishVersion(db, 0);
-    return { recomputed: 0, remaining: 0 };
+    return { recomputed: 0, remaining: total, failed: 0 };
   }
 
   let done = 0;
+  let failed = 0;
   for (const s of todo) {
-    try { recomputeSession(db, s); done++; } catch { /* 单会话失败不阻塞整批 */ }
+    try { recomputeSession(db, s); done++; }
+    catch { failed++; markAttempted(db, s.id); }
   }
 
-  const newLast = todo[todo.length - 1].id;
-  if (todo.length < batch) {
-    // 取不满一批 → 这个游标下后面没有了（新会话会在下次调用时被 `id > lastId` 捞到，
-    // 但版本已推进所以会直接 return——与旧实现同语义，不引入新行为）
+  const left = remainingCount(db);
+  if (left === 0) {
     finishVersion(db, done);
-    return { recomputed: done, remaining: 0 };
+    return { recomputed: done, remaining: 0, failed };
   }
-  // 分批中：推进游标，不碰 version
+
+  const prev = (db.prepare('SELECT progress FROM extract_meta WHERE id = 1').get() as { progress?: number } | undefined)?.progress ?? 0;
   db.prepare(
-    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, cursor_id, progress_version) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO extract_meta (id, version, last_run_at, last_recomputed, remaining, progress, cursor_id, progress_version) VALUES (1, ?, ?, ?, ?, ?, \'\', ?)
      ON CONFLICT(id) DO UPDATE SET
        last_run_at = excluded.last_run_at,
        last_recomputed = excluded.last_recomputed,
        remaining = excluded.remaining,
        progress = excluded.progress,
-       cursor_id = excluded.cursor_id,
+       cursor_id = \'\',
        progress_version = excluded.progress_version`,
-  ).run(cur, new Date().toISOString(), done, Math.max(0, total - done), (row?.progress ?? 0) + done, newLast, EXTRACT_VERSION);
-  return { recomputed: done, remaining: Math.max(0, total - done) };
+  ).run(cur, new Date().toISOString(), done, left, prev + done, EXTRACT_VERSION);
+  return { recomputed: done, remaining: left, failed };
 }
 
 function finishVersion(db: DB, done: number): void {

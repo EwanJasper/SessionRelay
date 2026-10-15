@@ -4,6 +4,7 @@
 import Database from 'better-sqlite3';
 import { toSearchText } from '../core/tokenize/tokenizer.js';
 import { stripInjected } from '../core/extract/extract.js';
+import { EXTRACT_VERSION } from '../core/extract/version.js';
 
 // 便捷再导出：dbFile 常被误从本模块导入（实测已误 4 次），统一出口消灭此类错误
 export { dbFile } from '../shared/paths.js';
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   content_hash      TEXT,
   source_file       TEXT,
   synced_at         TEXT,
-  meta_text         TEXT
+  meta_text         TEXT,
+  extracted_version INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_sessions_src ON sessions(source, source_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
@@ -203,6 +205,14 @@ export function createDb(file: string = ':memory:'): DB {
     throw new Error(`数据库由更新版本的 srelay 创建（v${v} > 支持 v${SCHEMA_VERSION}），请升级 srelay（T30）`);
   }
   db.exec(DDL);
+  // v14 迁移：会话级提取版本列 + 判据索引（CREATE TABLE IF NOT EXISTS 不会给旧表加列）
+  {
+    const xcols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+    if (!xcols.some(c => c.name === 'extracted_version')) {
+      db.exec('ALTER TABLE sessions ADD COLUMN extracted_version INTEGER NOT NULL DEFAULT 0');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_extractver ON sessions(extracted_version, state)');
+  }
   // M2 迁移：给已有库加归档列（CREATE TABLE IF NOT EXISTS 不会加列）
   if (v < 2) {
     const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
@@ -235,6 +245,13 @@ export function openExisting(file: string): DB {
   // 自动迁移：确保旧库升级到当前 schema
   if (v < SCHEMA_VERSION) {
     db.exec(DDL);
+    {
+      const xcols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+      if (!xcols.some(c => c.name === 'extracted_version')) {
+        db.exec('ALTER TABLE sessions ADD COLUMN extracted_version INTEGER NOT NULL DEFAULT 0');
+      }
+      db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_extractver ON sessions(extracted_version, state)');
+    }
     if (v < 2) {
       const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
       if (!cols.some(c => c.name === 'cleanup_at')) {
@@ -565,7 +582,7 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
   db.prepare(`
     UPDATE sessions SET
       files_mentioned = ?, topics = ?, decisions = ?, key_questions = ?, code_changes = ?,
-      summary_rule = ?, meta_text = ?
+      summary_rule = ?, meta_text = ?, extracted_version = ?
     WHERE id = ?
   `).run(
     JSON.stringify(meta.files),
@@ -575,6 +592,9 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
     JSON.stringify({ codeBlockCount: meta.codeBlockCount, keyExchanges: meta.keyExchanges }),
     summary,
     metaTextOf(s?.title ?? null, topicsAndDecisions),
+    // [v14] 写派生列时必须打版本戳：新捕获/确认/刷新路径产生的数据，
+    // 从此自报"我是按哪个规则版本算的"，重算判据据此决定要不要再碰它。
+    EXTRACT_VERSION,
     id,
   );
 }
