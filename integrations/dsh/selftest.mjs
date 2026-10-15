@@ -763,5 +763,29 @@ console.log('=== 10a. 置顶的老决策能进简报（真实库，pin→验→u
   }
 }
 
+// ═══ 11. 真实启动冒烟（real-boot）——[1015 债务3] 从孤立脚本并入主流程 ═══
+// 为什么必须进来：它是唯一一条"不用 stub ctx、boot 真实 dsh-system-prompt"的断言，
+// 固化的是**真实 API 契约**而不是"我对 API 的假设"。此前它长期孤立，没人跑=等于不存在。
+// 纪律（与 8b/10a 同款）：**没有条件测就 SKIP，不许 FAIL**——
+// 它依赖宿主真实包与本机 DSH 安装树；部署副本/别的机器上找不到就该跳过，
+// 否则"本机没装 DSH"会被误报成"插件坏了"。
+console.log('=== 11. 真实启动冒烟（real-boot，缺条件则 SKIP）===');
+{
+  try {
+    const rb = await import(HERE + 'realboot.mjs');
+    const r = await rb.runRealBoot({ pluginDir: HERE, log: (s) => console.log('  ' + s) });
+    if (r.skipped) {
+      console.log('  SKIP real-boot：' + r.reason);
+    } else {
+      // 逐条断言已在 realboot 内部打印，这里只把它折算成 selftest 的 fail 计数
+      for (let i = 0; i < r.fail; i++) check('real-boot 第 ' + (i + 1) + ' 项失败', false);
+      if (r.fail === 0) console.log('  PASS real-boot 全部 ' + r.pass + ' 条真实链路断言');
+    }
+  } catch (e) {
+    // 导入/执行异常算 FAIL：那说明插件目录本身有问题，不是"没条件测"
+    check('real-boot 可执行（异常的报错：' + String(e && e.message).slice(0, 60) + '）', false);
+  }
+}
+
 console.log(fail === 0 ? '\nSELFTEST PASS' : `\nSELFTEST FAIL (${fail})`)
 process.exit(fail === 0 ? 0 : 1)

@@ -1,33 +1,40 @@
 // 真实启动测试（real-boot）——不用 stub ctx，boot 真实的 dsh-system-prompt。
 //
-// 为什么单独写这个：此前 46 项断言全是 stub ctx（`{ section: s => ... }` 接受任何形状），
-// 它固化的是"我对 API 的假设"，不是"API 的真实行为"。若 DSH 的 section 签名或
-// text 求值方式与假设不同，stub 测试照样全绿而真实环境崩。
-// 本测试用 profile 的 createRequire 加载真正的 @deepseek-ai/dsh-system-prompt，
-// 建真实 SystemPrompt 服务，调真实 assemble()，断言真实渲染结果。
+// 为什么存在：其余断言全是 stub ctx（`{ section: s => ... }` 接受任何形状），它固化的是
+// "我对 API 的假设"，不是"API 的真实行为"。若 DSH 的 section 签名或 text 求值方式与假设不同，
+// stub 测试照样全绿而真实环境崩。本测试用真实包建真实 SystemPrompt 服务，调真实 assemble()。
+//
+// [1015 债务3 修复] 从"孤立脚本"改为**可被 selftest 调用的导出函数 + 可跳过**：
+//   · 原来硬编码 `PLUGIN = D:/dsh插件  记忆/plugins/dsh`（作者副本绝对路径）——部署副本里跑必然指错；
+//     现在从 `import.meta.url` 推导，**跑在哪份副本就测哪份副本**。
+//   · 原来找不到真实包就直接 `process.exit(1)`——在没装 DSH 的机器上等于把自测判死；
+//     现在返回 `{ skipped: true, reason }`，让调用方**能区分"没条件测"与"测失败"**。
+//   · 仍然保留 CLI 入口（`node realboot.mjs` 行为不变），只是多了一层可编程接口。
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const PLUGIN = 'D:/dsh插件  记忆/plugins/dsh'
-const PROFILE = 'C:/Users/crx/.dsh/profiles/web'
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 
-let fail = 0
-const check = (n, c) => { console.log((c ? '  PASS ' : '  FAIL ') + n); if (!c) fail++ }
+/** DSH 安装树候选（.pnpm 目录，内含 @deepseek-ai/* 的真实包）。可用 DSH_INSTALL_DIR 覆盖。 */
+const DSH_CANDIDATES = [
+  process.env.DSH_INSTALL_DIR,
+  process.env.DSH_HOME ? path.join(process.env.DSH_HOME, 'node_modules', '.pnpm') : null,
+  'D:/agent1super/dsh/node_modules/.pnpm',
+  path.join(HERE, 'node_modules', '.pnpm'),
+].filter(Boolean)
 
-// 用 profile 的解析路径（与 DSH 运行时同源）加载真实 dsh-system-prompt
-// 用 DSH 安装树内的真实路径（profile 的 node_modules 没有这两个包，
-// 它们在 .pnpm 里；DSH 运行时靠两锚点解析才找得到）
-const DSH_PKG = 'D:/agent1super/dsh/node_modules/.pnpm'
-function pkgDir(name) {
-  // pnpm 的 .pnpm 目录名会**截断**长包名（dsh-system-prompt → dsh-system-pro），
-  // 所以不能靠目录名前缀匹配。改为：遍历候选目录，读里面的
-  // node_modules/@deepseek-ai/<name>/package.json，用 name 字段精确比对。
+/** 在 .pnpm 树里找某个 @deepseek-ai/* 包的真实目录。
+ *  pnpm 的目录名会**截断**长包名（dsh-system-prompt → dsh-system-pro），
+ *  所以不能靠目录名前缀匹配；改为遍历后读 manifest 的 name 精确比对。 */
+function pkgDir(root, name) {
   const want = '@deepseek-ai/' + name
-  for (const d of fs.readdirSync(DSH_PKG)) {
+  let dirs = []
+  try { dirs = fs.readdirSync(root) } catch { return null }
+  for (const d of dirs) {
     if (!d.startsWith('@deepseek-ai+')) continue
-    const base = path.join(DSH_PKG, d, 'node_modules', '@deepseek-ai')
+    const base = path.join(root, d, 'node_modules', '@deepseek-ai')
     let entries = []
     try { entries = fs.readdirSync(base) } catch { continue }
     for (const e of entries) {
@@ -40,96 +47,144 @@ function pkgDir(name) {
   }
   return null
 }
-const SP = pkgDir('dsh-system-prompt')
-const CO = pkgDir('cordis')
-if (!SP || !CO) { console.log('找不到真实包:', { SP, CO }); process.exit(1) }
-const req = createRequire(path.join(CO, 'package.json'))
-const { Context } = req(path.join(CO, 'lib/index.js'))
-const root = new Context()
-let SystemPrompt, renderPrompt
-try {
-  const mod = req(path.join(SP, 'lib/index.js'))
-  SystemPrompt = mod.SystemPrompt
-  renderPrompt = mod.renderPrompt
-  check('真实 dsh-system-prompt 可加载', typeof SystemPrompt === 'function')
-} catch (e) {
-  console.log('  FAIL 无法加载真实 dsh-system-prompt:', e.message)
-  console.log('  → 跳过 real-boot（改回 stub 覆盖）')
-  process.exit(1)
+
+/** 找到第一个可用的 DSH 安装树（含 dsh-system-prompt 与 cordis 两个包）。 */
+export function findDshTree() {
+  for (const root of DSH_CANDIDATES) {
+    if (!root || !fs.existsSync(root)) continue
+    const SP = pkgDir(root, 'dsh-system-prompt')
+    const CO = pkgDir(root, 'cordis')
+    if (SP && CO) return { root, SP, CO }
+  }
+  return null
 }
 
-console.log('=== 1. 直接实例化真实 SystemPrompt（Service 构造器）===')
-let svc
-try {
-  svc = new SystemPrompt(root, {})
-  check('真实 SystemPrompt 可 new', !!svc)
-  check('有 section 方法', typeof svc.section === 'function')
-  check('有 assemble 方法', typeof svc.assemble === 'function')
-  check('有 getSectionOrder 方法', typeof svc.getSectionOrder === 'function')
-} catch (e) {
-  console.log('  FAIL 实例化抛错:', e.message)
-  process.exit(1)
+/**
+ * 跑一次真实启动测试。**不抛异常**——一切结果都通过返回值表达。
+ * @param {{ pluginDir?: string, log?: (s: string) => void }} opts
+ * @returns {Promise<{ skipped: boolean, reason?: string, pass: number, fail: number, lines: string[] }>}
+ */
+export async function runRealBoot(opts = {}) {
+  // 容错：调用方可能传 file:// URL（selftest 里的 HERE 就是），直接 path.join 会拼出
+  // `\file:\...` 这种鬼路径——实测踩过：real-boot 因此静默 SKIP 成「找不到插件入口」。
+  const rawDir = opts.pluginDir ?? HERE
+  const pluginDir = String(rawDir).startsWith('file:') ? fileURLToPath(rawDir) : rawDir
+  const log = opts.log ?? ((s) => process.stdout.write(s + '\n'))
+  const lines = []
+  const say = (s) => { lines.push(s); log(s) }
+  let pass = 0
+  let fail = 0
+  const check = (n, c) => { say((c ? '  PASS ' : '  FAIL ') + n); if (c) pass++; else fail++ }
+
+  const tree = findDshTree()
+  if (!tree) {
+    const reason = '找不到 DSH 安装树（.pnpm 里没有 dsh-system-prompt/cordis）——本机未装 DSH 或路径不同，' +
+      '可用 DSH_INSTALL_DIR 指定'
+    say('  SKIP real-boot：' + reason)
+    return { skipped: true, reason, pass: 0, fail: 0, lines }
+  }
+
+  const entry = path.join(pluginDir, 'index.js')
+  if (!fs.existsSync(entry)) {
+    const reason = '找不到插件入口：' + entry
+    say('  SKIP real-boot：' + reason)
+    return { skipped: true, reason, pass: 0, fail: 0, lines }
+  }
+
+  const req = createRequire(path.join(tree.CO, 'package.json'))
+  const { Context } = req(path.join(tree.CO, 'lib/index.js'))
+  const root = new Context()
+  let SystemPrompt, renderPrompt
+  try {
+    const mod = req(path.join(tree.SP, 'lib/index.js'))
+    SystemPrompt = mod.SystemPrompt
+    renderPrompt = mod.renderPrompt
+    check('真实 dsh-system-prompt 可加载', typeof SystemPrompt === 'function')
+  } catch (e) {
+    const reason = '无法加载真实 dsh-system-prompt：' + e.message
+    say('  SKIP real-boot：' + reason)
+    return { skipped: true, reason, pass, fail, lines }
+  }
+
+  say('=== 1. 直接实例化真实 SystemPrompt（Service 构造器）===')
+  let svc
+  try {
+    svc = new SystemPrompt(root, {})
+    check('真实 SystemPrompt 可 new', !!svc)
+    check('有 section 方法', typeof svc.section === 'function')
+    check('有 assemble 方法', typeof svc.assemble === 'function')
+    check('有 getSectionOrder 方法', typeof svc.getSectionOrder === 'function')
+  } catch (e) {
+    say('  FAIL 实例化抛错: ' + e.message)
+    fail++
+    return { skipped: false, pass, fail, lines }
+  }
+
+  say('=== 2. 注册我的真实 provider，跑真实 assemble + render ===')
+  const plugin = await import(pathToFileURL(entry).href)
+  const reg = []
+  plugin.apply({
+    systemPrompt: {
+      section: (spec) => { reg.push(spec); return () => {} },
+      getSectionOrder: (n) => 10001,
+    },
+    tools: { register: () => () => {} },
+    effect: (f) => f(),
+  })
+  check('插件注册 1 个 section', reg.length === 1)
+  const spec = reg[0]
+
+  let rendered = null
+  try {
+    const dispose = svc.section({ name: 'real-boot-probe', order: 10001, text: spec.text })
+    const asm = await svc.assemble({})
+    check('真实 assemble() 不抛', !!asm && Array.isArray(asm.sections))
+    rendered = renderPrompt(asm)
+    dispose()
+  } catch (e) {
+    say('  FAIL assemble/render 抛错: ' + e.message)
+    fail++
+  }
+  check('真实 renderPrompt 产出字符串', typeof rendered === 'string')
+
+  say('=== 3. 反证：Promise 返回值会被真实链路拒绝 ===')
+  let promiseErr = ''
+  try {
+    const d = svc.section({ name: 'promise-probe', order: 10002, text: async () => 'hello' })
+    const asm = await svc.assemble({})
+    renderPrompt(asm)
+    d()
+    say('     真实链路容忍 Promise（那原来的防御是多余的，但无害）')
+  } catch (e) {
+    promiseErr = String(e.message || e)
+  }
+  check('真实链路对 Promise 报 indexOf/is not a function', /indexOf|is not a function/.test(promiseErr))
+  if (promiseErr) say('     真实错误: ' + promiseErr.slice(0, 120))
+
+  say('=== 4. 真实 assemble() 是否把 agent 透传给 text provider ===')
+  let seen = null
+  try {
+    const probe = (assembly) => { seen = assembly ?? null; return '' }
+    const d = svc.section({ name: 'ctx-probe', order: 10003, text: probe })
+    const fakeAgent = { id: 'probe-session', session: { header: { cwd: 'E:\\music player' } } }
+    await svc.assemble({ agent: fakeAgent })
+    d()
+  } catch (e) { say('     assemble 抛错: ' + e.message) }
+
+  check('provider 收到了 assembly 对象', seen !== null)
+  const gotCwd = seen && seen.agent && seen.agent.session && seen.agent.session.header && seen.agent.session.header.cwd
+  check('assembly.agent.session.header.cwd 透传成功', gotCwd === 'E:\\music player')
+  say('     透传结果: ' + JSON.stringify(gotCwd))
+  say('     assembly 键: ' + (seen ? Object.keys(seen).join(', ') : '(无)'))
+
+  return { skipped: false, pass, fail, lines }
 }
 
-console.log('=== 2. 注册我的真实 provider，跑真实 assemble + render ===')
-const plugin = await import(pathToFileURL(path.join(PLUGIN, 'index.js')).href)
-const reg = []
-plugin.apply({
-  systemPrompt: {
-    section: (spec) => { reg.push(spec); return () => {} },
-    getSectionOrder: (n) => 10001,
-  },
-  tools: { register: () => () => {} },
-  effect: (f) => f(),
-})
-check('插件注册 1 个 section', reg.length === 1)
-const spec = reg[0]
-
-let rendered = null
-try {
-  const dispose = svc.section({ name: 'real-boot-probe', order: 10001, text: spec.text })
-  const asm = await svc.assemble({})
-  check('真实 assemble() 不抛', !!asm && Array.isArray(asm.sections))
-  rendered = renderPrompt(asm)
-  dispose()
-} catch (e) {
-  console.log('  FAIL assemble/render 抛错:', e.message)
-  console.log('    ', (e.stack || '').split('\n')[1]?.trim())
+// ── CLI 入口：`node realboot.mjs` 行为与原来一致（PASS/FAIL 文案 + 退出码）──
+const isCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isCli) {
+  const r = await runRealBoot()
+  if (r.skipped) { console.log('\nREAL-BOOT SKIP（' + r.reason + '）'); process.exit(0) }
+  console.log(r.fail === 0 ? '\nREAL-BOOT PASS' : '\n' + r.fail + ' 项 FAIL')
+  process.exit(r.fail === 0 ? 0 : 1)
 }
-check('真实 renderPrompt 产出字符串', typeof rendered === 'string')
-
-console.log('=== 3. 反证：Promise 返回值会被真实链路拒绝 ===')
-// 这是 real-boot 的核心价值——证明"必须返回 string"不是我的假设，是真实契约
-let promiseErr = ''
-try {
-  const d = svc.section({ name: 'promise-probe', order: 10002, text: async () => 'hello' })
-  const asm = await svc.assemble({})
-  renderPrompt(asm)
-  d()
-  console.log('     真实链路容忍 Promise（那我原来的防御是多余的，但无害）')
-} catch (e) {
-  promiseErr = String(e.message || e)
-}
-check('真实链路对 Promise 报 indexOf/is not a function', /indexOf|is not a function/.test(promiseErr))
-if (promiseErr) console.log('     真实错误:', promiseErr.slice(0, 120))
-
-console.log('=== 4. 真实 assemble() 是否把 agent 透传给 text provider ===')
-// 这是 cwd 方案的最后一个未证实环节：我的 provider 读 assembly.agent.session.header.cwd。
-// 若真实 SystemPrompt 不透传 context 给 provider，整套 cwd 优先就落空。
-let seen = null
-try {
-  const probe = (assembly) => { seen = assembly ?? null; return '' }
-  const d = svc.section({ name: 'ctx-probe', order: 10003, text: probe })
-  const fakeAgent = { id: 'probe-session', session: { header: { cwd: 'E:\\music player' } } }
-  await svc.assemble({ agent: fakeAgent })
-  d()
-} catch (e) { console.log('     assemble 抛错:', e.message) }
-
-check('provider 收到了 assembly 对象', seen !== null)
-const gotCwd = seen && seen.agent && seen.agent.session && seen.agent.session.header && seen.agent.session.header.cwd
-check('assembly.agent.session.header.cwd 透传成功', gotCwd === 'E:\\music player')
-console.log('     透传结果:', JSON.stringify(gotCwd))
-console.log('     assembly 键:', seen ? Object.keys(seen).join(', ') : '(无)')
-
-console.log(fail === 0 ? '\nREAL-BOOT PASS' : `\n${fail} 项 FAIL`)
-process.exit(fail === 0 ? 0 : 1)
