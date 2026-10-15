@@ -9,6 +9,36 @@
 //
 // 两侧都从本文件 import，物理上只有一份。tools/check-brief-filters.mjs 会断言两边都没被改坏。
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [ADR-002 theOneThing · **影子期**] 会话目的分类：扩展的任务书签名族
+//
+// 状态：**只导出谓词，不生效**。简报过滤链一行都没接它 —— 回滚 = 删掉本段。
+// 为什么不直接接：ADR 裁决「先影子后接线」。而实测已经说明它今天接线也等于没接 ——
+//   拉取式影子（2026-10-15 21:1x，tools/_probe_purpose_shadow.mjs，两库全量、生产去重口径）：
+//     主库 903 条去重决策里只触及 **10 条（1.1%）、窗内 0**；对照库 325 条里 **6 条（1.8%）、窗内 0**。
+//   其中 `# 任务：…` 与 `只读探索。目标：…` 在两个库上分别是 0 命中 / 只在对照库 6 命中。
+//   ⇒ **接线与否，今天的简报一模一样**。
+//
+// 为什么要补（已发货的 SUBAGENT_TASK_TITLE 只认 5 个锚：你是/你作为/任务[:：]/你的任务/act as/you are）：
+//   红队全量盘点出四类干净漏召签名（markdown 标题躲过 `^任务` 锚定等），补上它们零风险、
+//   但**今天不产生任何可见变化**——这一点必须写在代码里，免得后人误以为它「没生效=写错了」。
+//
+// ⚠️ ADR 未给出四条签名的精确正则，下面是**字面还原版**。引用它的数字时必须同时引用探针，
+//    否则又会出现「口径不明 → 数字不可复核」那类账。
+export const PURPOSE_SHADOW_SIGNATURES = [
+  { name: 'md-heading-task', re: /^#\s*任务\s*[:：]/ },              // 「# 任务：…」markdown 标题
+  { name: 'you-in-env', re: /^你在.{0,60}环境/ },                      // 「你在…环境…」
+  { name: 'readonly-explore-goal', re: /^只读探索[。.，,]?\s*目标\s*[:：]/ }, // 「只读探索。目标：…」
+  { name: 'today-task', re: /^今天是.{0,60}[。.]\s*任务\s*[:：]/ },     // 「今天是…。任务：…」
+]
+
+/** 影子判定：会话标题命中哪条签名（未命中返回 null）。**不参与任何过滤**。 */
+export function purposeShadowMatch(title) {
+  const t = String(title ?? '').trim()
+  for (const s of PURPOSE_SHADOW_SIGNATURES) if (s.re.test(t)) return s.name
+  return null
+}
+
 /** 七条规范过滤器。顺序即优先级，新增往末尾加并在 check-brief-filters.mjs 登记。 */
 export const BRIEF_CANONICAL_FILTERS = [
   // 1. 系统注入与提醒残片（防注入块从某条路漏进 decisions 列）
