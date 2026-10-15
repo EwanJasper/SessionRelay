@@ -217,6 +217,23 @@ program
   });
 
 program
+  .command('brief')
+  .description('开场简报一次取全：决策 + 未决 + 计数 + 最近在动的文件（客户端只付一次子进程；口径与 decisions/unresolved 两条老命令逐条一致）')
+  .option('--limit <n>', '决策与未决各自最多取回多少条，默认 200')
+  .option('--days <n>', '「最近在动」的窗口天数，默认 7')
+  .option('--top <n>', '「最近在动」最多列几个文件，默认 3')
+  .option('--json')
+  .action(async (opts) => {
+    const { cmdBrief } = await import('../cli/brief.js');
+    await cmdBrief({
+      limit: opts.limit ? Number(opts.limit) : undefined,
+      days: opts.days ? Number(opts.days) : undefined,
+      top: opts.top ? Number(opts.top) : undefined,
+      json: opts.json,
+    });
+  });
+
+program
   .command('recompute')
   .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
   .option('--batch <n>', '每批会话数，默认 50')

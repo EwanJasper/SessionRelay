@@ -743,6 +743,57 @@ export function listUnresolved(db: DB, projectId: string, limit = 20): Unresolve
   return out.slice(0, limit);
 }
 
+// ───────────────────── Phase 1.5：简报一次取全（srelay brief --json） ─────────────────────
+
+export interface RecentFileRow { file: string; sessions: number; decisions: number }
+
+/** 到处都出现的文件：实测会把真正的「在动什么」挤出前三（主库前三名一度全是它们）。与插件侧同一张表。 */
+const UBIQUITOUS_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'SKILL.md', 'README.md', 'README.en.md',
+  'package.json', 'package-lock.json', 'config.json', 'tsconfig.json', 'progress.md',
+  'settings.json', 'vitest.config.ts', 'pnpm-lock.yaml'])
+
+/**
+ * 「最近在动哪些文件」——**与 DSH 插件 plugins/dsh/src/brief-sql.mjs:queryRecentFiles 同规**。
+ *
+ * 为什么两端各有一份实现：插件走 node:sqlite 直查（0 子进程、毫秒级），核心库走 better-sqlite3，
+ * 两个运行时不能共用模块。所以这里必须**逐条对齐**：同 SQL、同过滤、同排序、同截断。
+ * 插件 selftest §12 拿真实库与 `srelay brief --json` 对拍——改一边必须改另一边。
+ *
+ * 口径（1015 夜体检过，**别把它当名次用**）：近 N 天被提到过的文件，按「出现过它的会话数」降序，
+ * 至少 2 场会话才列；`decisions` 是**这些会话的决策总数**（同一批会话里的文件必然同值），
+ * 只用于并列时的次级排序，不进简报显示。全部数字见 docs/1015-深夜-最近在动-信号体检.md。
+ */
+export function listRecentFiles(db: DB, opts: { days?: number; top?: number; maxSessions?: number } = {}): RecentFileRow[] {
+  const days = opts.days ?? 7
+  const top = opts.top ?? 3
+  const maxSessions = opts.maxSessions ?? 300
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+  const rows = db.prepare(`SELECT files_mentioned, decisions, coalesce(last_event_at, created_at) AS t
+    FROM sessions
+    WHERE files_mentioned IS NOT NULL AND files_mentioned != '[]' AND coalesce(last_event_at, created_at) >= ?
+    ORDER BY t DESC LIMIT ?`).all(cutoff, maxSessions) as Array<{ files_mentioned: string; decisions: string | null }>
+  const agg = new Map<string, RecentFileRow>()
+  for (const r of rows) {
+    let files: unknown = []
+    try { files = JSON.parse(r.files_mentioned) } catch { continue }
+    if (!Array.isArray(files)) continue
+    let decs = 0
+    try { const d: unknown = JSON.parse(r.decisions || '[]'); decs = Array.isArray(d) ? d.length : 0 } catch { decs = 0 }
+    for (const f of files) {
+      if (typeof f !== 'string' || f.length < 4) continue
+      const cur = agg.get(f) ?? { file: f, sessions: 0, decisions: 0 }
+      cur.sessions += 1
+      cur.decisions += decs
+      agg.set(f, cur)
+    }
+  }
+  return [...agg.values()]
+    .filter((x) => !UBIQUITOUS_FILES.has(String(x.file).split('/').pop() || ''))
+    .filter((x) => x.sessions >= 2)
+    .sort((a, b) => b.sessions - a.sessions || b.decisions - a.decisions)
+    .slice(0, top)
+}
+
 // ───────────────────── Phase 3.5：HOP 导出/导入/团队 ─────────────────────
 
 export interface SessionFull {
