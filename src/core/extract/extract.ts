@@ -168,6 +168,28 @@ function isQuotedSpeech(s: string): boolean {
 // 只在这些组合后出现时才豁免——不误伤"决定改用 X"这种真决策。
 const DECISION_FALSE_POSITIVE = /(决定论|确定性|决定性|选择性注意|选择性|采纳率|采用率|放弃治疗|切换成本)/;
 
+// [fork 1015 夜 · v18] 名词化的「选择X」误命中：选择器 / 选择题 / 选择框 …
+// 病历：DECISION_STRONG 的「选择」分支不看词边界，于是「选择器是旧的」「选择题，它回你一个概率」
+// 这类**界面排障里的名词**被当成拍板入库。实测（两库全量、文本唯一化）：含名词化「选择X」的决策
+// 主库 83 条、对照库 14 条，绝大多数是噪声。
+// ⚠️ 但不能一刀切 `选择(?!器|框|题)`——那会把「选择器改当前会话+…」这类**名词作主语的真决策**
+// 一起杀掉（实测会杀掉对照库 3 条真决策，且其中一条还是 selftest §10 的置顶夹具）。
+// 用「后面 4 字内必须出现变更动词」的窗口规则量过：
+//   主库 83 → 消失 77 / 保留 6（保留里 4 条真决策、2 条噪声）；对照库 14 → 消失 11 / 保留 3（3 条全真）。
+//   **零真决策损失**，故采用。窗口取 4：再小会漏掉「选择器里就能切…」（切在第 4 字），
+//   再大开始放进「选择器，届时需要重新截图…」这类待办。
+// 复现探针：tools/_probe_noun_boundary_radius.mjs
+const NOUN_CHOICE_HEAD = /^选择[器框题项卡]/;
+const NOUN_CHOICE_VERB = /(改|换|切|调|设|放宽|收紧|加|删|走|定为|采用|升级|放弃|弃用|要|应)/;
+const NOUN_CHOICE_WINDOW = 4;
+function nounChoiceFalsePositive(text: string): boolean {
+  const s = text.trim();
+  const m = s.match(NOUN_CHOICE_HEAD);
+  if (!m) return false;   // 匹配不是以名词化「选择X」开头 → 与本守卫无关（中段出现的不动）
+  const rest = s.slice(m[0].length, m[0].length + NOUN_CHOICE_WINDOW);
+  return !NOUN_CHOICE_VERB.test(rest);
+}
+
 // [fork 0922] 决策合理性守卫：正则只管"句首有触发词"，不管句子长什么样——
 // 实测垃圾三来源：看板表格行（| 分隔）、Markdown 粗体残片（**）、消息内嵌 JSON 转义串。
 // 在抽取端拒收，比事后清洗数据治本。
@@ -304,6 +326,7 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         if (!parenDepthOk(hit[0])) break; // [fork 1015] 括号极性：先闭后开=从括号内部截出的残片
         if (!plausibleDecision(text)) break; // [fork 0922] 残片拒收
         if (DECISION_FALSE_POSITIVE.test(text)) break; // [fork 1013] 词中误命中（"决定论"≠决定）
+        if (nounChoiceFalsePositive(text)) break; // [fork 1015 夜 v18] 名词化「选择器/选择题…」不是拍板
         if (isQuotedSpeech(s)) break; // [fork 1013] 转述他人文本不是我的决策（P4）
         const key = text.slice(0, 20);
         if (seen.has(key)) break;
