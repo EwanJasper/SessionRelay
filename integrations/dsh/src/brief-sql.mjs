@@ -67,27 +67,29 @@ function jsonArray(raw) {
 
 /** 复刻 listDecisions + cmdDecisions 的 limit 语义（取最近 N 条，再倒序） */
 function queryDecisions(db, projectId, limit) {
+  // [1015 夜 · 性能] 两处纯浪费，删掉**不改任何输出**（改前先量：主库 queryBriefData 17.1ms）：
+  //   ① `topics` 被 SELECT 出来、被 JSON.parse、然后 `void topics` —— 一次都没用到；
+  //   ② `decisions != '[]'`：空数组的行占了大多数，解析它们等于白跑。
   const rows = db.prepare(`
-    SELECT id, source, title, created_at, decisions, topics FROM sessions
-    WHERE project_id = ? AND decisions IS NOT NULL AND (origin IS NULL OR origin != 'workflow')
+    SELECT id, source, title, created_at, decisions FROM sessions
+    WHERE project_id = ? AND decisions IS NOT NULL AND decisions != '[]' AND (origin IS NULL OR origin != 'workflow')
     ORDER BY created_at DESC
   `).all(projectId)
   const out = []
   // 跨会话去重：与核心库 listDecisions 的 seen 完全同规（v6 起两边都必须有）。
   // 此前核心库没去重、这边也没有，同一条决策重复入库 N 次，把简报 2 个名额占满。
-  // rows 按 created_at DESC，先遇到的是最新那次，保留新丢弃旧。
-  const seen = new Set()
+  // 同键去重保留**决策自身时间更新**的那条（key → out 下标）。
+  // 病历（1015 夜）：原实现是「先遇到的赢」，而遍历顺序是会话 created_at 降序 —— 实测会留下更旧的一条，
+  // music 那组把 31h 的新决策顶成 48h 的旧重复，简报的决策段（48h 窗）提前 17 小时空掉。
+  const seenIdx = new Map()
   for (const r of rows) {
-    const topics = jsonArray(r.topics)
-    void topics
     for (const d of jsonArray(r.decisions)) {
       // [1015 修] 与核心库 dedupKey 同规：标点与表格竖线一并剔掉（只去空白会让"被表格符号切分"的
   // 同一句话算两条 → 简报双显）。改这里必须同时改 core/SessionRelay/src/store/db.ts 的 dedupKey。
   const key = String(d.text ?? '').replace(/[\s，。！？、,.!?;；:：|｜]+/g, '').slice(0, 40)
-      if (key && seen.has(key)) continue
-      if (key) seen.add(key)
-      out.push({
-        at: d.at ?? r.created_at,
+      const at = d.at ?? r.created_at
+      const item = {
+        at,
         source: r.source,
         sessionId: r.id,
         title: r.title,
@@ -99,7 +101,13 @@ function queryDecisions(db, projectId, limit) {
         // 而 CLI 兜底通道能——两条路产出的简报会不一样（本项目反复吃过的分叉亏）。
         // 存量数据无此字段，按 'decision' 处理。
         kind: d.kind === 'negative' ? 'negative' : 'decision',
-      })
+      }
+      if (!key) { out.push(item); continue }
+      const idx = seenIdx.get(key)
+      if (idx === undefined) { seenIdx.set(key, out.length); out.push(item); continue }
+      const kept = out[idx]
+      if ((Date.parse(at) || 0) > (Date.parse(kept.at ?? '') || 0)) out[idx] = { ...item, pinned: kept.pinned || item.pinned }
+      else if (item.pinned) kept.pinned = true
     }
   }
   // 原实现 a.at.localeCompare(b.at)：at 理论可能为 null（created_at 为空的行），
@@ -121,7 +129,7 @@ function queryDecisions(db, projectId, limit) {
 function queryUnresolved(db, projectId, limit) {
   const rows = db.prepare(`
     SELECT id, source, title, created_at, key_questions FROM sessions
-    WHERE project_id = ? AND key_questions IS NOT NULL AND (origin IS NULL OR origin != 'workflow')
+    WHERE project_id = ? AND key_questions IS NOT NULL AND key_questions != '[]' AND (origin IS NULL OR origin != 'workflow')
     ORDER BY created_at DESC
   `).all(projectId)
   const collected = []

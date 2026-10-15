@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { DB } from '../store/db.js';
-import { listUnresolved } from '../store/db.js';
+import { listUnresolved, UBIQUITOUS_FILES } from '../store/db.js';
 
 export interface KanbanInitResult {
   path: string;
@@ -39,20 +39,26 @@ export function renderKanbanDraft(opts: {
   // 第 1 行：给人一条明确的"从这里开始写"的占位——不是空模板，是带指令的占位。
   rows.push(['（把真实任务写在这里）', '⬜ 待办', '—', '状态列以 ✅/🔄/⛔/⬜ 开头才会被简报读取；明细写"下一步做什么"']);
 
+  // ⚠️ 下面三行**一律用 ⬜**（而不是 🔄/⛔）——这是 1015 夜实测后改的，别顺手改回去：
+  // 简报的看板段只读 🔄/⛔ 的行，且**最多 2 行**。原实现给这三行都打了 🔄/⛔，
+  // 于是在一个全新项目上：简报的 2 个看板名额被「近 7 天反复在动的文件」「最近几场会话」
+  // 两张**自动盘点**占满，而那一段的本意是「计划/下一步」（b3 实测全库最大盲区，只捕获 3.3%）。
+  // 更糟的是内容重复：文件盘点与简报里已有的 `🗂 近 7 天反复在动` 行是同一批文件、同一批数字。
+  // 所以：生成物只做**人看的骨架**，状态一律 ⬜（简报不读）；真正的任务由人写成 🔄/⛔。
   if (opts.recentFiles.length) {
     const files = opts.recentFiles.slice(0, 3).map((f) => `${f.file}(${f.sessions}场)`).join('、');
-    rows.push(['近 7 天反复在动的文件', '🔄 进行中', opts.recentFiles.slice(0, 3).map((f) => f.file).join(', '),
-      `自动盘点：${files}。若其中某项已收尾，把它挪到下面的已完成行`]);
+    rows.push(['自动盘点：近 7 天在动的文件', '⬜ 待办', '—',
+      `${files}。（这是盘点不是任务——简报的 🗂 行已经会显示同一批文件）`]);
   }
 
   if (opts.unresolved.length) {
-    rows.push(['待拍板的未决问题', '⛔ 待定', '—',
+    rows.push(['自动盘点：待拍板的未决问题', '⬜ 待办', '—',
       `${opts.unresolved.length} 条，首条：${String(opts.unresolved[0]?.q ?? '').slice(0, 60)}`]);
   }
 
   if (opts.recentSessions.length) {
     const s = opts.recentSessions.slice(0, 2).map((x) => `${x.at} ${x.title}`).join('；');
-    rows.push(['最近几场会话', '🔄 进行中', '—', s.slice(0, 100)]);
+    rows.push(['自动盘点：最近几场会话', '⬜ 待办', '—', s.slice(0, 100)]);
   }
 
   const head = [
@@ -60,7 +66,9 @@ export function renderKanbanDraft(opts: {
     '',
     `> 生成于 ${today}，由 srelay kanban init 从**已有数据**自动起草（近 7 天的文件 / 未决问题 / 最近会话）。`,
     '> **这份文件此后由人维护**——生成器只在文件不存在时写一次，绝不覆盖。',
-    '> 格式：| 任务 | 状态 | 模块 | 明细 |，状态列以 ✅🔄⛔⬜ 开头；DSH 简报会自动读取带 🔄/⛔ 的行（最多 2 行）。',
+    '> 格式：| 任务 | 状态 | 模块 | 明细 |，状态列以 ✅🔄⛔⬜ 开头。',
+    '> ⚠️ 只有 **🔄 进行中 / ⛔ 阻塞** 的行会被简报读取（最多 2 行）——请把你真正在做的事写成 🔄，',
+    '>    卡住的写成 ⛔；下面几行的 ⬜ 是自动盘点（不是任务），简报**不会**读它们。',
     '',
     '| ' + FILE_COL + ' | 状态 | 模块 | 明细 |',
     '|---|---|---|---|',
@@ -95,9 +103,11 @@ export function writeKanbanDraft(root: string, db: DB | null, projectId: string 
           cur.sessions += 1; cur.decisions += decs; agg.set(f, cur);
         }
       }
-      const UBIQ = new Set(['AGENTS.md', 'CLAUDE.md', 'SKILL.md', 'README.md', 'package.json', 'package-lock.json', 'config.json', 'tsconfig.json', 'progress.md']);
+      // 泛在文件表**不再本地重写一份**：用 store/db.ts 的 UBIQUITOUS_FILES（与简报侧同源）。
+      // 原先这里少列了 README.en.md / settings.json / vitest.config.ts / pnpm-lock.yaml，
+      // 于是同一个概念在库内有两套口径——正是悄悄漂移的温床。
       recentFiles = [...agg.values()]
-        .filter((x) => !UBIQ.has(String(x.file).split('/').pop() ?? ''))
+        .filter((x) => !UBIQUITOUS_FILES.has(String(x.file).split('/').pop() ?? ''))
         .filter((x) => x.sessions >= 2)
         .sort((a, b) => b.sessions - a.sessions || b.decisions - a.decisions)
         .slice(0, 3);

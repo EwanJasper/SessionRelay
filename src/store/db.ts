@@ -640,7 +640,8 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
   // E:\music player 实测 423 条决策里 74 条是重复（17%），最狠的一条重复了 24 次，
   // 把简报仅有的 2 个名额整个占满。rows 按 created_at DESC 排，所以先遇到的是
   // 最新出现的那次——保留新、丢弃旧，语义正确。
-  const seen = new Map<string, boolean>();   // key → 该键是否见过 pinned 条目
+  // key → { idx: 已入队条目下标（-1 = 被 --kind 过滤掉了）, atMs, pinned }
+  const seen = new Map<string, { idx: number; atMs: number; pinned: boolean }>();
   for (const r of rows) {
     let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }> = [];
     let topics: string[] = [];
@@ -649,22 +650,33 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
     for (const d of decs) {
       const key = dedupKey(d.text);
       if (!key) continue;
-      const wasPinned = seen.get(key) === true;
-      if (seen.has(key)) {
-        // 已见过同文本：跳过旧条目，但**把 pinned 状态继承给先前进队的那条**。
+      const at = d.at ?? r.created_at;
+      const atMs = Date.parse(at) || 0;
+      const prev = seen.get(key);
+      if (prev) {
+        // 已见过同文本：**把 pinned 状态继承给先前进队的那条**。
         // 否则用户置顶的是旧会话里的条目、新会话又出现同文本决策时，胜出的最新条目
         // pinned=false，置顶静默失效（红队 1014 🟠7）。
-        if (d.pinned === true && !wasPinned) {
-          seen.set(key, true);
-          for (let i = out.length - 1; i >= 0; i--) {
-            if (dedupKey(out[i].text) === key) { out[i].pinned = true; break; }
-          }
+        if (d.pinned === true && !prev.pinned) {
+          prev.pinned = true;
+          if (prev.idx >= 0) out[prev.idx].pinned = true;
         }
+        // [1015 夜 · 修] 同键重复时保留**决策自身时间更新**的那条。
+        // 病历：原实现是"先遇到的赢"，而遍历顺序是会话 created_at 降序——实测因此会留下更旧的一条：
+        //   music 2/325 组、agent1super 30/893 组；music 那一组把 31h 的新决策顶成 48h 的旧重复，
+        //   于是简报的决策段（48h 新鲜度窗）**提前 17 小时空掉**。
+        // 旧注释说"先遇到的是最新出现的那次"——那句话只对"新会话里重写旧决策"成立，
+        // 对"旧会话里的决策被新会话重新提到"不成立（`at` 才是决策自己的时间）。
+        if (atMs <= prev.atMs) continue;
+        prev.atMs = atMs;
+        if (prev.idx < 0) continue;   // 之前被 --kind 过滤掉：保持"整键不上"，不因时间更新而复活
+        const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: prev.pinned || d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+        out[prev.idx] = row;
         continue;
       }
-      seen.set(key, d.pinned === true);
-      const row: DecisionRow = { at: d.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
-      if (wantKind && row.kind !== wantKind) continue;
+      const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+      if (wantKind && row.kind !== wantKind) { seen.set(key, { idx: -1, atMs, pinned: row.pinned === true }); continue; }
+      seen.set(key, { idx: out.length, atMs, pinned: row.pinned === true });
       out.push(row);
     }
   }
@@ -747,8 +759,13 @@ export function listUnresolved(db: DB, projectId: string, limit = 20): Unresolve
 
 export interface RecentFileRow { file: string; sessions: number; decisions: number }
 
-/** 到处都出现的文件：实测会把真正的「在动什么」挤出前三（主库前三名一度全是它们）。与插件侧同一张表。 */
-const UBIQUITOUS_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'SKILL.md', 'README.md', 'README.en.md',
+/**
+ * 到处都出现的文件：实测会把真正的「在动什么」挤出前三（主库前三名一度全是它们）。
+ * export 出去是给 cli/kanban.ts 用——**同一张表曾有三处各写一份**（这里 / 插件 brief-sql / kanban 的 UBIQ），
+ * 其中 kanban 那份是子集（少了 README.en.md / settings.json / vitest.config.ts / pnpm-lock.yaml），
+ * 正是本项目反复吃的「同一概念多处实现 → 悄悄漂移」那类亏。核心库内至少只留一份。
+ */
+export const UBIQUITOUS_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'SKILL.md', 'README.md', 'README.en.md',
   'package.json', 'package-lock.json', 'config.json', 'tsconfig.json', 'progress.md',
   'settings.json', 'vitest.config.ts', 'pnpm-lock.yaml'])
 

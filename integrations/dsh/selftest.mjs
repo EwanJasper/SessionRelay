@@ -634,10 +634,25 @@ console.log('=== 9b. 简报决策带日期 ===');
   const start = lines.findIndex((l) => l.startsWith('近期决策'));
   const end = lines.findIndex((l) => l.startsWith('未决问题'));
   const decLines = start >= 0 ? lines.slice(start + 1, end >= 0 ? end : undefined).filter((l) => l.startsWith('- ')) : [];
-  check('简报有决策条目', decLines.length > 0);
-  const withDate = decLines.filter((l) => /^- \[\d{2}-\d{2}\] /.test(l));
-  check(`决策条目都带 [MM-DD] 日期（${withDate.length}/${decLines.length} 条）`, decLines.length > 0 && withDate.length === decLines.length);
-  if (decLines.length) console.log('     样例:', decLines[0].slice(0, 70));
+
+  // [1015 夜 · 修假红] 原来这里是 `check('简报有决策条目', decLines.length > 0)` ——**会假红**。
+  // 病历：2026-10-15 20:40，music 里唯一两条 48h 内的决策刚刚跨过新鲜度窗边界，
+  //   简报**合法地**没有决策行，而这条断言判红。已用「改动前版本」对照复现，与代码无关。
+  // 这与上游那个「写死绝对日期、过了 30 天边界就炸」的时间炸弹是同一族（见 PR3 切片文档 §四）。
+  // 假红的代价不是"多跑一次"——本项目刚吃过「12 个派遣任务全假红」的亏：一旦守卫会误报，
+  //   人就学会不看它。所以判据要**确定**：
+  //   · 渲染格式的**真实性**交给确定性断言（合成一条时间窗内的条目走生产链）；
+  //   · 真实库这一路只做"有就验格式"，没有就**响亮说明原因**（铁律 19：不许静默跳过）。
+  const synth = fresh.__testRenderItems?.([{ text: '合成决策：验日期前缀', at: new Date().toISOString(), seq: 1 }], 'decisions', 4) ?? [];
+  check('确定性：时间窗内的决策渲染带 [MM-DD] 前缀', synth.length === 1 && /^- \[\d{2}-\d{2}\] /.test(synth[0]));
+  if (!decLines.length) {
+    console.log('     ⚠️ SKIP「真实库简报有决策条目」：该库当前 48h 新鲜度窗内没有可渲染的决策');
+    console.log('        （这不是失败——简报为空是合法状态；渲染格式已由上一条确定性断言覆盖）');
+  } else {
+    const withDate = decLines.filter((l) => /^- \[\d{2}-\d{2}\] /.test(l));
+    check(`真实库决策条目都带 [MM-DD] 日期（${withDate.length}/${decLines.length} 条）`, withDate.length === decLines.length);
+    console.log('     样例:', decLines[0].slice(0, 70));
+  }
 }
 
 // ═══ 9c. 否定性决策渲染 ✗（ADR-001）═══
