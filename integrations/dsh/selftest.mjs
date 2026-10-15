@@ -665,6 +665,49 @@ console.log('=== 9c. 否定性决策渲染 ✗（ADR-001）===');
   }
 }
 
+// ═══ 9d. 未决通道的过滤器必须看得见正文（1015 回归）═══
+// 病历：七条规范过滤器收敛成单一权威源那天，itemsFromArray 的过滤链统一读 d.text，
+// 而未决条目的键是 q（--json 与直查 SQL 两种取数都是这个形状）。于是
+// passesBriefFilters(undefined) → 长度 0 < 5 → **整条未决通道被静默清空**：
+// 主库 43 条、音乐库 8 条未决，简报里一条都不显示，且没有任何测试发红。
+// 根因不是正则写错，是"过滤器取的键"与"渲染取的键"不是同一个。
+// 故这条不变量必须双向断言：该过的能过 + 该拦的仍拦。只断言前者的话，
+// 将来若有人把未决整条豁免出过滤链，测试照样绿——那正是本次事故的形状。
+console.log('=== 9d. 未决通道过滤器看得见正文（q 键）===');
+{
+  const fresh = await import(HERE + 'index.js?qkey=1');
+  const now = new Date().toISOString();
+  const render = fresh.__testRenderItems;
+  if (typeof render !== 'function') {
+    console.log('  SKIP 未导出 __testRenderItems');
+  } else {
+    // 合法未决：带 q 键、时间新鲜
+    const ok = render([
+      { q: '缓存层到底改成 LRU 还是 LFU？', at: now, source: 'zcode', sessionId: 's1' },
+      { q: '上游 0.5.2 与我们的差异要不要先合入？', at: now, source: 'zcode', sessionId: 's2' },
+    ], 'unresolved', 3);
+    check('未决条目能进简报（q 键，2 条输入 → ' + ok.length + ' 条）', ok.length === 2);
+    if (ok[0]) console.log('     样例:', ok[0].slice(0, 70));
+    // 噪声未决：正文命中七条过滤器里的"系统注入残片"与"极短残片"，必须仍被拦掉
+    const noisy = render([
+      { q: '<system-reminder>TodoWrite 提醒</system-reminder>', at: now, source: 'zcode', sessionId: 's3' },
+      { q: '嗯', at: now, source: 'zcode', sessionId: 's4' },
+      { q: '候选信号与覆盖率对不上，分组精度存疑', at: now, source: 'zcode', sessionId: 's5' },
+    ], 'unresolved', 3);
+    check('未决噪声仍被拦（3 条噪声 → ' + noisy.length + ' 条）', noisy.length === 0);
+    // 决策通道不受影响：带 text 键的条目照旧渲染
+    const dec = render([
+      { text: '改用 node:sqlite 直查', at: now, source: 'zcode', sessionId: 's6' },
+    ], 'decisions', 4);
+    check('决策通道仍正常（text 键 1 条 → ' + dec.length + ' 条）', dec.length === 1);
+    // 反方向保险：只带 text 的未决（历史形状）也不能被误拦
+    const legacy = render([
+      { text: '这个方案要不要先写进 ADR？', at: now, source: 'zcode', sessionId: 's7' },
+    ], 'unresolved', 3);
+    check('未决历史形状（text 键）也不被误拦', legacy.length === 1);
+  }
+}
+
 // ═══ 10. 决策置顶（2026-10-14 并行工作流支B）═══
 // 痛点：简报只有 2 个名额且按时间倒序，重要的老决策（三个月前拍板的架构选择）
 // 永远排不上。置顶=被标记的决策优先显示，且豁免 48h 新鲜度窗。

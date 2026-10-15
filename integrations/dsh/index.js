@@ -134,24 +134,28 @@ function logSqlFallback(reason) {
 function itemsFromArray(arr, key, max) {
   if (!Array.isArray(arr)) return []
   const cutoff = Date.now() - FRESH_MS
+  // 决策条目带 text，未决问题带 q（--json 与直查 SQL 两种取数都是这个形状）。
+  // 过滤器与末尾渲染必须走同一个取值函数——否则过滤器看不见未决的正文，
+  // 整条通道会被静默清空（1015 实测：主库 43 条未决全被 length<5 拦掉）。
+  const textOf = (d) => String(d.text ?? d.summary ?? d.q ?? d.title ?? '')
   const fresh = arr
-    .filter(d => !/workflow subagent|actor#\d+/i.test(String(d.title ?? '') + ' ' + String(d.text ?? '')))
-    .filter(d => !/[??？]\s*,\s*[-–]/.test(String(d.text ?? '')))
+    .filter(d => !/workflow subagent|actor#\d+/i.test(String(d.title ?? '') + ' ' + textOf(d)))
+    .filter(d => !/[??？]\s*,\s*[-–]/.test(textOf(d)))
     .filter(d => !CHATTER_TITLE.test(String(d.title ?? '').trim()))
     .filter((d) => {
       if (key !== 'decisions') return true
-      const t = String(d.text ?? '')
+      const t = textOf(d)
       return !/[??？]\s*$/.test(t) && !/怎么办|能不能|怎么说|是不是|要不要|原理是什么/.test(t)
     })
     .filter((d) => {
-      const t = String(d.text ?? '')
+      const t = textOf(d)
       return !/^(报告|原文|上文|上述|文档|该文|这篇|那份)/.test(t.trim())
         && !/被当成|误命中|被判为|不是决策|纯垃圾|噪声|伪影/.test(t)
     })
     // [fork 1015] 七条规范过滤器（brief-filters.mjs 单一权威源，与 ZCode 侧同源）。
     // 实测：主库只拦 6/1172、音乐库 5/490，全部是噪声、0 误杀，且正好覆盖
     // Phase 3 治不掉的 3 条散文噪声（决定用 X"/作者点名表扬/按你在 Notes 里提议）。
-    .filter((d) => passesBriefFilters(d.text))
+    .filter((d) => passesBriefFilters(textOf(d)))
     .filter((d) => {
       // Phase 3 层①：子代理任务书会话的决策/未决不进简报（仍全量可检索）。
       // 置顶豁免——用户显式 pin 过的东西要尊重，与上面新鲜度窗同一规矩。
@@ -171,7 +175,7 @@ function itemsFromArray(arr, key, max) {
     return (Date.parse(b.at ?? b.msgAt ?? '') || 0) - (Date.parse(a.at ?? a.msgAt ?? '') || 0)
   })
   return fresh.slice(0, max).map((d) => {
-    const text = String(d.text ?? d.summary ?? d.q ?? d.title ?? JSON.stringify(d)).slice(0, 90)
+    const text = textOf(d).slice(0, 90)
     // ADR-001：否定性决策加 ✗ 前缀。"改用 Y"与"采用 Y"此前在简报里长得一样，
     // 模型看不出 Y 是被否掉的那条路，于是同一建议会被反复重提。✗ 让它一眼可辨。
     // 只在 decisions 通道打；未决问题没有"否掉一条路"的语义。
