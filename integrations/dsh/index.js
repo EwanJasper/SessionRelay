@@ -174,7 +174,28 @@ function itemsFromArray(arr, key, max) {
     if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1
     return (Date.parse(b.at ?? b.msgAt ?? '') || 0) - (Date.parse(a.at ?? a.msgAt ?? '') || 0)
   })
-  return fresh.slice(0, max).map((d) => {
+  // [fork 1015] 近重复合并（**只在简报显示层**，不动存储、不动检索）。
+  // 病历：music 的简报里同一个决策显示了两遍——两个会话对同一件事各自写了一句摘要：
+  //   "采用渐进式披露（Progressive Disclosure） | 省 token 的套路：…"
+  //   "采用渐进式披露（Progressive Disclosure），平时只在上下文中注入描述信息…"
+  // 40 字去重键抓不住（两句话第 31 字就分岔），二元组相似度也抓不住（Jaccard≈0.38）——
+  // 它们是"语义相同、字面不同"，任何词法判据都不稳。
+  // 实测过的替代判据：**前 14 字前缀键**。在简报取数顺序的前 60 条里，
+  //   music 合并 3 组 7 条（逐条读过，全部是同一决策的不同写法：渐进式披露 / pwsh 拉取 / one-search MCP），
+  //   agent1super 合并 0 条。即"该合的合、不该合的不动"。
+  // 放在排序之后 = 保留最新那条（上面刚按时间倒序排完）。
+  const PrefKey = () => {
+    const seen = new Set()
+    return (d) => {
+      if (d.pinned === true) return true // 置顶豁免：用户显式留的东西不合并
+      const k = textOf(d).replace(/[\s，。！？、,.!?;；:：|｜`"']+/g, '').slice(0, 14)
+      if (!k || seen.has(k)) return false
+      seen.add(k)
+      return true
+    }
+  }
+  const deduped = fresh.filter(PrefKey())
+  return deduped.slice(0, max).map((d) => {
     const text = textOf(d).slice(0, 90)
     // ADR-001：否定性决策加 ✗ 前缀。"改用 Y"与"采用 Y"此前在简报里长得一样，
     // 模型看不出 Y 是被否掉的那条路，于是同一建议会被反复重提。✗ 让它一眼可辨。
