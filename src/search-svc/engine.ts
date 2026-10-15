@@ -71,6 +71,14 @@ export interface SearchOptions {
   extraWhere?: ExtraWhere | null;
   /** 语义补充命中（调用方经 semanticSearch 预计算注入；不传/空 = 与纯 FTS 行为等价） */
   semanticHits?: Array<{ sessionId: string; score: number }> | null;
+  /**
+   * 语义命中的保底槽位数（默认 3，上限 floor(limit/3)；0 = 逐字回旧行为）。
+   *
+   * 为什么需要它：语义命中原先只 push 在 sort 之后、最后再 slice(0, limit)，
+   * 于是 FTS 命中一旦 ≥ limit 就被整段切掉——「换一种说法也能命中」在默认 limit 下结构性不可达。
+   * 保底只从 **FTS 尾部**（分数最低的几条）腾，绝不挤掉 FTS 头部。
+   */
+  semanticReserve?: number;
 }
 
 export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
@@ -135,13 +143,26 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
   }
 
   // 语义补充（design-semantic §3.2：FTS 已命中的不重复计，B−A 追加在后，绝不替换/抑制 FTS 结果）
+  //
+  // [1015 夜 · 槽位保底] 原实现只在 sort 之后 push、最后再 slice(0, limit)——于是只要 FTS
+  // 命中数已 ≥ limit，语义命中就被同一次 slice 整段切掉（分数给到 999 也进不来），
+  // 「换一种说法也能命中」在默认 limit 下结构性不可达（实测 test/fork/semantic-slot-starvation.spec.ts）。
+  // 修法：语义命中保底占 min(reserve, floor(limit/3)) 个槽位，从 **FTS 尾部** 腾，头部一条不动；
+  // reserve=0 逐字回到旧行为（config: semantic.reserve_slots）。
   if (opts.semanticHits && opts.semanticHits.length > 0) {
     const existing = new Set(hits.map((h) => h.sessionId));
+    const extra: SearchHit[] = [];
     for (const sh of opts.semanticHits) {
       if (existing.has(sh.sessionId)) continue;
       const title = (db.prepare('SELECT title FROM sessions WHERE id = ?').get(sh.sessionId) as { title: string | null } | undefined)?.title;
-      hits.push({ sessionId: sh.sessionId, score: sh.score, snippet: title ?? '', viaMeta: false, coverage: 0, seq: 0, viaSemantic: true });
+      extra.push({ sessionId: sh.sessionId, score: sh.score, snippet: title ?? '', viaMeta: false, coverage: 0, seq: 0, viaSemantic: true });
     }
+    const reserve = Math.min(opts.semanticReserve ?? 3, Math.floor(limit / 3));
+    if (extra.length > 0 && reserve > 0) {
+      const take = Math.min(extra.length, reserve);
+      return [...hits.slice(0, Math.max(0, limit - take)), ...extra.slice(0, take)].slice(0, limit);
+    }
+    if (extra.length > 0) hits.push(...extra);
   }
   return hits.slice(0, limit);
 }

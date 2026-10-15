@@ -83,15 +83,21 @@ describe('semantic · 融合逻辑（手工向量注入）', () => {
     db.close();
   });
 
-  it('S3 top-K=5 限量：注入 8 个语义命中只取前 5（engine 尊重传入序）', () => {
+  it('S3 槽位保底：注入 8 个语义命中只保底 floor(limit/3)=3 个，总数不越 limit', () => {
     const db = seedAB();
     for (let i = 0; i < 8; i++) {
       insertSession(db, { id: `c${i}0000000000000${i}`, source: 'zcode', sourceSessionId: `c${i}`, projectId: PID, createdAt: '2026-08-22T08:00:00Z', title: `会话${i}`, state: 'confirmed' });
     }
-    // semanticSearch 的 topK 在其内部实现；此处钉 engine 接受任意注入不越 limit
     const sem = Array.from({ length: 8 }, (_, i) => ({ sessionId: `c${i}0000000000000${i}`, score: 0.9 - i * 0.05 }));
     const hits = searchSessions(db, { project: PID, query: '登录', limit: 10, semanticHits: sem });
-    expect(hits.filter((h) => h.viaSemantic).length).toBe(8); // engine 不截语义（截断在 semanticSearch topK）
+    // [1015 夜 · 槽位保底] 语义命中保底 = min(3, floor(limit/3)) = 3。
+    // 旧行为是「engine 不截语义」，但那要求 FTS 命中不满 limit——满了就会被同一次 slice 切光，
+    // 于是「换一种说法也能命中」在默认 limit 下永远不成立（见 test/fork/semantic-slot-starvation.spec.ts）。
+    expect(hits.filter((h) => h.viaSemantic).length).toBe(3);
+    expect(hits.length).toBeLessThanOrEqual(10);
+    // 显式 reserve=0 = 逐字回到旧行为（全部追加、挤掉 FTS 尾部）
+    const old = searchSessions(db, { project: PID, query: '登录', limit: 10, semanticHits: sem, semanticReserve: 0 });
+    expect(old.filter((h) => h.viaSemantic).length).toBe(8);
     db.close();
   });
 

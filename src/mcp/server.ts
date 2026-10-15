@@ -210,7 +210,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     }
 
     // ── kind=sessions：搜会话（默认） ──
-    const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits });
+    const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits, semanticReserve: cur.cfg.semantic?.reserve_slots });
     const out = hits.map((h) => ({
       ...sessionBrief(cur.db, h.sessionId),
       score: Number(h.score.toFixed(3)),

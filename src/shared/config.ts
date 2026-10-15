@@ -28,7 +28,11 @@ export interface RelayConfig {
   privacy: { ignore_file: string; export_redact: boolean };
   identity: { project_id?: string; author?: string };
   /** 语义检索（可选增强，v4 设计：未启用=行为与纯 FTS 逐字节等价） */
-  semantic?: { enabled?: boolean; model?: string; threshold?: number };
+  semantic?: {
+    enabled?: boolean; model?: string; threshold?: number;
+    /** [1015 夜] 语义命中保底槽位（默认 3，上限 floor(limit/3)；0 = 旧行为：只追加不占位） */
+    reserve_slots?: number;
+  };
   /** [fork 1011] D26 自动归档：守护按窗口把旧会话正文蒸发（决策/话题骨架保留），增量式 VACUUM 回收空页 */
   archive?: {
     enabled?: boolean;

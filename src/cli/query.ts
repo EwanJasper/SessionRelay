@@ -37,6 +37,7 @@ export async function cmdSearch(query: string, flags: SearchFlags): Promise<void
       limit: flags.limit ?? 10,
       extraWhere: asm.where,
       semanticHits: semHits,
+      semanticReserve: cfg.semantic?.reserve_slots,
     });
     if (flags.json) {
       const rows = hits.map((h) => {
