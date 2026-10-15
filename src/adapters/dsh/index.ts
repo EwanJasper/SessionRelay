@@ -81,7 +81,22 @@ export function mapLine(lineText: string):
   const data = (o as { data?: unknown }).data as Record<string, unknown> | undefined;
   let role: 'user' | 'assistant';
   let parts: unknown;
-  if (t === 'user/message') { role = 'user'; parts = data?.content; }
+  if (t === 'user/message') {
+    // [1015 夜 · 出口③] `user/message` 事件带 `data.source.kind` —— **注入内容在采集层就丢掉**。
+    //
+    // 实测（本机 6534 事件的真实会话，tools/_probe_dsh_source.mjs）：kind 共 6 种，
+    //   user 44 条/64329 字（你真正发的）、time-context 32/8138、agent-instructions 2/7574、
+    //   runtime-context 2/780、model-selection 2/304、**compact-checkpoint 1/12144（上下文压缩摘要）**。
+    //   注入类合计约 29K 字 = 该会话用户消息总量的 **45%** —— 与统计口径（45.85%）对得上。
+    //
+    // 为什么以前没炸：下游 stripInjected 会剥掉其中大部分，但**压缩摘要不是**——
+    //   实测主库 48h 窗内那 4 条污染决策（「采用 Vite 作为前端构建工具」等）就是从摘要文本里抽出来的。
+    //   在采集层丢 = 它连 messages 表都进不去，重算也不会再抽到；这比在下游加过滤器硬。
+    //   kind 缺失（老版本 DSH / 手工构造的库）时照旧收，交给下游 stripInjected —— 保持向后兼容。
+    const kind = (data?.source as Record<string, unknown> | undefined)?.kind;
+    if (typeof kind === 'string' && kind !== 'user') return { kind: 'skip' };
+    role = 'user'; parts = data?.content;
+  }
   else if (t === 'assistant/message') { role = 'assistant'; parts = (data?.message as Record<string, unknown> | undefined)?.content; }
   else return { kind: 'skip' };
   const content = partsToText(parts);
