@@ -17,7 +17,7 @@
 //   - 限流 + 可中断：每批 N 个会话，单批耗时计入守护周期压力；失败不抛，下周期继续。
 import type { DB } from '../store/db.js';
 import { summaryRule, extractFiles } from '../core/extract/extract.js';
-import { extractForWrite } from '../store/db.js';
+import { extractForWrite, dedupKey } from '../store/db.js';
 import type { Msg } from '../core/extract/extract.js';
 
 /** 提取规则族版本。任何会影响 decisions/questions/topics 语义的改动都必须递增。
@@ -205,6 +205,31 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   // 在每次版本升级（v5→v6、将来的 v7…）时被全库静默擦掉（红队 1014 🔴，且本机
   // 实测正在发生）。sanitizeMsgs 也已内含，不必在外部再剥一次。
   const { decisions, questions, topics } = extractForWrite(db, s.id, msgs);
+  // [1015 夜 · A1 自动合并] 归档后复活的会话：正文在归档时已被删除（只留决策骨架），
+  // 而重算只能从「残存的新消息」里抽 ⇒ 直接写回会把骨架整个换掉。
+  // 实测规模：主库 210 场 / 676 条骨架决策、music 74 场 / 254 条、mc整合包 56 场 / 185 条。
+  // 处置：**自动合并**——新抽出来的为准，骨架里没被覆盖的按原样补回（含 pinned 标记）。
+  // 判据 `original_message_count > 0`：archive.ts 归档时把**归档前的消息数**写进这一列，复活不会清它。
+  // ⚠️ 必须是 `> 0` 而不是 `IS NOT NULL`：该列 DDL 默认值是 **0**（db.ts:222/259），
+  //    写成 not null 会把**每一场普通会话**都当成复活过——回归测试 p3-recompute ① 当场抓住。
+  // 全程自动、无需人工；要丢弃骨架时手工清掉那一列即可。
+  const prev = db.prepare('SELECT decisions, original_message_count FROM sessions WHERE id = ?')
+    .get(s.id) as { decisions: string | null; original_message_count: number | null } | undefined;
+  if ((prev?.original_message_count ?? 0) > 0) {
+    try {
+      const kept = JSON.parse(prev.decisions ?? '[]') as Array<{ text?: string }>;
+      const have = new Set(decisions.map((d) => dedupKey(d.text)));
+      let restored = 0;
+      for (const k of kept) {
+        const key = dedupKey(k.text ?? '');
+        if (!key || have.has(key)) continue;
+        have.add(key);
+        decisions.push(k as never);
+        restored++;
+      }
+      void restored;   // 计数只用于本地调试；对外不新增字段（重算结果是既有形状）
+    } catch { /* 骨架坏 JSON：不阻塞重算 */ }
+  }
   // [v17] 顺带刷新 files_mentioned——重算此前只写 decisions/questions/topics/summary_rule，
   // 于是 files 列的规则一改，历史行永远拿不到新结果（本轮重建 files 抽取时实测踩到）。
   const files = extractFiles(msgs.map((m) => m.content));
