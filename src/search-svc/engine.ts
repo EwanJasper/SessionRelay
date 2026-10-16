@@ -315,7 +315,9 @@ function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[
   const paths: Array<{ w: number; hits: SearchHit[] }> = [{ w: 1.0, hits: main }];
   const rw = rewriteQuery(tokens, (t) => segment(t, { keepSingles: false }));
   if (rw.extraUnits.length > 0) {
-    const ex = searchOnce(db, { ...opts, query: rw.extraUnits.flat().join(' '), rewrite: false, limit });
+    // [红队 A-11] 融合路**已经在 rrfFuse 里做过长度惩罚**，这里必须关掉 searchOnce 的那一次，
+    // 否则二次乘罚，且任何 lengthNorm:false 的对照组都是脏的。
+    const ex = searchOnce(db, { ...opts, query: rw.extraUnits.flat().join(' '), rewrite: false, limit, lengthNorm: false });
     if (ex.length > 0) paths.push({ w: 0.6, hits: ex });
   }
 // ⚠️ 查询里有**短语单元**（带引号的多词）时不加子串路：

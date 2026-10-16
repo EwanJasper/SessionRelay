@@ -141,7 +141,8 @@ export function searchLessons(db: Database.Database, q: string, sel: { workspace
   ).all(ftsExpr(q), ...w.params, sel.top ?? 10) as LessonRow[];
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
-    db.prepare('UPDATE lessons SET hits = hits + 1 WHERE id IN (' + ids.map(() => '?').join(',') + ')').run(...ids);
+    // [红队 A-6] 原先每次检索命中都 hits+1（永久 +0.1/次）——**调试式检索会把条目顶过注入线**。
+    // 现在只记「被返回过」这件事的**不落库**语义：不再自动加分；加分只走 maintain 里靠真实复用（uses）。
   }
   return rows.map((r) => ({ ...r, importance: Number(liveImportance(r)) }));
 }
@@ -158,6 +159,8 @@ export function maintainLessons(db: Database.Database): { decayed: number; retir
   const now = new Date().toISOString();
   let decayed = 0, retired = 0, resurrected = 0;
   for (const r of rows) {
+    // [红队 A-3] **人明确否决的不许被自动复活**：rejected 是终态。
+    if (String(r.status) === 'rejected') continue;
     const live = liveImportance(r);
     if (live < INJECT_THRESHOLD) {
       decayed++;
@@ -173,6 +176,8 @@ export function exportMarkdown(db: Database.Database): string {
   const g = ['# 全局经验库（自动导出，可手改；改动以数据库为准）', '', '共 ' + rows.length + ' 条', ''];
   let last = '';
   for (const r of rows) {
+    // [红队 A-3] **人明确否决的不许被自动复活**：rejected 是终态。
+    if (String(r.status) === 'rejected') continue;
     if (r.scope !== last) { g.push('', '## ' + r.scope, ''); last = r.scope; }
     g.push('- [' + r.grade + ' | ' + r.status + ' | ' + Number(liveImportance(r)).toFixed(1) + '] ' + r.text);
   }

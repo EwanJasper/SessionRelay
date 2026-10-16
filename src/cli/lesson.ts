@@ -50,7 +50,7 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
     if (sub === 'confirm' || sub === 'reject') {
       const ids = text.map((t) => Number(String(t).replace(/^#/, ''))).filter((n) => Number.isInteger(n) && n > 0);
       if (ids.length === 0) { console.error('用法: srelay lesson confirm <id...>   （id 见 lesson list；reject = 标 retired）'); process.exit(2); }
-      const to = sub === 'confirm' ? 'verified' : 'retired';
+      const to = sub === 'confirm' ? 'verified' : 'rejected';
       // ⚠️ 只改状态是不够的：注入还有一道"等级"闸，inferred 一律进不去。
       // **人工确认本身就是证据**（强于"文件里读到"），所以 confirm 时把 inferred 抬到 verified-file（6.0）。
       // 实测踩过：只改状态 → 复核完了还是 ○、还是进不了注入层，看起来"确认没生效"。
@@ -68,7 +68,7 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
       const r = maintainLessons(db);
       if (f.json) { console.log(JSON.stringify(r)); return; }
       console.log('衰减处理 ' + r.decayed + ' 条 · 退休 ' + r.retired + ' 条 · 复活 ' + r.resurrected + ' 条');
-      console.log(pc.dim('  口径：年龄每天 -' + 0.0083 + ' 分，低于阈值 ' + 6 + ' 分则退休（仍可被 lesson search 检索到）'));
+      console.log(pc.dim('  口径：年龄每天 -' + 0.0083 + ' 分，低于阈值 ' + INJECT_THRESHOLD + ' 分则退休（仍可被 lesson search 检索到）'));
       return;
     }
     if (sub === 'export') {

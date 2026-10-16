@@ -327,7 +327,8 @@ export const __testRenderBrief = (root, dec, unr, counts, kanban = '', recent = 
 export const __testMaxChars = MAX_CHARS
 
 function renderBrief(root, dec, unr, counts, kanban = '', recent = '', experiences = '', modulesLine = '') {
-  if (!dec.length && !unr.length && !kanban && !recent) return ''
+  // [红队 A-4] 早退判据必须把**新加的两段**也算上：新项目常常没有决策/未决/看板，但有 🌍 经验或 🗺 锚点
+  if (!dec.length && !unr.length && !kanban && !recent && !experiences && !modulesLine) return ''
   // Phase 1 ② 工具提示句：DSH 侧 MCP 已按方案 C 卸掉，检索只能靠 CLI，
   // 所以这里说的是命令而不是 MCP 工具名（两侧措辞不同、语义同向——
   // 都是"有检索可用、什么时候用"。check-brief-filters.mjs 只比对过滤器，
