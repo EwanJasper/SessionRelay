@@ -1,0 +1,168 @@
+// 可调旋钮的**唯一清单**（面板设置页的宿主端数据源）
+//
+// 为什么清单在核心库而不是前端：面板、CLI、未来的 ZCode 侧都要能改同一批值。
+// 前端只负责渲染宿主发来的 spec —— 名单写在两处就一定会分叉（本项目反复吃这个亏）。
+// 本文件**零依赖**（只 import 类型与 paths 的纯常量），面板宿主半可以单独加载。
+
+import type { RelayConfig } from '../shared/config-merge.js';
+
+export type KnobType = 'enum' | 'number' | 'boolean' | 'string' | 'string-list';
+
+export interface KnobSpec {
+  /** 点分路径，如 capture.mode */
+  path: string;
+  /** 人话标题（面板直接显示） */
+  label: string;
+  type: KnobType;
+  /** enum 的候选值 */
+  options?: string[];
+  min?: number;
+  max?: number;
+  step?: number;
+  /** 该旋钮的环境变量天窗（有值时优先于 config.json） */
+  envVar?: string;
+  /** 一句话解释（面板 hover / 副标题） */
+  hint: string;
+  /** 改完需要额外动作的警告（如换分词器必须重算） */
+  warning?: string;
+}
+
+export const SOURCE_IDS = ['claude-code', 'zcode', 'codex', 'qoder', 'dsh'];
+
+export const KNOB_SPECS: KnobSpec[] = [
+  { path: 'capture.mode', label: '采集强度', type: 'enum', options: ['full', 'meta', 'off'],
+    hint: 'full=存正文（检索最好）· meta=只存骨架（省空间）· off=完全停采' },
+  { path: 'capture.idle_threshold_min', label: '空闲多久算一轮结束', type: 'number', min: 1, max: 1440, step: 1,
+    hint: '单位分钟。会话静默超过它就认为这一轮结束，可以抽取了' },
+  { path: 'capture.cooldown_hours', label: '同一会话冷却', type: 'number', min: 0, max: 720, step: 1,
+    hint: '单位小时。同一会话两次采集之间的最短间隔（防抖）' },
+  { path: 'capture.sources', label: '采哪些客户端', type: 'string-list', options: SOURCE_IDS,
+    hint: '勾掉哪个就不采哪个；被忽略的源不会在体检里被报成故障' },
+  { path: 'capture.ignore_sources', label: '有意忽略的源', type: 'string-list', options: SOURCE_IDS,
+    hint: '和上一项的区别：这里是"明确不要"，doctor 会跳过它而不是报警' },
+  { path: 'capture.claude_projects_dir', label: 'Claude 会话目录', type: 'string', envVar: 'CLAUDE_PROJECTS_DIR',
+    hint: '默认 ~/.claude/projects' },
+  { path: 'capture.zcode_db_path', label: 'ZCode 数据库', type: 'string', envVar: 'ZCODE_DB_PATH',
+    hint: '默认 ~/.zcode/cli/db/db.sqlite' },
+  { path: 'capture.codex_dir', label: 'Codex 目录', type: 'string', envVar: 'CODEX_DIR', hint: '默认 ~/.codex' },
+  { path: 'capture.trae_dir', label: 'Trae 目录', type: 'string', envVar: 'TRAE_DIR', hint: '默认 %APPDATA%/Trae CN' },
+  { path: 'capture.qoder_dir', label: 'Qoder 目录', type: 'string', envVar: 'QODER_DIR', hint: '默认 ~/.qoder-cn' },
+  { path: 'capture.dsh_sessions_dir', label: 'DSH 会话目录', type: 'string', envVar: 'DSH_SESSIONS_DIR',
+    hint: '默认 ~/.dsh/sessions' },
+  { path: 'search.tokenizer', label: '中文分词器', type: 'enum', options: ['jieba', 'bigram'],
+    hint: 'jieba=词级（准）· bigram=二字滑窗（快、无需词典）',
+    warning: '换分词器后已入库的索引是旧词元，必须跑一次重算，否则搜索结果会变少且不报错' },
+  { path: 'search.min_hits_hint', label: '最少命中提示', type: 'number', min: 0, max: 20, step: 1,
+    hint: '命中数低于它时提示"可能记不得"，只是提示不影响召回' },
+  { path: 'search.auto_days', label: '自动检索回溯天数', type: 'number', min: 0, max: 3650, step: 1,
+    hint: '简报自动召回时最多往回看多少天' },
+  { path: 'privacy.ignore_file', label: '隐私排除文件名', type: 'string',
+    hint: '项目根下这个文件里的规则不会被采集（默认 .sessionrelayignore）' },
+  { path: 'privacy.export_redact', label: '导出时脱敏', type: 'boolean',
+    hint: '打开后导出/分享的内容会先抹掉本机路径与密钥样式字符串' },
+  { path: 'identity.project_id', label: '项目 ID 覆盖', type: 'string',
+    hint: '留空=按项目路径推导。改了等于换一个身份，历史数据不会自动跟过来' },
+  { path: 'identity.author', label: '作者署名', type: 'string', hint: '写进会话记录，多人共用一个库时用于区分' },
+  { path: 'semantic.enabled', label: '语义检索', type: 'boolean',
+    hint: '可选增强。默认关；关掉时行为与纯关键词检索逐字节等价（拍板：不做神经路线）' },
+  { path: 'semantic.model', label: '语义模型', type: 'string', hint: '语义档使用的本地模型名' },
+  { path: 'semantic.threshold', label: '语义阈值', type: 'number', min: 0, max: 1, step: 0.01,
+    hint: '相似度低于它不计入语义命中' },
+  { path: 'semantic.reserve_slots', label: '语义保底槽位', type: 'number', min: 0, max: 10, step: 1,
+    hint: '给语义命中预留的位置数（上限 floor(limit/3)）；0 = 旧行为：只追加不占位' },
+  { path: 'archive.enabled', label: '自动归档', type: 'boolean',
+    hint: '打开后守护按窗口把老会话**正文**蒸发，结论/经验一条不删（原文仍在客户端那里，可重放）' },
+  { path: 'archive.hot_days', label: '普通会话热窗（天）', type: 'number', min: 1, max: 365, step: 1,
+    hint: '比这更新的正文绝不碰。ADR-003 拍板 30（原 60）；缩短后 agent1super 省 36.9%、music 省 69.3%' },
+  { path: 'archive.workflow_days', label: '施工日志热窗（天）', type: 'number', min: 1, max: 90, step: 1,
+    hint: 'origin=workflow 的会话用更短的窗（默认 7）——它们不进简报，正文留着没用' },
+  { path: 'archive.check_every_min', label: '归档检查间隔（分钟）', type: 'number', min: 1, max: 1440, step: 1,
+    hint: '守护多久检查一次归档' },
+  { path: 'recompute.check_every_min', label: '重算检查间隔（分钟）', type: 'number', min: 1, max: 1440, step: 1,
+    hint: '提取规则版本落后时的后台重算节奏（默认 360）' },
+];
+
+export const KNOB_BY_PATH = new Map(KNOB_SPECS.map((k) => [k.path, k]));
+
+/** 按点分路径取值（不存在就 undefined） */
+export function getPath(obj: unknown, dotted: string): unknown {
+  let cur: unknown = obj;
+  for (const seg of dotted.split('.')) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+/** 按点分路径写值（就地改传入对象；只用于已知对象） */
+export function setPath(obj: Record<string, unknown>, dotted: string, value: unknown): void {
+  const segs = dotted.split('.');
+  let cur: Record<string, unknown> = obj;
+  for (let i = 0; i < segs.length - 1; i++) {
+    const k = segs[i];
+    if (cur[k] === null || typeof cur[k] !== 'object') cur[k] = {};
+    cur = cur[k] as Record<string, unknown>;
+  }
+  cur[segs[segs.length - 1]] = value;
+}
+
+/**
+ * 校验一个旋钮值。返回 null = 通过，否则是**人话**的拒绝理由。
+ * ⚠️ 这是唯一校验点：面板、CLI 都走它，别在前端再写一套（前端只渲染 min/max）。
+ */
+export function validateKnob(path: string, value: unknown): string | null {
+  const spec = KNOB_BY_PATH.get(path);
+  if (!spec) return '未知旋钮：' + path;
+  switch (spec.type) {
+    case 'boolean':
+      return typeof value === 'boolean' ? null : '要 true/false，收到 ' + typeof value;
+    case 'number': {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '要是数字，收到 ' + JSON.stringify(value);
+      if (spec.min !== undefined && value < spec.min) return '不能小于 ' + spec.min;
+      if (spec.max !== undefined && value > spec.max) return '不能大于 ' + spec.max;
+      return null;
+    }
+    case 'enum':
+      return spec.options && spec.options.includes(String(value)) ? null
+        : '只能是 ' + (spec.options ?? []).join(' / ') + '，收到 ' + JSON.stringify(value);
+    case 'string':
+      return typeof value === 'string' ? null : '要字符串，收到 ' + typeof value;
+    case 'string-list': {
+      if (!Array.isArray(value)) return '要字符串数组';
+      const bad = value.filter((v) => typeof v !== 'string');
+      if (bad.length) return '数组里有非字符串项';
+      if (spec.options) {
+        const unknown = value.filter((v) => !spec.options!.includes(v as string));
+        if (unknown.length) return '不认识的取值：' + unknown.join(', ');
+      }
+      return null;
+    }
+    default:
+      return '未知类型';
+  }
+}
+
+export interface KnobState extends KnobSpec {
+  value: unknown;
+  /** 这个值是从哪一层来的：环境变量 > config.json > 默认值 */
+  source: 'env' | 'config' | 'default';
+  /** 环境变量层实际生效的原始文本（source=env 时） */
+  envValue?: string;
+}
+
+/** 把"缺省值 + config.json 原始内容 + 环境"合成面板要展示的旋钮状态 */
+export function knobStates(cfg: RelayConfig, raw: Record<string, unknown> | null, env: Record<string, string | undefined>): KnobState[] {
+  const merged = cfg as unknown as Record<string, unknown>;
+  return KNOB_SPECS.map((spec) => {
+    const value = getPath(merged, spec.path);
+    let source: KnobState['source'] = 'default';
+    let envValue: string | undefined;
+    if (spec.envVar && env[spec.envVar] !== undefined && env[spec.envVar] !== '') {
+      source = 'env';
+      envValue = env[spec.envVar];
+    } else if (raw && getPath(raw, spec.path) !== undefined) {
+      source = 'config';
+    }
+    return { ...spec, value, source, envValue };
+  });
+}

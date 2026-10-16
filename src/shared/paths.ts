@@ -116,6 +116,10 @@ export const statsFile = (root: string) => path.join(relayDir(root), 'stats.json
 export const watchLogPath = (root: string) => path.join(relayDir(root), 'watch.log');
 export const ignoreFile = (root: string) => path.join(root, '.sessionrelayignore');
 export const quarantineDir = (root: string) => path.join(relayDir(root), 'quarantine');
+// [1017 夜] 从 store/global.ts 提升到 paths（那里静态 import better-sqlite3，任何只要"路径"的
+// 消费者都被拖上原生依赖 —— 面板宿主半就是这样的消费者）。global.ts 原样再导出，老调用点不变。
+export const globalDbFile = (): string =>
+  path.join(process.env.SRELAY_GLOBAL_HOME || path.join(os.homedir(), '.sessionrelay'), 'global.sqlite');
 
 export function pathSlug(p: string): string {
   return p.replace(/[\\/:]/g, '-');

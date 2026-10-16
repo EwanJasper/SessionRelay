@@ -14,32 +14,18 @@ import { searchTextOf } from './db.js';
 import { normalize, parseQuery } from '../core/tokenize/tokenizer.js';
 import { workspaceKey } from '../shared/workspace.js';
 
-export const GRADES = {
-  'verified-tool': 9.0,
-  'verified-user': 7.5,
-  'verified-file': 6.0,
-  inferred: 1.5,
-} as const;
-export type Grade = keyof typeof GRADES;
-export type Scope = 'project' | 'domain' | 'global';
-export type Status = 'draft' | 'verified' | 'retired';
+// [1017 夜] 闸门判据搬进**零依赖**的 store/lesson-gate.ts。
+// 理由：面板宿主半要读"哪条经验现在能进注入层"，而它跑在没有原生模块的进程里，
+// 一旦 import 本文件就会被 better-sqlite3 拖住。判据仍只有一份，这里**原样再导出**，
+// 所有老调用点（CLI / MCP / 插件 / hook）一字不改。
+import { GRADES, INJECT_THRESHOLD, DECAY_PER_DAY, isInjectable, liveImportance } from './lesson-gate.js';
+import type { Grade, Scope, Status, LessonRow } from './lesson-gate.js';
+export { GRADES, INJECT_THRESHOLD, DECAY_PER_DAY, isInjectable, liveImportance };
+export type { Grade, Scope, Status, LessonRow };
 
-/**
- * 能进注入层的最低分。
- *
- * ⚠️ 必须是 5.5 而不是 6.0：verified-file 的基础分正好是 6.0，阈值若也取 6.0，
- * 那么**任何一丁点年龄衰减都会把它压到线下**（哪怕只过了几毫秒）——实测被测试抓到过
- * （expected 1 to be 2）。留 0.5 的间隔 = 新经验白送约 60 天曝光期，之后要靠被用来续命。
- */
-export const INJECT_THRESHOLD = 5.5;
-/** 年龄衰减：每天扣多少分（照抄实测值） */
-export const DECAY_PER_DAY = 0.0083;
-
-/** 全局库路径：~/.sessionrelay/global.sqlite（与项目库物理分开） */
-export function globalDbFile(): string {
-  const home = process.env.SRELAY_GLOBAL_HOME || path.join(os.homedir(), '.sessionrelay');
-  return path.join(home, 'global.sqlite');
-}
+/** 全局库路径：~/.sessionrelay/global.sqlite（与项目库物理分开）。实体在 shared/paths.ts。 */
+import { globalDbFile } from '../shared/paths.js';
+export { globalDbFile };
 
 export function openGlobal(file?: string): Database.Database {
   const f = file ?? globalDbFile();
@@ -70,36 +56,6 @@ export function openGlobal(file?: string): Database.Database {
     + 'CREATE VIRTUAL TABLE IF NOT EXISTS lessons_fts USING fts5(search_text, domain, content=\'lessons\', content_rowid=\'id\', tokenize=\'unicode61\');'
   );
   return db;
-}
-
-export interface LessonRow {
-  id: number; scope: Scope; workspace_id: string | null; domain: string | null;
-  text: string; grade: Grade; importance: number; status: Status;
-  hits: number; uses: number; needs_review: number; created_at: string;
-  // 表里本来就有这两列（见建表语句），接口一直漏着 —— 冲突消解要用到"出处"和"最后改动时间"
-  source_ref?: string | null; updated_at?: string | null; quote?: string | null; search_text?: string | null;
-}
-
-/**
- * 闸 1 的**唯一判据**：这一条现在能不能进注入层（状态 + 定级 + 阈值，三样一起看）。
- *
- * 为什么要单拎出来（复审 C-3）：`lesson list` 的 ●/○ 此前只看分数不看 status，
- * 于是一条 `rejected` 但分数 7.5 的条目会显示"● 可进注入层"——而它根本进不去
- * （被 A-3 修出来的新终态 rejected 又制造了一个"显示与实际不一致"，正是 A-8 想消灭的那类）。
- * 现在显示与实际共用这一个函数。
- */
-export function isInjectable(row: LessonRow, now = Date.now()): boolean {
-  const st = String(row.status);
-  if (st !== 'verified' && st !== 'confirmed') return false;
-  if (row.grade === 'inferred') return false;
-  return liveImportance(row, now) >= INJECT_THRESHOLD;
-}
-
-/** 年龄衰减后的实时重要度（定级分**不重算**，重算的是这个） */
-export function liveImportance(row: LessonRow, now = Date.now()): number {
-  const days = Math.max(0, (now - Date.parse(row.created_at)) / 86400000);
-  const bonus = Math.log1p(row.uses) * 1.5 + Math.min(1.0, row.hits * 0.1);
-  return row.importance - days * DECAY_PER_DAY + bonus;
 }
 
 export interface AddInput {

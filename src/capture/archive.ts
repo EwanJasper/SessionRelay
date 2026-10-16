@@ -6,7 +6,7 @@ import { listSessions, getSessionFull, countMessages, insertCleanupLog, insertCl
 import type { SessionRow } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
 // [1017 夜] 自动归档改走 ADR-003 的连续强度模型 —— 判据只留一份，理由见 autoArchiveProject 注释
-import { planAging } from '../core/compact/aging.js';
+import { planAging, ARCHIVE_CAP_PER_ROUND, strengthGateOf } from '../core/compact/aging.js';
 import type { AgingRow, AgingPlan } from '../core/compact/aging.js';
 import { EXTRACT_VERSION } from '../core/extract/version.js';
 
@@ -230,13 +230,8 @@ export function autoArchivePolicyOf(cfg: RelayConfig): AutoArchivePolicy | null 
 }
 
 /** 每轮自动归档的封顶条数（渐变不突变：配置写错也不会一轮清空整库） */
-const ARCHIVE_CAP_PER_ROUND = 200;
-
-/** 窗 → 强度阈值：strength = 1 − ageDays/90（见 aging.ts strengthOf）。
- *  这样"窗"与"强度门"在数学上边界重合 —— 不会出现两套判据各说各话（1017 前的病）。 */
-export function strengthGateOf(minAgeDays: number): number {
-  return Number(Math.max(0, Math.min(1, 1 - minAgeDays / 90)).toFixed(3));
-}
+// 上限与强度门已提升到 core/compact/aging.ts（那里无依赖，面板宿主半也能读同一份判据）
+export { ARCHIVE_CAP_PER_ROUND, strengthGateOf };
 
 /** 检查一次自动归档（守护按 checkEveryMin 调用；首次顺带启用增量式 VACUUM）。
  *

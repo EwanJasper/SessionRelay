@@ -99,3 +99,14 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
   for (const r of cand.slice(cap)) { plan.kept.push(r); plan.reasons[r.id] = '本轮超出上限，下轮再说'; }
   return plan;
 }
+
+/** 每轮归档上限（渐变不突变）。1017 夜从 capture/archive.ts 提升到这里：
+ *  面板要报"每轮上限"，而它不能 import 那个文件（那里拖着 store/db 与 recompute）。 */
+export const ARCHIVE_CAP_PER_ROUND = 200;
+
+/** 窗 → 强度阈值：strength = 1 − ageDays/90（见 strengthOf 的注释）。
+ *  这样"窗"与"强度门"在数学上边界重合 —— 不会出现两套判据各说各话（1017 前的病）。
+ *  **唯一实现**：capture/archive.ts 原样再导出，老调用点不变。 */
+export function strengthGateOf(minAgeDays: number): number {
+  return Number(Math.max(0, Math.min(1, 1 - minAgeDays / 90)).toFixed(3));
+}
