@@ -265,7 +265,6 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
   //   结论：**这条默认分支是死代码**；删它或改判据要单独一拍（动检索主干，且必须先过基准）。
   //   下面三条语义不变（fusion:true 仍是基准用的强制臂）：
   //   fusion === true   → **强制融合**（不受闸门限制，用于基准 A/B）：
-  //   fusion === true   → **强制融合**（不受闸门限制，用于基准 A/B）：
   //                       否则单/双词查询的 top-1 天然 coverage=1 ⇒ 永远不触发，
   //                       两臂会跑出逐位相同的数字（实测踩过，387 条样本一模一样）。
   //   fusion 默认（未指定）→ 主路不硬时融合；主路够硬（coverage≥1）时逐字不动 ⇒ 关键词查询零回归
