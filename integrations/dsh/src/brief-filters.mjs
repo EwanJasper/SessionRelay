@@ -113,8 +113,34 @@ export function unresolvedContentChars(q) {
 /** 少于这个实义字数 = 残片（实测标定：残片 ≤2，最短的真问题 6）。 */
 export const UNRESOLVED_CONTENT_MIN = 4
 
-/** 未决问题是否够格进简报。false = 该拦。 */
+// ─────────────────────────────────────────────────────────────────────────────
+// [1017 夜 · 12d 归核] 未决段判据的**权威源已搬到内核**：核心库 dist/recall.js 导出了
+// passesUnresolvedFilters / unresolvedContentChars / UNRESOLVED_CONTENT_MIN / UNR_SLOTS。
+// 本文件下面那份实现**降级为「内核缺席时的兼容兜底」**，只在 recall 拿不到时才用。
+//
+// 为什么不是直接删掉本地副本：插件是自包含发布件（用户可能只装 dsh-plugin 没配内核），
+//   删了就整段静默消失。**拿不到就降级 ≠ 判据有两份** —— recall 在场时永远是它说了算，
+//   而 recall 在场与否由 tools/check-brief-filters §⑥ 对拍 + 插件 selftest 双重把关。
+//
+// 真正的终态是 recall 恒在场（它就在 vendor/dist 里），本地这份可删。本轮保留兜底以防万一，
+//   并把「实际走的是哪一份」暴露成 __unresolvedFromRecall，给守门与 selftest 断言。
+
+let _recall = null;
+try { _recall = await import('../vendor/dist/recall.js'); } catch { _recall = null; }
+
+/** 未决段判据实际来自内核（true）还是本地兜底（false）。守门/selftest 断言它为 true。 */
+export const __unresolvedFromRecall = !!(
+  _recall && typeof _recall.passesUnresolvedFilters === 'function'
+)
+
+/** 未决段名额：同样转发内核权威值。内核缺席时退回 1（= U-A 降级后的值，本地兜底常量的含义）。 */
+export const UNR_SLOTS = __unresolvedFromRecall
+  ? (_recall.UNR_SLOTS ?? 1)
+  : 1
+
+/** 未决问题是否够格进简报。false = 该拦。**优先调内核权威判据**，缺席才用本地兜底。 */
 export function passesUnresolvedFilters(q) {
+  if (__unresolvedFromRecall) return _recall.passesUnresolvedFilters(q);
   const t = String(q ?? '').trim()
   if (t.length < BRIEF_TEXT_MIN) return false
   if (unresolvedContentChars(t) < UNRESOLVED_CONTENT_MIN) return false

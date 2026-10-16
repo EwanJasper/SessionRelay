@@ -57,7 +57,7 @@ import { queryBriefData, sqlChannelAvailable, queryRecentFiles, foldPresentation
 import { registerHooks } from './src/hooks.mjs'
 import { experiencesLine } from './src/brief-experiences.mjs'
 import { decisionModulesText } from './src/brief-modules.mjs'
-import { passesUnresolvedFilters } from './src/brief-filters.mjs'
+import { passesUnresolvedFilters, UNR_SLOTS } from './src/brief-filters.mjs'
 
 export const name = 'dsh-srelay-brief'
 export const inject = ['systemPrompt', 'tools']
@@ -89,8 +89,12 @@ const DEC_SLOTS = 4
 //   实测注入了 3 条，其中 2 条是残片（precision ≈ 1/3），而且 3 条**全部来自同一个老会话**
 //   （该会话 7 条"未决"其后各有 305~524 条 assistant 消息 ⇒ 早被答过，"未决"与"未答"不相关）。
 //   名额从 3 降到 1 是**降级**不是终态：配 7 天 precision 门禁，仍 <50% 就转"砍掉不渲染"。
-//   反悔很简单 —— 把这两个数字改回 3（两侧必须同时改，check-brief-filters 会拦只改一侧）。
-const UNR_SLOTS = 1
+//   反悔很简单 —— 把数字改回 3（**改内核 recall 那一处**，三运行时一起生效）。
+//
+// [1017 夜 12d 归核] 这里原来是自己写的 `const UNR_SLOTS = 1`（第三份副本）。
+//   判据收进内核 dist/recall.js 的导出面后，插件改为 import 权威值，物理消灭第三份。
+//   brief-filters.mjs 拿不到 recall 时会退回内置 1（只影响「无内核」的自包含场景）。
+//   （值本身由 brief-filters.mjs 从内核 recall 转发，见那里的 __unresolvedFromRecall）
 const COLD_SYNC_TIMEOUT_MS = 1500 // 冷缓存同步预热上界：最坏慢一轮，不挂住组装
 const WARM_REFRESH_MS = 60_000   // 热缓存定时刷新
 const CACHE_TTL_MS = 5_000
