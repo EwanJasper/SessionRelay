@@ -59,7 +59,9 @@ export function defaultConfig(): RelayConfig {
     search: { tokenizer: 'jieba', min_hits_hint: 3, auto_days: 30 },
     privacy: { ignore_file: '.sessionrelayignore', export_redact: true },
     identity: {},
-    archive: { enabled: true, hot_days: 60, workflow_days: 7, check_every_min: 60 },
+    // hot_days 60→30（2026-10-17，用户批准）：task-3 实测落盘系数 3.1× 正文、messages+FTS 占库 94~97%，
+    // 缩短热窗可省 agent1super 36.9% / music 69.3%；结论与经验全保留，正文仍可从客户端会话文件重放。
+    archive: { enabled: true, hot_days: 30, workflow_days: 7, check_every_min: 60 },
     recompute: { check_every_min: 360 },
   };
 }
