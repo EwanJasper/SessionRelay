@@ -71,11 +71,15 @@ function queryMetaUnits(db: DB, exprs: string[], project: string, extra?: ExtraW
   return out;
 }
 
+/** 语义命中保底槽位默认值（唯一一处；engine 与 CLI status 共用） */
+export const DEFAULT_RESERVE_SLOTS = 3;
+
 export interface SearchOptions {
   project: string;
   query: string;
   limit?: number;
   extraWhere?: ExtraWhere | null;
+  /** 语义命中保底槽位数（默认 3；0 = 旧行为）。CLI 的 semantic status 也读它，避免两处各写一个 3。 */
   /** 语义补充命中（调用方经 semanticSearch 预计算注入；不传/空 = 与纯 FTS 行为等价） */
   semanticHits?: Array<{ sessionId: string; score: number }> | null;
   /**
@@ -214,7 +218,7 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
       const title = (db.prepare('SELECT title FROM sessions WHERE id = ?').get(sh.sessionId) as { title: string | null } | undefined)?.title;
       extra.push({ sessionId: sh.sessionId, score: sh.score, snippet: title ?? '', viaMeta: false, coverage: 0, seq: 0, viaSemantic: true });
     }
-    const reserve = Math.min(opts.semanticReserve ?? 3, Math.floor(limit / 3));
+    const reserve = Math.min(opts.semanticReserve ?? DEFAULT_RESERVE_SLOTS, Math.floor(limit / 3));
     if (extra.length > 0 && reserve > 0) {
       const take = Math.min(extra.length, reserve);
       return [...hits.slice(0, Math.max(0, limit - take)), ...extra.slice(0, take)].slice(0, limit);

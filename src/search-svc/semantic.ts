@@ -10,6 +10,7 @@ import type { DB } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
 import { loadSessionVectors, upsertSessionVector, vectorSignature, pendingSemanticTargets } from '../store/db.js';
 import type { ExtraWhere } from './engine.js';
+import { semanticCacheDir, readSemanticStatus, recordSemantic } from './semantic-status.js';
 
 export const DEFAULT_MODEL = 'Xenova/bge-small-zh-v1.5';
 export const DEFAULT_THRESHOLD = 0.4;
@@ -48,9 +49,9 @@ export function l2(v: Float32Array): Float32Array {
 
 // ── transformers.js 适配（不进 package.json——用户缓存目录动态解析，enable 时安装） ──
 
-// 注意：绝不能用 ~/.sessionrelay —— findRelayRoot 向上探测的是该目录名，
-// 在家目录创建它会把用户主目录误判为"已初始化项目"，污染所有子目录的 init（实测踩过）
-export const semanticCacheDir = (): string => path.join(os.homedir(), '.sessionrelay-semantic');
+// [1017 夜] 家目录定义搬到 semantic-status.ts（那个模块零依赖，面板宿主半要读它）。
+// 这里**原样再导出**，老调用点（cli/semantic.ts 等）一行不用改。
+export { semanticCacheDir } from './semantic-status.js';
 
 /** 解析用户缓存目录里的 transformers.js 入口；不可用返回 null（不抛——降级语义） */
 export function resolveTransformersEntry(): string | null {
@@ -97,22 +98,66 @@ export async function createTransformersEmbedder(model: string): Promise<Embedde
 // ── 语义上下文（开关 + embedder 惰性构建；任何失败 → null 短路，R3 降级不崩溃） ──
 
 let cachedEmbedder: { model: string; e: Embedder } | null = null;
+/** 空闲卸载计时器（unref，绝不把进程吊住） */
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 空闲多久卸载（分钟）；0 或负数 = 永不卸载。取自 config.semantic.idle_unload_min，默认 10。 */
+function idleUnloadMs(cfg: RelayConfig): number {
+  const min = Number(cfg.semantic?.idle_unload_min ?? 10);
+  return Number.isFinite(min) && min > 0 ? min * 60_000 : 0;
+}
+
+/** 释放 embedder 并记状态。空闲卸载与换模型都走这里（**唯一**的释放点）。 */
+export function unloadSemantic(reason: 'idle' | 'swap' | 'manual' = 'manual'): boolean {
+  const had = !!cachedEmbedder;
+  cachedEmbedder = null;
+  transformersPipeline = null;
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  if (had && reason === 'idle') recordSemantic({ state: 'unloaded', model: null });
+  return had;
+}
+
+function touchIdleTimer(cfg: RelayConfig): void {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  const ms = idleUnloadMs(cfg);
+  if (!ms || !cachedEmbedder) return;
+  idleTimer = setTimeout(() => { unloadSemantic('idle'); }, ms);
+  // unref：CLI 跑完就该退，绝不能因为一个计时器挂着不退出
+  (idleTimer as unknown as { unref?: () => void }).unref?.();
+}
 
 export function semanticModelOf(cfg: RelayConfig): string {
   return cfg.semantic?.model ?? DEFAULT_MODEL;
 }
 
+/**
+ * 取 embedder（惰性装载 + 空闲卸载）。
+ *
+ * ⚠️ [1017 夜] 失败**不再静默**：以前这里是 `catch { return null }`，于是"启用了但装载失败"
+ * 和"根本没启用"在运行期完全分不清 —— 用户只会觉得"检索好像变差了"。
+ * 现在失败原因写进跨进程的状态文件（semantic-status.ts），CLI / doctor / 面板 都能读到。
+ * 返回 null 的语义不变（调用方照样降级纯 FTS），只是**同时留下了证据**。
+ */
 export async function getEmbedder(cfg: RelayConfig): Promise<Embedder | null> {
   if (cfg.semantic?.enabled !== true) return null;
-  if (process.env.SRELAY_SEMANTIC_FAKE === '1') return new FakeEmbedder();
+  if (process.env.SRELAY_SEMANTIC_FAKE === '1') { touchIdleTimer(cfg); return new FakeEmbedder(); }
   const model = semanticModelOf(cfg);
-  if (cachedEmbedder && cachedEmbedder.model === model) return cachedEmbedder.e;
+  if (cachedEmbedder && cachedEmbedder.model === model) {
+    touchIdleTimer(cfg);
+    recordSemantic({ state: 'ready', model, usedAt: new Date().toISOString(), by: 'getEmbedder(reuse)' });
+    return cachedEmbedder.e;
+  }
+  if (cachedEmbedder && cachedEmbedder.model !== model) unloadSemantic('swap');   // 换模型：先释放旧的
   try {
     const e = await createTransformersEmbedder(model);
     cachedEmbedder = { model, e };
+    touchIdleTimer(cfg);
+    recordSemantic({ state: 'ready', model, usedAt: new Date().toISOString(), by: 'getEmbedder' });
     return e;
-  } catch {
-    return null; // 依赖损坏/离线：降级纯 FTS（doctor/status 负责显性提示）
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e).slice(0, 300);
+    recordSemantic({ state: 'failed', model, error: msg, by: 'getEmbedder' });
+    return null; // 仍然降级纯 FTS —— 但这次**留下了原因**
   }
 }
 
@@ -137,6 +182,7 @@ export function resetSemanticCaches(): void {
   vectorCache = null;
   cachedEmbedder = null;
   transformersPipeline = null;
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
 }
 
 // ── 语义检索：返回余弦 top-K（null = 未启用/降级——调用方走纯 FTS） ──

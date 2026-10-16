@@ -21,6 +21,7 @@ import type { DB, DecisionRow, UnresolvedRow, RecentFileRow } from '../store/db.
 import { requireRoot, openRelayDb, pc } from './ui.js';
 import { openGlobal, pickForInjection, type LessonRow } from '../store/global.js';
 import { resolveDomain, resolveWorkspaceId } from '../shared/workspace.js';
+import { passesUnresolvedFilters, UNR_SLOTS } from './brief-filter.js';
 
 export interface BriefPayload {
   decisions: DecisionRow[];
@@ -40,8 +41,12 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
   const rawDecisions = listDecisions(db, projectId, {}).slice(-limit).reverse();
   const { rows: decisions, folded } = foldNearDuplicates<DecisionRow>(rawDecisions, 0.8, lengthRatioGate);
   const cutoff = Date.now() - 14 * 86_400_000;
+  // [1017 夜 U-A] 渲染侧过滤：以前这里**一条判据都没有**，于是 `srelay brief` 显示的内容
+  // 与用户真正看到的简报（DSH/ZCode 两侧都过滤）不一致 —— 拿它核对"简报会说什么"会看错。
+  // 判据与 DSH/ZCode 同源（见 cli/brief-filter.ts 的说明与 check-brief-filters §⑥ 的行为对拍）。
   const unresolved = listUnresolved(db, projectId, 100)
     .filter((r) => new Date(r.at).getTime() >= cutoff)
+    .filter((r) => passesUnresolvedFilters(r.q))
     .slice(0, limit);
   const recentFiles = listRecentFiles(db, { days: opts.days ?? 7, top: opts.top ?? 3 });
   const experiences = collectExperiences(root ?? process.cwd(), opts);
@@ -59,7 +64,7 @@ export async function cmdBrief(opts: { limit?: number; days?: number; top?: numb
     console.log(`决策 ${pay.counts.decisions} 条 · 未决 ${pay.counts.unresolved} 条 · 最近在动 ${pay.recentFiles.length} 个`);
     for (const r of pay.recentFiles) console.log(pc.dim(`  🗂 ${r.file}（${r.sessions} 场）`));
     for (const d of pay.decisions.slice(0, 5)) console.log(`  ${pc.dim(d.at?.slice(0, 10) ?? '')} ${d.kind === 'negative' ? pc.red('✗') : pc.green('✓')} ${d.text.slice(0, 60)}`);
-    for (const u of pay.unresolved.slice(0, 3)) console.log(`  ${pc.yellow('◻')} ${u.q.slice(0, 60)}`);
+    for (const u of pay.unresolved.slice(0, UNR_SLOTS)) console.log(`  ${pc.yellow('◻')} ${u.q.slice(0, 60)}`);
   } finally {
     db.close();
   }

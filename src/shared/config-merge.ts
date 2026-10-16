@@ -39,6 +39,10 @@ export interface RelayConfig {
     enabled?: boolean; model?: string; threshold?: number;
     /** [1015 夜] 语义命中保底槽位（默认 3，上限 floor(limit/3)；0 = 旧行为：只追加不占位） */
     reserve_slots?: number;
+    /** [1017 夜] 空闲多久卸载 embedder（分钟；0 = 永不卸载，默认 10）。
+     *  为什么要它：embedder 一旦装载就常驻内存（几百 MB 级的 ONNX 会话），
+     *  而 DSH 宿主与守护都是常驻进程 —— 用完不还，用户机器上就一直占着。 */
+    idle_unload_min?: number;
   };
   /** [fork 1011] D26 自动归档：守护按窗口把旧会话正文蒸发（决策/话题骨架保留），增量式 VACUUM 回收空页 */
   archive?: {

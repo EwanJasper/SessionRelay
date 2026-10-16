@@ -9,7 +9,8 @@ import {
   semanticCacheDir, resolveTransformersEntry, getEmbedder, semanticSearch, digestSemantic,
   DEFAULT_MODEL, DEFAULT_THRESHOLD, resetSemanticCaches,
 } from '../search-svc/semantic.js';
-import { searchSessions } from '../search-svc/engine.js';
+import { searchSessions, DEFAULT_RESERVE_SLOTS } from '../search-svc/engine.js';
+import { readSemanticStatus } from '../search-svc/semantic-status.js';
 import { findRelayRoot } from '../shared/paths.js';
 import { die, pc } from './ui.js';
 
@@ -133,6 +134,15 @@ export async function cmdSemantic(f: SemanticFlags): Promise<void> {
         console.log(`  向量      ${sig.split(':')[0]} 个 · 待嵌 ${backlog}${backlog > 0 ? pc.dim('（守护/sync 周期自动补嵌）') : ''}`);
       }
       console.log(`  阈值      ${cfg.semantic?.threshold ?? DEFAULT_THRESHOLD}（config.semantic.threshold）`);
+      console.log(`  保底槽位  ${cfg.semantic?.reserve_slots ?? DEFAULT_RESERVE_SLOTS}（从 FTS 尾部腾位，头部不动）`);
+      console.log(`  空闲卸载  ${(cfg.semantic?.idle_unload_min ?? 10) > 0 ? (cfg.semantic?.idle_unload_min ?? 10) + ' 分钟' : '从不'}（config.semantic.idle_unload_min）`);
+      // [1017 夜] 运行期状态：静态依赖检查看不见"模型下载失败/缓存坏了"这类失败。
+      // 这一行回答的是"上一次真跑的时候，它到底起来了没有"。
+      const rs = readSemanticStatus();
+      const color = rs.state === 'failed' ? pc.red : rs.state === 'ready' ? pc.green : pc.dim;
+      console.log(`  上次运行  ${color(rs.state)}` + (rs.error ? pc.red('（' + rs.error + '）') : '')
+        + pc.dim(rs.attemptAt ? ' · ' + rs.attemptAt.replace('T', ' ').slice(0, 19) : ' · 还没跑过检索'));
+      if (rs.state === 'failed') console.log(pc.yellow('            → 检索现在是**纯字面**在跑（不是它算得差，是它没起来）。修法见上面的依赖行。'));
     }
     console.log(pc.dim(`  缓存目录  ${semanticCacheDir().replace(/\\/g, '/')}（依赖与模型，可整目录删除）`));
   } finally { db?.close(); }

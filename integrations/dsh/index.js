@@ -85,7 +85,12 @@ const FRESH_MS = 48 * 3600_000
 // CLI 兜底路出 2 条"，而 self              est 的"两条路正文逐字节一致"正是抓这个的。
 // 同一处知识多份副本，是这个项目反复吃的病。
 const DEC_SLOTS = 4
-const UNR_SLOTS = 3
+// [1017 夜 U-A 降级] UNR_SLOTS 3 → 1。依据 docs/research/2026-10-18-U-A未决段处置调研.md：
+//   实测注入了 3 条，其中 2 条是残片（precision ≈ 1/3），而且 3 条**全部来自同一个老会话**
+//   （该会话 7 条"未决"其后各有 305~524 条 assistant 消息 ⇒ 早被答过，"未决"与"未答"不相关）。
+//   名额从 3 降到 1 是**降级**不是终态：配 7 天 precision 门禁，仍 <50% 就转"砍掉不渲染"。
+//   反悔很简单 —— 把这两个数字改回 3（两侧必须同时改，check-brief-filters 会拦只改一侧）。
+const UNR_SLOTS = 1
 const COLD_SYNC_TIMEOUT_MS = 1500 // 冷缓存同步预热上界：最坏慢一轮，不挂住组装
 const WARM_REFRESH_MS = 60_000   // 热缓存定时刷新
 const CACHE_TTL_MS = 5_000

@@ -33,6 +33,11 @@ export { foldNearDuplicates, lengthRatioGate } from './core/compact/fold.js';
 // 老化压缩计划（只做计划；执行复用 capture/archive.ts 的 runArchive）
 export { planAging } from './core/compact/aging.js';
 
+// [1017 夜 U-A] 未决段的**渲染侧**过滤判据：核心 CLI 用它，工作区仓的 DSH 插件 / ZCode hook
+// 目前用的是同判据副本（不同仓库无法共用模块）。两边由 tools/check-brief-filters.mjs §⑥ 做
+// **行为对拍**（同一批样本判决必须完全一致）。终态是那两处也 import 这里 —— 见交接的后续任务。
+export { passesUnresolvedFilters, unresolvedContentChars, UNRESOLVED_CONTENT_MIN, UNR_SLOTS } from './cli/brief-filter.js';
+
 // ── 生命周期内核 API（ADR-002：宿主 hooks/workers 与 CLI 读同一份实现）──
 export { runLifecycle, lifecycleStatus } from './core/lifecycle/runner.js';
 export { integrityOf, repairProject } from './core/lifecycle/repair.js';

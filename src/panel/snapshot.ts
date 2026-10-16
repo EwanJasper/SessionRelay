@@ -28,6 +28,7 @@ import { EXTRACT_VERSION } from '../core/extract/version.js';
 import { STAGES, loadLifecycle, dueStages, heartbeatAgeMs, type LifecycleDb } from '../core/lifecycle/stages.js';
 import { KNOB_SPECS, knobStates, validateKnob, setPath, type KnobState } from './knobs.js';
 import { withDb, openReadonly, type ReadonlyDb } from './db.js';
+import { readSemanticStatus, describeSemantic, type SemanticRuntimeStatus } from '../search-svc/semantic-status.js';
 
 /**
  * 面板侧的配置读取：**与 CLI 的 loadConfig 共用同一份合并逻辑与同一句错误文案**
@@ -215,6 +216,9 @@ export interface PanelOverview {
   lessons: PanelLessons;
   lifecycle: PanelLifecycle;
   watchdog: { online: boolean; ageMs: number | null };
+  /** 语义档的**运行期**状态（跨进程读那个状态文件）。为什么面板要显示它：
+   *  以前"启用了但装载失败"与"根本没启用"在界面上长得一模一样 —— 用户只会觉得"检索变差了"。 */
+  semantic: { runtime: SemanticRuntimeStatus; summary: string; note: string };
   errors: string[];
   criteria: typeof PANEL_CRITERIA;
   scopeNote: string;
@@ -257,6 +261,14 @@ export function panelOverview(opts: { focus?: string | null } = {}): PanelOvervi
     totals,
     lessons, lifecycle,
     watchdog: watchdogOnline(),
+    semantic: (() => {
+      const runtime = readSemanticStatus();
+      return {
+        runtime,
+        summary: describeSemantic(runtime, null),
+        note: '开关是按项目开的（config.semantic.enabled）；这里是本机共享的运行期状态 —— 装载失败会在这里现形，不再悄悄退回字面检索',
+      };
+    })(),
     errors,
     criteria: PANEL_CRITERIA,
     scopeNote: '口径：本机注册表内全部项目库 @ ' + new Date().toISOString() + '（每 15 秒重取一次）',

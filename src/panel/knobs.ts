@@ -70,6 +70,8 @@ export const KNOB_SPECS: KnobSpec[] = [
     hint: '相似度低于它不计入语义命中' },
   { path: 'semantic.reserve_slots', label: '语义保底槽位', type: 'number', min: 0, max: 10, step: 1,
     hint: '给语义命中预留的位置数（上限 floor(limit/3)）；0 = 旧行为：只追加不占位' },
+  { path: 'semantic.idle_unload_min', label: '语义模型空闲卸载（分钟）', type: 'number', min: 0, max: 1440, step: 1,
+    hint: '多久没用就把本地模型从内存里放掉；0 = 永不卸载。常驻进程（DSH 宿主/守护）用它把内存还给系统' },
   { path: 'archive.enabled', label: '自动归档', type: 'boolean',
     hint: '打开后守护按窗口把老会话**正文**蒸发，结论/经验一条不删（原文仍在客户端那里，可重放）' },
   { path: 'archive.hot_days', label: '普通会话热窗（天）', type: 'number', min: 1, max: 365, step: 1,

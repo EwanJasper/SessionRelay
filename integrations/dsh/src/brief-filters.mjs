@@ -88,10 +88,36 @@ export const UNRESOLVED_FILTERS = [
   /^(?:并|而|且)\s*/,
 ]
 
+// ── 残片守卫（2026-10-17 夜 U-A 调研后加，见 docs/research/2026-10-18-U-A未决段处置调研.md §2.2/§3）──
+//
+// 病历：agent1super 实际注入的 3 条未决里 2 条是残片，precision ≈ 1/3。其中一条是 5 字的
+// 「怎么样呢？」—— 它躲过了全部四条规则，因为**共享下限 BRIEF_TEXT_MIN 是 5**（那条下限是为
+// decisions 设的：「改用 X」这类短决策是合法的，抬它会连带误伤）。
+//
+// 判据选的是「**剥掉疑问词与语气词之后还剩几个实义字**」，而不是简单抬长度——理由是
+// 长度分不开这两类：「怎么样呢？」5 字是残片，而「后续还能增加什么？」9 字是真问题。
+// 实测标定（两侧真问题清单见 tools/check-brief-filters.mjs §⑤）：
+//   残片 怎么样呢？→0 · 还有呢？→2 · 然后呢？→2      → 拦
+//   真问题 后续还能增加什么？→6 · 所以现在到底该用哪个判据？→10 · 那一边的测试集怎么样了？→8 → 放行
+const UNRESOLVED_QUESTION_WORDS = /(怎么样|怎样|怎么|什么|为什么|为啥|如何|哪个|哪些|哪边|哪里|哪儿|是否|能否|能不能|要不要|该不该|多少|多久|什么时候|谁)/g
+const UNRESOLVED_PARTICLES = /[呢吧吗啊呀嘛哦噢]/g
+
+/** 剥掉疑问词/语气词/标点后剩下的实义字数（导出让守门与调研脚本用同一口径）。 */
+export function unresolvedContentChars(q) {
+  return String(q ?? '')
+    .replace(UNRESOLVED_QUESTION_WORDS, '')
+    .replace(UNRESOLVED_PARTICLES, '')
+    .replace(/[？?！!。.，,、；;：:\s"'“”‘’()（）\-—_/\\]/g, '')
+    .length
+}
+/** 少于这个实义字数 = 残片（实测标定：残片 ≤2，最短的真问题 6）。 */
+export const UNRESOLVED_CONTENT_MIN = 4
+
 /** 未决问题是否够格进简报。false = 该拦。 */
 export function passesUnresolvedFilters(q) {
   const t = String(q ?? '').trim()
   if (t.length < BRIEF_TEXT_MIN) return false
+  if (unresolvedContentChars(t) < UNRESOLVED_CONTENT_MIN) return false
   for (const re of UNRESOLVED_FILTERS) {
     re.lastIndex = 0
     if (re.test(t)) return false
