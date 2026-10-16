@@ -418,6 +418,31 @@ console.log('=== 7a. shouldAutoInit：黑名单规则 ===')
   console.log('     music player →', mp, '| core →', core)
 }
 
+console.log('=== 7a2. ADR-002：生命周期真挂在宿主钩子上 ===')
+{
+  // 病历（ADR-002 原文）："我们现在一个钩子都没挂；采集靠外部守护轮询"。
+  // 这条断言保证"挂上了"是可验证的事实，而不是文档里的一句话。
+  const { registerHooks } = await import(HERE + 'src/hooks.mjs?hooks=1')
+  const seen = []
+  const ctx = {
+    on: (ev) => { seen.push(ev); return () => { /* off */ } },
+    effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+  }
+  const r = registerHooks(ctx, { log: () => {} })
+  check('挂上 session/event', seen.includes('session/event'))
+  check('挂上 session/disposed', seen.includes('session/disposed'))
+  check('挂上 agent/status', seen.includes('agent/status'))
+  check('registerHooks 返回已注册列表', Array.isArray(r.registered) && r.registered.length >= 3)
+  // stub ctx（自测里的 apply 桩）没有 on —— 必须安静返回而不是抛
+  let threw = false
+  try { registerHooks({ systemPrompt: {}, tools: {} }, { log: () => {} }) } catch { threw = true }
+  check('不支持 on 的 ctx 不抛（旧宿主/桩）', !threw)
+  // 宿主 on() 本身报错也不许把异常掀回宿主
+  let threw2 = false
+  try { registerHooks({ on: () => { throw new Error('x') } }, { log: () => {} }) } catch { threw2 = true }
+  check('宿主 on() 报错也不抛', !threw2)
+}
+
 console.log('=== 7b. 有 .git 未建库 → 自动接入触发 ===')
 {
   // 造一个临时 git 仓库（无 .sessionrelay）
@@ -563,7 +588,10 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
   // node:sqlite 不可用的机器上这条不适用（那时慢是预期），交给 8a 的 SKIP 说明。
   const bs0 = await import(HERE + 'src/brief-sql.mjs?sql=3')
   const sqlOk = bs0.sqlChannelAvailable()
-  if (sqlOk) check(`冷路径 < 250ms（实测 ${cold}ms；走 CLI 兜底会 >300ms）`, cold < 250)
+  // 阈值 350ms（原 250ms）：1017 实测同一台机器 240–270ms 抖动，吃了一次假红。
+  // "有没有偷偷回落到子进程"由上面 sqlOk 与下面"强制 CLI 明显更慢"两条独立断言把关，
+  // 所以这里的绝对阈值只需抓**量级退化**（比如有人在路径里塞了 spawn）。
+  if (sqlOk) check(`冷路径 < 350ms（实测 ${cold}ms；走 CLI 兜底会 >300ms）`, cold < 350)
   else console.log(`  SKIP 冷路径计时（本机无 node:sqlite，实测 ${cold}ms 属预期）`)
   console.log(`     冷路径耗时: ${cold}ms`)
 

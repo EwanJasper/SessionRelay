@@ -54,6 +54,7 @@ import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
 import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
 import { queryBriefData, sqlChannelAvailable, queryRecentFiles, foldPresentation } from './src/brief-sql.mjs'
+import { registerHooks } from './src/hooks.mjs'
 import { experiencesLine } from './src/brief-experiences.mjs'
 import { decisionModulesText } from './src/brief-modules.mjs'
 import { passesUnresolvedFilters } from './src/brief-filters.mjs'
@@ -558,6 +559,16 @@ export function apply(ctx) {
       return () => { disposed = true; clearInterval(timer); cache.clear(); inflight.clear(); disposeBindState(); autoInitTried.clear() }
     })
   } catch { /* ctx.effect 不可用（旧版 Cordis）：退化为无定时器，刷新靠冷/热路径触发 */ }
+
+  // ── ADR-002：把生命周期挂到 DSH 的真钩子上（会话事件驱动采集）──────────────
+  // 病历（ADR-002 原文）："我们现在一个钩子都没挂；采集靠外部守护轮询" —— 用户刚拍板的决定
+  // 要等下一轮采集（最长 15 分钟）才进库。这里挂 session/event、session/disposed、agent/status，
+  // 按项目去抖 8 秒 + 冷却 60 秒后做一次**单项目增量采集**（进程内调内核 runSync，不起子进程）。
+  // 只跑轻活：全量重放/老化压缩一律留给独立进程，绝不在宿主里跑。
+  try {
+    const r = registerHooks(ctx, { log: (m) => { if (process.env.SRELAY_BRIEF_DEBUG) console.error(m) } })
+    if (r?.registered?.length && process.env.SRELAY_BRIEF_DEBUG) console.error('[srelay-hooks] registered: ' + r.registered.join(','))
+  } catch (e) { /* 钩子挂不上不影响简报与工具（旧宿主/无内核副本） */ }
 
   // ⚠️ 只注册一个 section。按项目注册多个同名 section 会按契约 throw；
   // 若把那个错误 catch 掉，后续 agent 会静默渲染第一个 agent 的内容——
