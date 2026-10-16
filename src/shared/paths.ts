@@ -25,6 +25,22 @@ export function isUnclaimableAncestor(start: string, dir: string): boolean {
   return d === home;
 }
 
+/**
+ * 「这个目录算不算**已初始化的项目根**」——光有 `.sessionrelay` 目录是不够的。
+ *
+ * 病历（本轮 code review 抓到，长期存在）：全局经验库按设计住在 `~/.sessionrelay/global.sqlite`，
+ * 于是 `~` 仅凭"有个 .sessionrelay 目录"就被认成**已初始化的项目** ——
+ *   · guard G 长期把 `C:\Users\crx` 列成一个 0 会话/0 决策的"项目"；
+ *   · 主目录也一直挂在项目注册表里（2026-10-16T08:41 那条），守护还会给它写 watch.log；
+ *   · A-7 新增的诊断会对 `~` 下任何子目录说"祖先里有记忆库"——那不是项目库，是全局经验库。
+ * 判据：目录里得有**真项目标记**（`relay.sqlite` 或 `config.json`）；两者都没有就不算项目根。
+ * （`srelay init` 会同时建这两个，所以真项目不受影响；半删过的项目会退回"未初始化"，提示更准。）
+ */
+function hasProjectMarker(dir: string): boolean {
+  const d = path.join(dir, '.sessionrelay');
+  return existsSync(path.join(d, 'relay.sqlite')) || existsSync(path.join(d, 'config.json'));
+}
+
 export interface RootSearch {
   /** 可用的项目根（null = 没有） */
   root: string | null;
@@ -48,11 +64,11 @@ export function findRelayRootInfo(startDir: string): RootSearch {
   // 不修这里的话，%TEMP% 下的任何东西都会被认成"属于用户主目录那个项目"——
   // 实测：serve 的根解析用例会因为这个判定响亮失败（测试自己想抓住的就是这类污染）。
   if (isTransientRoot(start)) {
-    return { root: existsSync(path.join(start, '.sessionrelay')) ? start : null, skipped };
+    return { root: hasProjectMarker(start) ? start : null, skipped };
   }
   let dir = start;
   for (;;) {
-    if (existsSync(path.join(dir, '.sessionrelay'))) {
+    if (hasProjectMarker(dir)) {
       if (!isUnclaimableAncestor(start, dir)) return { root: dir, skipped };
       skipped.push(dir);
     }
@@ -83,7 +99,8 @@ export function inferProjectRoot(startDir: string): string {
   if (isTransientRoot(start)) return start;
   let dir = start;
   for (;;) {
-    if ((existsSync(path.join(dir, '.sessionrelay')) || existsSync(path.join(dir, '.git'))) && !isUnclaimableAncestor(start, dir)) return dir;
+    // 与 findRelayRoot 同规：`.sessionrelay` 里得有真项目标记（全局经验库也住在这个目录名下）
+    if ((hasProjectMarker(dir) || existsSync(path.join(dir, '.git'))) && !isUnclaimableAncestor(start, dir)) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return start;
     dir = parent;
