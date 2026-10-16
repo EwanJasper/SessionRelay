@@ -20,6 +20,7 @@ export interface AgingRow {
   message_count?: number | null;
   extracted_version?: number | null;
   state?: string | null;
+  origin?: string | null;          // 保护判据要对齐 archive.ts 的 isProtected（imported/note 不归档）
   decisions?: string | null;
   cleanup_at?: string | null;
 }
@@ -55,7 +56,11 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
   const cand: AgingRow[] = [];
   for (const r of rows) {
     if (r.cleanup_at) { plan.reasons[r.id] = '已归档过'; plan.kept.push(r); continue; }
-    if (String(r.state || '') !== 'confirmed') { plan.reasons[r.id] = '还没落定（state≠confirmed）'; plan.kept.push(r); continue; }
+    // ⚠️ 2026-10-17 实测纠正：原门禁写的是 state==='confirmed'，而重建后的库 719/719 场都是 pending_end
+    //    ⇒ 计划恒为空（storage-scout 查出本文件当时还是**死代码**：只被自己的单测引用）。
+    //    现在保护判据与 capture/archive.ts 的 isProtected 对齐；执行器复用 runArchive（真删正文的唯一实现）。
+    if (String(r.state || '') === 'active') { plan.reasons[r.id] = '正在进行，不归档'; plan.kept.push(r); continue; }
+    if (String(r.origin || '') === 'imported' || String(r.origin || '') === 'note') { plan.reasons[r.id] = '导入/笔记，不归档'; plan.kept.push(r); continue; }
     if (Number(r.extracted_version ?? -1) !== o.currentVersion) { plan.reasons[r.id] = '规则版本旧，先重算'; plan.kept.push(r); continue; }
     if (decisionCount(r.decisions) < minDec) { plan.reasons[r.id] = '没有派生结论，归档了就真没了'; plan.kept.push(r); continue; }
     const d = ageDays(r.last_event_at, now);

@@ -24,6 +24,14 @@ describe('压缩 L2 · 老化压缩计划', () => {
   it('还不够老的不动', () => {
     expect(planAging([row('a', { last_event_at: '2026-10-01T00:00:00Z' })], O).archive.length).toBe(0);
   });
+  it('[实测纠正] pending_end 也能归档（原门禁要求 confirmed ⇒ 重建后的库计划恒空）', () => {
+    expect(planAging([row('a', { state: 'pending_end' })], O).archive.map((r) => r.id)).toEqual(['a']);
+  });
+  it('active 与导入/笔记不归档（对齐 archive.ts 的 isProtected）', () => {
+    expect(planAging([row('a', { state: 'active' })], O).archive.length).toBe(0);
+    expect(planAging([row('a', { origin: 'note' })], O).archive.length).toBe(0);
+    expect(planAging([row('a', { origin: 'imported' })], O).archive.length).toBe(0);
+  });
   it('已经归档过的不重复处理', () => {
     expect(planAging([row('a', { cleanup_at: '2026-09-01T00:00:00Z' })], O).archive.length).toBe(0);
   });
