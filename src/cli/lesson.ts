@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pc } from './ui.js';
-import { openGlobal, addLesson, listLessons, searchLessons, maintainLessons, exportMarkdown, globalDbFile, liveImportance, INJECT_THRESHOLD, type Grade, type Scope } from '../store/global.js';
+import { openGlobal, addLesson, listLessons, searchLessons, maintainLessons, exportMarkdown, globalDbFile, liveImportance, isInjectable, INJECT_THRESHOLD, type Grade, type Scope } from '../store/global.js';
 import { resolveDomain, resolveWorkspaceId } from '../shared/workspace.js';
 
 export interface LessonFlags {
@@ -53,7 +53,7 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
     // 这是设计里"闸 3"的落地——**模型无权决定收不收**，人说了才算。
     if (sub === 'confirm' || sub === 'reject') {
       const ids = text.map((t) => Number(String(t).replace(/^#/, ''))).filter((n) => Number.isInteger(n) && n > 0);
-      if (ids.length === 0) { console.error('用法: srelay lesson confirm <id...>   （id 见 lesson list；reject = 标 retired）'); process.exit(2); }
+      if (ids.length === 0) { console.error('用法: srelay lesson confirm <id...>   （id 见 lesson list；reject = 标 rejected 终态：maintain 不会把它复活）'); process.exit(2); }
       const to = sub === 'confirm' ? 'verified' : 'rejected';
       // ⚠️ 只改状态是不够的：注入还有一道"等级"闸，inferred 一律进不去。
       // **人工确认本身就是证据**（强于"文件里读到"），所以 confirm 时把 inferred 抬到 verified-file（6.0）。
@@ -87,12 +87,12 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
     console.log(pc.dim('库: ' + globalDbFile() + '  可见范围: ' + ws + (dom ? ' + domain:' + dom : '')));
     if (rows.length === 0) { console.log('（还没有经验）用法: srelay lesson add "<一句话经验>" --source <出处>'); return; }
     for (const r of rows) {
-      // ⚠️ 这里必须用**与注入闸同一个常量**（INJECT_THRESHOLD=5.5）。
-      // 实测踩过：原先硬编码 6，于是刚 confirm 的条目（5.99）在列表里显示 ○ ——
-      // 「看着没生效，其实已经能注入了」，是最容易让人误判的一类不一致。
-      const mark = Number(liveImportance(r)) >= INJECT_THRESHOLD ? '●' : pc.dim('○');
+      // ⚠️ 必须用**与注入闸同一个判据**（isInjectable：状态 + 定级 + 阈值）。
+      // 两次实测踩过这一类不一致：先是硬编码 6（刚 confirm 的 5.99 显示 ○），
+      // 后是只看分数不看 status（rejected 的 7.5 显示 ● 却根本进不去，复审 C-3）。
+      const mark = isInjectable(r) ? '●' : pc.dim('○');
       console.log(' ' + mark + ' [' + r.scope + '|' + r.grade + '|' + r.status + '|' + Number(liveImportance(r)).toFixed(1) + '] ' + r.text);
     }
-    console.log(pc.dim('\n共 ' + rows.length + ' 条 · ● 可进注入层 · ○ 已退休（仍可 search）'));
+    console.log(pc.dim('\n共 ' + rows.length + ' 条 · ● 可进注入层 · ○ 不可（草稿 / 已退休 / 被否决 / 低于阈值；都仍可 search）'));
   } finally { db.close(); }
 }

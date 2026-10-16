@@ -392,15 +392,21 @@ function extraSections(root, counts, opts = {}) {
 /** 真正取数的地方：异步，跑在组装路径之外。直查 SQL 优先，CLI 子进程兜底 */
 async function buildBrief(root) {
   const sql = sqlItems(root)
-  const { experiences, modulesLine } = extraSections(root, { dec: sql?.counts?.dec ?? 0, shown: sql?.dec?.length ?? 0 })
-  if (sql) return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root), recentFilesText(root), experiences, modulesLine)
+  if (sql) {
+    const { experiences, modulesLine } = extraSections(root, { dec: sql.counts?.dec ?? 0, shown: sql.dec?.length ?? 0 })
+    return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root), recentFilesText(root), experiences, modulesLine)
+  }
   const [decRaw, unrRaw] = await Promise.all([
     runSrelay(['decisions', '--limit', '200', '--json'], root, 4000),
     runSrelay(['unresolved', '--limit', '200', '--json'], root, 4000),
   ])
   const dec = parseItems(decRaw, 'decisions', DEC_SLOTS)
   const counts = rawCounts(decRaw, unrRaw)
-  // 同一条路上也要带上两段（否则"SQL 路有 🌍、CLI 路没有"——两条路正文一致性自测会抓，但先别造出来）
+  // ⚠️ [复审 C-1 修] 两段必须在**各自的分支里**算。原先它写在 if (sql) 之前、用 sql 的 counts 统一算：
+  // SQL 路不可用（Node<22.5 / schema 旧 / WAL 只读打不开）时拿到 {dec:0, shown:0} ⇒ "0 > 0" 为假
+  // ⇒ 🗺 行恒空。症状（复核实测）：冷路径（CLI 兜底）看得到 🗺，**refresh 之后的每一轮都没有了** ——
+  // 又是"静默少一段"，而 selftest 的"两条路逐字节一致"比的是两个冷路径，抓不到它。
+  const { experiences, modulesLine } = extraSections(root, { dec: counts.dec, shown: dec.length })
   return renderBrief(root, dec, parseItems(unrRaw, 'unresolved', UNR_SLOTS), counts, kanbanText(root), recentFilesText(root),
     experiences, modulesLine)
 }

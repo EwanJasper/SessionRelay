@@ -28,7 +28,9 @@ try {
 
 for (const q of QUERIES) {
   const toks = gate2Tokens(q);
-  const hits = texts.map((t) => ({ t, s: gate2Score(q, t) })).filter((x) => x.s.score > 0);
+  // ⚠️ 用 .pass（产品判据），不是 score > 0 —— 后者会把"只共享一个二元组"的条目也列成命中，
+  // 人工核验时会被误导（复审指出）。
+  const hits = texts.map((t) => ({ t, s: gate2Score(q, t) })).filter((x) => x.s.pass);
   console.log('─'.repeat(70));
   console.log('query:', q);
   console.log('  toks:', JSON.stringify(toks));

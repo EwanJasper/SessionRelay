@@ -315,8 +315,8 @@ function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[
   const paths: Array<{ w: number; hits: SearchHit[] }> = [{ w: 1.0, hits: main }];
   const rw = rewriteQuery(tokens, (t) => segment(t, { keepSingles: false }));
   if (rw.extraUnits.length > 0) {
-    // [红队 A-11] 融合路**已经在 rrfFuse 里做过长度惩罚**，这里必须关掉 searchOnce 的那一次，
-    // 否则二次乘罚，且任何 lengthNorm:false 的对照组都是脏的。
+    // [红队 A-11] 长度惩罚由**融合这一步统一做**（见下面的 pen），所以子路必须关掉 searchOnce 的那次，
+    // 否则二次乘罚。
     const ex = searchOnce(db, { ...opts, query: rw.extraUnits.flat().join(' '), rewrite: false, limit, lengthNorm: false });
     if (ex.length > 0) paths.push({ w: 0.6, hits: ex });
   }
@@ -333,7 +333,11 @@ function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[
   const all: string[] = [];
   const seenSid = new Set<string>();
   for (const p of paths) for (const h of p.hits) if (!seenSid.has(h.sessionId)) { seenSid.add(h.sessionId); all.push(h.sessionId); }
-  const pen = lengthPenalty(db, all);
+  // [复审 C-4] 融合路也必须认 `lengthNorm` 这个开关。
+  // 病历：这里原来**无条件**惩罚，于是 `--lengthnorm 0` 只关了主路、没关融合路 ——
+  // 用 lengthNorm:false 当对照组的 A/B（开 fusion 时）对照组是脏的（复核实测：只改 message_count，
+  // fusion:true 的排序会变，而 fusion:false 不变）。产品默认 fusion 关，所以线上没受影响，但仪器必须干净。
+  const pen = opts.lengthNorm === true ? lengthPenalty(db, all) : new Map<string, number>();
   const score = new Map<string, number>();
   const nPaths = new Map<string, number>();
   const first = new Map<string, SearchHit>();

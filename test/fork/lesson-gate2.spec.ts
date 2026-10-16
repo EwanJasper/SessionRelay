@@ -102,6 +102,15 @@ describe('[1016 收口] 可见性：一份实现管三个面', () => {
     db.close();
   });
 
+  it('工作区 id 首尾空格：SQL 侧与 JS 侧口径必须一致（复审 C-5）', () => {
+    const db = mk();
+    addLesson(db, { text: '带空格的工作区', scope: 'project', workspaceId: 'D:\\proj ', grade: 'verified-file', sourceRef: 'x:1' });
+    // JS 侧 workspaceKey 会 trim，SQL 侧若忘了 trim 就会出现"JS 说相等、SQL 说不等"
+    expect(pickForInjection(db, { workspaceId: 'D:/proj' }).length).toBe(1);
+    expect(pickForInjection(db, { workspaceId: '  d:\\proj  ' }).length).toBe(1);
+    db.close();
+  });
+
   it('domain 作用域：给了标签才可见（没标签 = 不猜）', () => {
     const db = mk();
     addLesson(db, { text: '域级经验：Windows 路径大小写', scope: 'domain', domain: 'windows-paths', grade: 'verified-file', sourceRef: 'x:1' });

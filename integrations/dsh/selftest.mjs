@@ -595,6 +595,14 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
     if (sqlOk) check(`强制 CLI 明显更慢（实测 ${cliCold}ms vs SQL ${cold}ms）——证明 8c 计时确实在测 SQL`, cliCold > cold)
     check('两条路简报正文逐字节一致', v1 === v3)
     console.log(`     CLI 兜底冷路径耗时: ${cliCold}ms`)
+    // [复审 C-1 回归] 冷路径**看得到的段，refresh 之后不许消失**。
+    // 病历：🌍/🗺 的 counts 曾在 `if (sql)` 之前统一算 ⇒ CLI 路拿到 {dec:0,shown:0} ⇒ 🗺 恒空；
+    // 症状是"冷路径有 🗺、之后每一轮都没有"——而上面那条"逐字节一致"比的是**两个冷路径**，抓不到。
+    if (v3.includes('🗺')) {
+      await new Promise((r) => setTimeout(r, 8000))   // 等冷路径触发的异步 refresh 落地
+      const v3warm = reg2[0].text(asm)
+      check('CLI 兜底路 refresh 之后仍保留 🗺 段', v3warm.includes('🗺'))
+    }
   }
 }
 

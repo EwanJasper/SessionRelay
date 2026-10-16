@@ -71,6 +71,8 @@ export function touchRegistry(root: string): void {
  *   ③ 临时目录**自身**不算临时目录（靠 + sep 兜着），于是 %TEMP% 本身能被登记成项目根。
  * 现在：两边都过 realpath（存在的话）+ 分隔符归一 + 大小写归一，并显式把 tmpdir 自身算作临时目录。
  * ⚠️ realpath 失败（路径不存在——正是"还没建"的常见情形）就退回 path.resolve，绝不因为探测失败而改变判定。
+ * ⚠️ 因此 **8.3 短名（C:/Users/CRX~1/...）只在目录确实存在时才会被归一**；不存在时两种写法可能仍判不同。
+ *    复审（A-12）在本机构造不出可区分的用例，所以这条只标"方向对"，**不算已证实修好**。
  */
 function pathKey(p: string): string {
   let s = path.resolve(p);

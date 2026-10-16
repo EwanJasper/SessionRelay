@@ -78,6 +78,21 @@ export interface LessonRow {
   hits: number; uses: number; needs_review: number; created_at: string;
 }
 
+/**
+ * 闸 1 的**唯一判据**：这一条现在能不能进注入层（状态 + 定级 + 阈值，三样一起看）。
+ *
+ * 为什么要单拎出来（复审 C-3）：`lesson list` 的 ●/○ 此前只看分数不看 status，
+ * 于是一条 `rejected` 但分数 7.5 的条目会显示"● 可进注入层"——而它根本进不去
+ * （被 A-3 修出来的新终态 rejected 又制造了一个"显示与实际不一致"，正是 A-8 想消灭的那类）。
+ * 现在显示与实际共用这一个函数。
+ */
+export function isInjectable(row: LessonRow, now = Date.now()): boolean {
+  const st = String(row.status);
+  if (st !== 'verified' && st !== 'confirmed') return false;
+  if (row.grade === 'inferred') return false;
+  return liveImportance(row, now) >= INJECT_THRESHOLD;
+}
+
 /** 年龄衰减后的实时重要度（定级分**不重算**，重算的是这个） */
 export function liveImportance(row: LessonRow, now = Date.now()): number {
   const days = Math.max(0, (now - Date.parse(row.created_at)) / 86400000);
@@ -138,7 +153,9 @@ export function visibleWhere(scopeSel: { workspaceId?: string; domain?: string }
   const parts = ["(scope = 'global')"];
   const params: unknown[] = [];
   if (scopeSel.workspaceId) {
-    parts.push("(scope = 'project' AND rtrim(replace(lower(workspace_id), char(92), '/'), '/') = ?)");
+    // trim 两侧都要：JS 侧 workspaceKey 先 .trim()（手输 --workspace 时多一个空格很常见），
+    // SQL 侧不 trim 就会出现"JS 说相等、SQL 说不等"的**同一规则两种答案**（复审 C-5 实测）。
+    parts.push("(scope = 'project' AND rtrim(replace(lower(trim(workspace_id)), char(92), '/'), '/') = ?)");
     params.push(workspaceKey(scopeSel.workspaceId));
   }
   if (scopeSel.domain) { parts.push("(scope = 'domain' AND domain = ?)"); params.push(scopeSel.domain); }
@@ -312,7 +329,9 @@ export function pickForInjection(db: Database.Database, o: PickOptions = {}): Le
     + " AND status IN ('verified','confirmed') AND grade <> 'inferred'"
     + " ORDER BY importance DESC LIMIT 40"
   ).all(...w.params) as LessonRow[]).map((r) => ({ ...r, importance: Number(liveImportance(r)) }))
-    .filter((r) => r.importance >= INJECT_THRESHOLD);
+    // SQL 里那两段（status IN (…) AND grade <> 'inferred'）是**便宜的预筛**；
+    // 真正的判据是 isInjectable（多了阈值那一条）—— 显示与实际共用它。
+    .filter((r) => isInjectable(r));
   if (rows.length === 0) return [];
 
   // 闸 2 相关性：有本轮查询时才筛；没有查询（如 ZCode 开场 / DSH 冷路径）就退化为

@@ -5,8 +5,9 @@
 //   ZCode hook 里的一段 SQL），而且两侧已经**漂移**：插件缺 domain 分支、hook 缺 workspace 分支
 //   ⇒ `--scope domain` 的经验在两端**永远不出现**，且没有任何报错（本项目最嫌恶的静默失效）。
 //
-//   这里把「我是谁（workspace）/ 我属于哪个领域（domain）」做成一份实现，四个面共用：
-//     核心库 CLI（lesson add/list/harvest） · DSH 插件 · ZCode hook · MCP。
+//   这里把「我是谁（workspace）/ 我属于哪个领域（domain）」做成一份实现，**三个面**共用：
+//     核心库 CLI（lesson add/list/harvest/brief） · DSH 插件 · ZCode hook。
+//   （MCP 面目前**没有**经验路径——serve 不查 global.sqlite，别按"四个面"去改这句话。）
 //
 // 两条实测出来的口径：
 //   ① workspace = **项目根**，不是"调用时的 cwd"。

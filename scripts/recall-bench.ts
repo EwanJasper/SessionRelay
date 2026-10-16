@@ -24,8 +24,10 @@ const N = Number(arg('n', '150'));
 const LIMIT = Number(arg('limit', '10'));
 const REWRITE = arg('rewrite', '1') !== '0';
 const FUSION = arg('fusion', '0') === '1';
-// 默认 = 产品默认（长度归一默认开）；--lengthnorm 0 才关掉，用于 A/B
-const LENGTHNORM = arg('lengthnorm', '1') !== '0';
+// ⚠️ 默认必须**等于产品默认**：产品默认是关（engine 只在 `lengthNorm === true` 时才归一化），
+// 所以这里默认 0。要复现交接 §21 那组"三臂全涨"的数字，请显式 `--lengthnorm 1`（口径见那段记录）。
+// 复审指出原先这里默认 1 且注释写"产品默认开"——那会让任何不传参的 A/B 对照与产品口径不一致。
+const LENGTHNORM = arg('lengthnorm', '0') === '1';
 
 const db = new Database(dbPath, { readonly: true });
 const projRow = db.prepare('SELECT project_id FROM sessions LIMIT 1').get() as { project_id: string };
