@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pc } from './ui.js';
-import { openGlobal, addLesson, listLessons, searchLessons, maintainLessons, exportMarkdown, globalDbFile, liveImportance, type Grade, type Scope } from '../store/global.js';
+import { openGlobal, addLesson, listLessons, searchLessons, maintainLessons, exportMarkdown, globalDbFile, liveImportance, INJECT_THRESHOLD, type Grade, type Scope } from '../store/global.js';
 
 export interface LessonFlags {
   since?: string; dry?: boolean;
@@ -45,6 +45,25 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
       } finally { pdb.close(); }
       return;
     }
+    // [1016] 草稿复核入口：harvest 产出的 draft 必须**由人**升 verified 才可能进注入层。
+    // 这是设计里"闸 3"的落地——**模型无权决定收不收**，人说了才算。
+    if (sub === 'confirm' || sub === 'reject') {
+      const ids = text.map((t) => Number(String(t).replace(/^#/, ''))).filter((n) => Number.isInteger(n) && n > 0);
+      if (ids.length === 0) { console.error('用法: srelay lesson confirm <id...>   （id 见 lesson list；reject = 标 retired）'); process.exit(2); }
+      const to = sub === 'confirm' ? 'verified' : 'retired';
+      // ⚠️ 只改状态是不够的：注入还有一道"等级"闸，inferred 一律进不去。
+      // **人工确认本身就是证据**（强于"文件里读到"），所以 confirm 时把 inferred 抬到 verified-file（6.0）。
+      // 实测踩过：只改状态 → 复核完了还是 ○、还是进不了注入层，看起来"确认没生效"。
+      const upd = db.prepare('UPDATE lessons SET status = ?, updated_at = ?, grade = CASE WHEN ? = ? AND grade = ? THEN ? ELSE grade END, importance = CASE WHEN ? = ? AND grade = ? THEN ? ELSE importance END WHERE id = ?');
+      const now = new Date().toISOString();
+      let n = 0;
+      for (const id of ids) {
+        const r = upd.run(to, now, to, 'verified', 'inferred', 'verified-file', to, 'verified', 'inferred', 6.0, id);
+        if (Number(r.changes) > 0) n++;
+      }
+      console.log(pc.green('✓ ' + n + ' 条 → ' + to) + pc.dim('（' + (to === 'verified' ? '下次注入就可能带上它们' : '已退休：不再默认注入，但仍可 lesson search 到') + '）'));
+      return;
+    }
     if (sub === 'maintain') {
       const r = maintainLessons(db);
       if (f.json) { console.log(JSON.stringify(r)); return; }
@@ -64,7 +83,10 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
     console.log(pc.dim('库: ' + globalDbFile() + '  可见范围: ' + ws + (f.domain ? ' + domain:' + f.domain : '')));
     if (rows.length === 0) { console.log('（还没有经验）用法: srelay lesson add "<一句话经验>" --source <出处>'); return; }
     for (const r of rows) {
-      const mark = Number(liveImportance(r)) >= 6 ? '●' : pc.dim('○');
+      // ⚠️ 这里必须用**与注入闸同一个常量**（INJECT_THRESHOLD=5.5）。
+      // 实测踩过：原先硬编码 6，于是刚 confirm 的条目（5.99）在列表里显示 ○ ——
+      // 「看着没生效，其实已经能注入了」，是最容易让人误判的一类不一致。
+      const mark = Number(liveImportance(r)) >= INJECT_THRESHOLD ? '●' : pc.dim('○');
       console.log(' ' + mark + ' [' + r.scope + '|' + r.grade + '|' + r.status + '|' + Number(liveImportance(r)).toFixed(1) + '] ' + r.text);
     }
     console.log(pc.dim('\n共 ' + rows.length + ' 条 · ● 可进注入层 · ○ 已退休（仍可 search）'));
