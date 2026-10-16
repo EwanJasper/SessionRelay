@@ -71,14 +71,34 @@ if (localSource) {
     fs.cpSync(from, path.join(VENDOR, 'node_modules', dep), { recursive: true })
     copied++
   }
-  // 依赖闭包：dependencies + **optionalDependencies** 都要跟。
+  // 依赖闭包：dependencies + **optionalDependencies** 都要跟，直到定点收敛。
   // optionalDependencies 不是可选的——原生模块的平台包（@node-rs/jieba-win32-x64-msvc
   // 之类）全走这个字段，漏了它 CLI 直接 "Cannot find native binding"。
-  // 递归太深没必要（srelay 依赖树两层到底），跑三轮定点收敛。
-  for (let pass = 0; pass < 3; pass++) {
+  //
+  // ⚠️ [1016 真 bug 修复] 原实现每轮只扫 **顶层 deps 那张名单**：
+  //   第 1 轮从 srelay 的 dependencies 里捞到 @inquirer/prompts → 复制它的 @inquirer/checkbox 等；
+  //   但第 2/3 轮**依然只扫顶层名单**，于是 @inquirer/checkbox 自己声明的传递依赖
+  //   （@inquirer/core / ansi / figures / type）**永远不会被扫描，也就永远不会被复制**。
+  //   后果：DSH 里 srelay_record 一调用就炸在 "@inquirer/core 找不到"，而 vendor 看起来"有货"、
+  //   所有自检全绿——典型的静默半失效（见 docs/ENGINEERING-NOTES.md 第一节）。
+  //   修法：每轮扫 **vendor 里当前存在的每一个包**（含 @scope/ 一层），而不是那张顶层名单。
+  const installedDirs = () => {
+    const nm = path.join(VENDOR, 'node_modules')
+    const out = []
+    for (const e of fs.readdirSync(nm, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name === '.bin') continue
+      if (e.name.startsWith('@')) {
+        for (const s of fs.readdirSync(path.join(nm, e.name), { withFileTypes: true })) {
+          if (s.isDirectory()) out.push(path.join(nm, e.name, s.name))
+        }
+      } else out.push(path.join(nm, e.name))
+    }
+    return out
+  }
+  for (let pass = 0; pass < 12; pass++) {
     const declared = new Set()
-    for (const dep of deps) {
-      const pj = path.join(VENDOR, 'node_modules', dep, 'package.json')
+    for (const dir of installedDirs()) {
+      const pj = path.join(dir, 'package.json')
       if (!fs.existsSync(pj)) continue
       try {
         const j = JSON.parse(fs.readFileSync(pj, 'utf8'))
@@ -87,14 +107,20 @@ if (localSource) {
       } catch { /* 坏 package.json 跳过 */ }
     }
     let added = 0
+    const notInSrc = []
     for (const d of declared) {
       const to = path.join(VENDOR, 'node_modules', d)
       const from = path.join(src, 'node_modules', d)
-      if (fs.existsSync(to) || !fs.existsSync(from)) continue
+      if (fs.existsSync(to)) continue
+      if (!fs.existsSync(from)) { notInSrc.push(d); continue }
       fs.cpSync(from, to, { recursive: true })
       added++
     }
-    if (added === 0) break
+    if (added === 0) {
+      if (notInSrc.length) log('  ⚠️ 源里也没有（可能是 peer/平台可选）：' + [...new Set(notInSrc)].join(', '))
+      break
+    }
+    log('  闭包第 ' + (pass + 1) + ' 轮：+' + added + ' 个')
   }
   log(`  已复制 ${copied} 个直接依赖${missing.length ? `，缺：${missing.join(', ')}` : ''}`)
   if (missing.length) {

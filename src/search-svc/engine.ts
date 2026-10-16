@@ -5,7 +5,8 @@
 //   用户只记得部分关键词的真实查询；待回填技术方案 §6.1）
 // - 合并确定性：messages 命中优先于 meta 命中（技术方案 T27）
 import type { DB, } from '../store/db.js';
-import { parseQuery, unitExpr } from '../core/tokenize/tokenizer.js';
+import { parseQuery, unitExpr, segment } from '../core/tokenize/tokenizer.js';
+import { rewriteQuery } from '../core/tokenize/rewrite.js';
 
 export interface ExtraWhere {
   sql: string;
@@ -20,6 +21,8 @@ export interface SearchHit {
   coverage: number; // 覆盖的单元数 / 总单元数
   seq: number;      // 最佳命中消息序号（出处块的 msg#，D10）
   viaSemantic?: boolean; // 语义补充命中（design-semantic §3.2：B−A 追加，排序在 FTS 之后）
+  /** [1016] 零模型查询改写补充命中（同义家族 / CJK bigram 展开）——**只做加法**，排在主路之后 */
+  viaRewrite?: boolean;
 }
 
 interface UnitHits {
@@ -79,9 +82,22 @@ export interface SearchOptions {
    * 保底只从 **FTS 尾部**（分数最低的几条）腾，绝不挤掉 FTS 头部。
    */
   semanticReserve?: number;
+  /**
+   * 零模型查询改写补充（默认开）。主路命中不足 rewriteBelow 条时，用改写后的补充词再搜一遍，
+   * 结果**追加在主路之后**（不替换、不压分、可标记 viaRewrite）。
+   * 关掉它 = 逐字回到旧行为（便于 A/B 对比）。
+   */
+  rewrite?: boolean;
+  /** 主路命中少于这个数才启用改写补充（默认 3；设 0 = 永远启用） */
+  rewriteBelow?: number;
 }
 
-export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
+/**
+ * 主检索（原实现，一字未动）。
+ * 查询改写补充在 searchSessions 里做——**只做加法**：先拿主路结果，不足才补，
+ * 补进来的排在主路之后。这样即使改写很烂，也不会把原本对的挤下去。
+ */
+function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   const limit = opts.limit ?? 20;
   const { units } = parseQuery(opts.query);
   if (units.length === 0) return [];
@@ -165,4 +181,53 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
     if (extra.length > 0) hits.push(...extra);
   }
   return hits.slice(0, limit);
+}
+
+/**
+ * 对外入口 = 主检索 + （可选）零模型查询改写补充。
+ *
+ * [1016 竞品调研借鉴点 ②] 我们的短板是「换个说法就不认」（关键词 20/20 进 top-10、
+ * 大白话 top-1 只有 10/20）。改写做三件事，全零模型：同义家族命中即补同族词、
+ * CJK 长词切 bigram、问句外壳词不进补充词。
+ *
+ * 三条纪律：
+ *   1) **只做加法**：主路结果一条不删、分数一分不动；补充命中追加在后并标 viaRewrite；
+ *   2) **只在主路不足时才补**（默认不足 3 条），避免日常查询被噪声稀释；
+ *   3) **可一键关**（opts.rewrite === false）：关掉后逐字等于旧行为，便于 A/B 与回归。
+ */
+export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
+  const hits = searchOnce(db, opts);
+  if (opts.rewrite === false) return hits;
+
+  const limit = opts.limit ?? 20;
+  const below = opts.rewriteBelow ?? 3;
+  // 触发判据 = **主路不够硬**，不是"条数不够"。
+  // 第一版写成「命中满 limit 就跳过」，实测几乎永不触发——FTS 对任何查询都能凑满 10 条，
+  // 于是改写约等于没开（大白话 hit@10 只从 17 涨到 18）。改成看**覆盖度**：
+  //   主路 top-1 覆盖了全部查询单元（coverage >= 1）= 硬信号 → 不改写；
+  //   否则（拆词拆坏 / 问句外壳词多 / 只覆了一半）→ 补一路。
+  // ⚠️ 先判空：limit 可以是 0，或者查询零命中 —— 直接读 hits[0].coverage 会炸
+  //   （实测：test/integration/deep.spec.ts 用 limit:0 打过这条路）。
+  const strong = hits.length > 0 && hits.length >= Math.min(limit, below) && hits[0].coverage >= 1;
+  if (strong) return hits;
+
+  const primary = parseQuery(opts.query);
+  const tokens = primary.units.flat();
+  if (tokens.length === 0) return hits;
+
+  const rw = rewriteQuery(tokens, (t) => segment(t, { keepSingles: false }));
+  if (rw.extraUnits.length === 0) return hits;
+
+  // 补充路用 OR（避免 AND 把补充词也卡死）
+  const extraQuery = rw.extraUnits.flat().join(' ');
+  const extra = searchOnce(db, { ...opts, query: extraQuery, rewrite: false, limit });
+  const existing = new Set(hits.map((h) => h.sessionId));
+  const merged = hits.slice();
+  for (const h of extra) {
+    if (existing.has(h.sessionId)) continue;   // 主路已命中的不重复计
+    existing.add(h.sessionId);
+    // 补充命中可信度低于主路：分数打五折 → 排在主路之后，但不至于垫底
+    merged.push({ ...h, score: h.score * 0.5, viaRewrite: true });
+  }
+  return merged.slice(0, limit);
 }

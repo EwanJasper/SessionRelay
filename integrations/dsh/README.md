@@ -157,7 +157,7 @@ bloat the history. Three ways to get it:
 
 | 途径 | 命令 | 需要联网 | 适合 |
 |---|---|---|---|
-| **Release asset** (easiest) | Download the `vendor-*.tar.gz` asset from [Releases](https://github.com/rui08984-dot/dsh-sessionrelay/releases) and extract it into this directory | No (one-time) | Anyone who just wants a working offline copy |
+| **Release asset** (easiest) | Download the `vendor-*.tar.gz` asset from [Releases](https://github.com/rui08984-dot/sessionrelay-eco/releases) and extract it into this directory | No (one-time) | Anyone who just wants a working offline copy |
 | 从 npm 拉取 | `node vendor-srelay.mjs` | 是 | 想要最新构建 |
 | 从本地已装副本复制 | `node vendor-srelay.mjs --from <path>` | 否 | 本机已有 srelay |
 

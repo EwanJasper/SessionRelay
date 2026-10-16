@@ -18,11 +18,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rui08984-dot/dsh-sessionrelay.git"
+    "url": "git+https://github.com/rui08984-dot/sessionrelay-eco.git"
   },
-  "homepage": "https://github.com/rui08984-dot/dsh-sessionrelay#readme",
+  "homepage": "https://github.com/rui08984-dot/sessionrelay-eco#readme",
   "bugs": {
-    "url": "https://github.com/rui08984-dot/dsh-sessionrelay/issues"
+    "url": "https://github.com/rui08984-dot/sessionrelay-eco/issues"
   },
   "author": "rui08984-dot",
   "engines": {

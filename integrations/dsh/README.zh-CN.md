@@ -70,7 +70,7 @@ dsh plugin --profile web add dsh-srelay-brief
 
 ```bash
 # 从 GitHub 安装（会现场装依赖）
-dsh plugin --profile web add https://github.com/rui08984-dot/dsh-sessionrelay
+dsh plugin --profile web add https://github.com/rui08984-dot/sessionrelay-eco
 ```
 
 **不需要预先安装 SessionRelay**——插件自带完整运行时，离线可用。
@@ -117,7 +117,7 @@ dsh plugin --profile web add https://github.com/rui08984-dot/dsh-sessionrelay
 
 | 途径 | 命令 | 需要联网 |
 |---|---|---|
-| **Release 资产**（最省事） | 从 [Releases](https://github.com/rui08984-dot/dsh-sessionrelay/releases) 下对应版本的 `vendor-*.tar.gz`，解压到本目录 | 否 |
+| **Release 资产**（最省事） | 从 [Releases](https://github.com/rui08984-dot/sessionrelay-eco/releases) 下对应版本的 `vendor-*.tar.gz`，解压到本目录 | 否 |
 | 从 npm 拉取 | `node vendor-srelay.mjs` | 是 |
 | 从本地已装副本复制 | `node vendor-srelay.mjs --from <path>` | 否 |
 
