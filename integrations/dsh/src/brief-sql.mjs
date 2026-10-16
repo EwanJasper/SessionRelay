@@ -66,6 +66,10 @@ function jsonArray(raw) {
 }
 
 /** 复刻 listDecisions + cmdDecisions 的 limit 语义（取最近 N 条，再倒序） */
+// 核心引擎（唯一判据来源）；拿不到就退化成"不折叠"，绝不自己抄判据
+let fold = null
+try { fold = await import('../vendor/dist/recall.js') } catch { fold = null }
+
 function queryDecisions(db, projectId, limit) {
   // [1015 夜 · 性能] 两处纯浪费，删掉**不改任何输出**（改前先量：主库 queryBriefData 17.1ms）：
   //   ① `topics` 被 SELECT 出来、被 JSON.parse、然后 `void topics` —— 一次都没用到；
@@ -122,7 +126,24 @@ function queryDecisions(db, projectId, limit) {
     if (pa !== pb) return pa - pb
     return String(a.at ?? '').localeCompare(String(b.at ?? ''))
   })
+  // ⚠️ 本函数是**数据通道**，输出必须与 `srelay decisions --json` 逐字段一致（8b 断言就在比这个）：
+  // 呈现层折叠**不能在这里做**——一折叠就与 CLI 原始列表分叉，且会把置顶代表顶掉。
+  // 折叠统一在渲染出口做，见 foldPresentation()。
   return out.slice(-limit).reverse()
+}
+
+/**
+ * 呈现层折叠（ADR-003 D3）：近重复只在"这一次显示"里合成一条，存储一条不动。
+ * 判据调**核心那一份**（foldNearDuplicates：二元组重叠 + 长度比门 + 置顶优先），
+ * 本文件不另写判据；拿不到核心就原样返回（宁可重复显示，也不让会误杀的旧前缀键回来）。
+ * 与渲染同址：两条取数通道（直查 SQL / CLI 兜底）都经由 itemsFromArray 调它 ⇒ 渲染结果一致。
+ */
+export function foldPresentation(items) {
+  if (!fold || !Array.isArray(items) || items.length < 2) return items
+  try {
+    const { rows } = fold.foldNearDuplicates(items, 0.8, fold.lengthRatioGate, { prefer: (d) => d.pinned === true })
+    return rows
+  } catch { return items }
 }
 
 /** 复刻 listUnresolved(pid, 100) + cmdUnresolved 的保质期与截断顺序 */

@@ -53,7 +53,7 @@ import { passesBriefFilters } from './src/brief-filters.mjs'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
 import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
-import { queryBriefData, sqlChannelAvailable, queryRecentFiles } from './src/brief-sql.mjs'
+import { queryBriefData, sqlChannelAvailable, queryRecentFiles, foldPresentation } from './src/brief-sql.mjs'
 import { experiencesLine } from './src/brief-experiences.mjs'
 import { decisionModulesText } from './src/brief-modules.mjs'
 import { passesUnresolvedFilters } from './src/brief-filters.mjs'
@@ -187,21 +187,12 @@ function itemsFromArray(arr, key, max) {
   //   "采用渐进式披露（Progressive Disclosure），平时只在上下文中注入描述信息…"
   // 40 字去重键抓不住（两句话第 31 字就分岔），二元组相似度也抓不住（Jaccard≈0.38）——
   // 它们是"语义相同、字面不同"，任何词法判据都不稳。
-  // 实测过的替代判据：**前 14 字前缀键**。在简报取数顺序的前 60 条里，
-  //   music 合并 3 组 7 条（逐条读过，全部是同一决策的不同写法：渐进式披露 / pwsh 拉取 / one-search MCP），
-  //   agent1super 合并 0 条。即"该合的合、不该合的不动"。
-  // 放在排序之后 = 保留最新那条（上面刚按时间倒序排完）。
-  const PrefKey = () => {
-    const seen = new Set()
-    return (d) => {
-      if (d.pinned === true) return true // 置顶豁免：用户显式留的东西不合并
-      const k = textOf(d).replace(/[\s，。！？、,.!?;；:：|｜`"']+/g, '').slice(0, 14)
-      if (!k || seen.has(k)) return false
-      seen.add(k)
-      return true
-    }
-  }
-  const deduped = fresh.filter(PrefKey())
+  // [1017] 判据来源换成**核心那一份**：foldNearDuplicates（二元组重叠 + 长度比门 + 置顶优先），
+  // 取代原先自建的"前 14 字前缀键"。病历：前缀键误杀过干净决策「采用 Vite 作为前端构建工具」，
+  // 留下 62 字粘连噪声（长度比 3.88）——判据只许有一份（铁律 1），所以这里不再自己写一套。
+  // 折叠就在此处（渲染出口）：两条取数通道都走 itemsFromArray ⇒ 渲染结果必然一致，
+  // 而各自的原始数据仍是 CLI 那套逐字段一致的数据（8b 的 parity 断言比的是数据通道）。
+  const deduped = foldPresentation(fresh)
   return deduped.slice(0, max).map((d) => {
     const text = clipAt(textOf(d), 90)
     // ADR-001：否定性决策加 ✗ 前缀。"改用 Y"与"采用 Y"此前在简报里长得一样，

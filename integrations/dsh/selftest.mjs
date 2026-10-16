@@ -329,10 +329,19 @@ console.log('=== 6a. cwd 优先：有 agent.session.header.cwd 时直接用，�
   // cwd 指向未建库目录 → uninitialized，不列其他项目
   // ⚠️ 这里原先写字面量 'C:\Users\crx\AppData\Local\Temp'，反斜杠被吃成
   // 'C:UserscrxAppDataLocalTemp'（不存在的路径）——断言照样过，但测的不是 Temp。
-  const asmUn = { agent: { id: 'y', session: { header: { cwd: 'C:\\Users\\crx\\AppData\\Local\\Temp' } } } }
+  // ⚠️ 夹具必须现场造、且造在**黑名单里**：原先写死 %TEMP% 字面量——而 1017 之前某次自测
+  // 真的在 %TEMP% 根上建过库（残留 relay.sqlite 168KB + 注册表一条 Temp 条目），"未建库"
+  // 这个前提被上一次运行改掉了，于是这条从此假红。现在造在 tmpdir 下的临时子目录：
+  // 真实存在（走 uninitialized 分支，不是"路径不存在"那种弱情形），又永远不可能被建库
+  // （isInternalDir 黑名单），前提不会被改。测完即删。
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const fxUn = mkdtempSync(join(tmpdir(), 'srelay-uninit-'))
+  const asmUn = { agent: { id: 'y', session: { header: { cwd: fxUn } } } }
   const v2 = sec2.text(asmUn)
   check('未建库 cwd → 提示尚未接入', v2.includes('尚未接入'))
   check('未建库 cwd → 不列其他项目', !v2.includes('候选'))
+  try { rmSync(fxUn, { recursive: true, force: true }) } catch {}
 
   // 无 cwd（诊断性 assembly）→ 回落 slug，不抛
   const v3 = sec2.text({})
@@ -764,7 +773,7 @@ console.log('=== 10a. 置顶的老决策能进简报（真实库，pin→验→u
   // ⚠️ 必须 fileURLToPath：HERE 是 file:// URL，直接 path.join 会拼出不存在的路径
   const CLI = fileURLToPath(new URL('./vendor/dist/srelay.js', import.meta.url));
   const { execFileSync } = await import('node:child_process')
-  const FRAG = '选择器改当前会话';   // 实测是 09-10 的决策，远超 48h 窗
+  let FRAG = '';   // 动态取（见下）；原先写死「选择器改当前会话」= 1017 病历
   // 无 vendor 的副本（integrations / headless）跑不了 pin 命令——必须 SKIP 而不是 FAIL，
   // 否则"缺 vendor"会被误报成"置顶功能坏了"（8b 的同款纪律）。
   if (!existsSync(CLI)) {
@@ -775,6 +784,20 @@ console.log('=== 10a. 置顶的老决策能进简报（真实库，pin→验→u
     catch (e) { return String(e?.stdout ?? '') + String(e?.stderr ?? '') }
   };
   try {
+    // ⚠️ FRAG 必须**动态取**：原先写死「选择器改当前会话」（注释称"实测是 09-10 的决策"），
+    // 而 1017 从原始会话重建 music 库后，抽取器产出的文本与重建前不同 —— pin 直接报
+    // "没有找到含…的决策"，于是"置顶坏了"连红三条（全是假红）。夹具靠现场数据，不靠历史。
+    const beforeAll = run(['decisions', '--json', '--limit', '200']);
+    {
+      const jd = (() => { try { return JSON.parse(beforeAll).decisions ?? [] } catch { return [] } })();
+      const cutoff = Date.now() - 48 * 3600 * 1000;
+      const olds = jd.filter((d) => typeof d.text === 'string' && d.text.trim().length >= 8
+        && Number.isFinite(Date.parse(d.at ?? '')) && Date.parse(d.at) < cutoff);
+      const pool = olds.length ? olds : jd;      // 优先真·老决策——本条测的正是"豁免 48h 窗"
+      const cand = pool.find((d) => typeof d.text === 'string' && d.text.trim().length >= 8);
+      FRAG = String(cand?.text ?? '').trim().slice(0, 14);
+    }
+    check('动态取到可置顶的决策片段（≥6 字）', FRAG.length >= 6);
     run(['unpin', FRAG]);   // 先确保干净起点
     const before = run(['decisions', '--json', '--limit', '200']);
     const wasPinned = /"pinned"\s*:\s*true/.test(before);

@@ -20,6 +20,21 @@ describe('呈现层折叠', () => {
     const out = foldNearDuplicates([r(noise, '2026-10-16'), r(clean, '2026-10-17')], 0.8, lengthRatioGate);
     expect(out.folded).toBe(0);                                   // 不许把干净的吞掉
   });
+  it('[1017 回归] prefer：置顶条目必须当代表（否则被更新的同组决策顶掉）', () => {
+    const old = { text: '选择器改当前会话', at: '2026-09-10', pinned: true };
+    const fresh = { text: '选择器改当前会话', at: '2026-10-17', pinned: false };
+    const out = foldNearDuplicates([fresh, old], 0.8, lengthRatioGate, { prefer: (d) => d.pinned === true });
+    expect(out.folded).toBe(1);
+    expect(out.rows[0]).toBe(old);          // 不是"最新的那条"，而是被置顶的那条
+    expect(out.rows[0].pinned).toBe(true);
+  });
+  it('prefer 不重排：代表放回本组首次出现的位置', () => {
+    const a = { text: '选择器改当前会话', at: '2026-09-10', pinned: true };
+    const b = { text: '别的决策', at: '2026-10-15' };
+    const c = { text: '选择器改当前会话', at: '2026-10-17' };
+    const out = foldNearDuplicates([a, b, c], 0.8, lengthRatioGate, { prefer: (d) => d.pinned === true });
+    expect(out.rows.map((x) => x.text)).toEqual(['选择器改当前会话', '别的决策']);
+  });
   it('空输入与单条不炸', () => {
     expect(foldNearDuplicates([], 0.8, lengthRatioGate).rows.length).toBe(0);
     expect(foldNearDuplicates([r('x', '2026-01-01')], 0.8, lengthRatioGate).rows.length).toBe(1);
