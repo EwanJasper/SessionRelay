@@ -5,6 +5,7 @@ import { pc } from './ui.js';
 import { openGlobal, addLesson, listLessons, searchLessons, maintainLessons, exportMarkdown, globalDbFile, liveImportance, type Grade, type Scope } from '../store/global.js';
 
 export interface LessonFlags {
+  since?: string; dry?: boolean;
   quote?: string; source?: string; route?: string; grade?: string; scope?: string;
   workspace?: string; domain?: string; status?: string; top?: string; json?: boolean;
 }
@@ -31,6 +32,17 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
       if (f.json) { console.log(JSON.stringify(rows)); return; }
       if (rows.length === 0) { console.log(pc.dim('没有相关经验。')); return; }
       for (const r of rows) console.log('  [' + r.scope + '|' + r.grade + '|' + Number(liveImportance(r)).toFixed(1) + '] ' + r.text);
+      return;
+    }
+    if (sub === 'harvest') {
+      const { runHarvest } = await import('./lesson-harvest.js');
+      const { requireRoot } = await import('./ui.js');
+      const { openRelayDb } = await import('./ui.js');
+      const root = requireRoot();
+      const pdb = openRelayDb(root);
+      try {
+        await runHarvest(db as never, pdb as never, ws, { days: Number(f.since || '14'), dry: !!f.dry, json: !!f.json });
+      } finally { pdb.close(); }
       return;
     }
     if (sub === 'maintain') {
