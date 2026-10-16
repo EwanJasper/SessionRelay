@@ -4,7 +4,26 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import os from 'node:os';
 import { isTransientRoot } from './registry.js';
+
+/**
+ * [1016] 「祖先目录不该被自动认领」的共用判据。
+ *
+ * 两个真实事故（同一根因，被两个不同测试各抓到一次）：
+ *   ① 在 %TEMP% 里 init → 一路向上走到 C:\Users\crx（主目录恰好有 .sessionrelay）⇒ 回说"已初始化"，当前目录一个字节没建；
+ *   ② 插件自测在 ~/srelay-inittool-* 里 init → 同样被 ~ 认领 ⇒ 建库断言全红。
+ *
+ * 判据：**主目录与临时目录都不算"项目祖先"** —— 它们下面的一切不可能都属于它们。
+ * 但**显式在它俩里面 init**（start === 该目录）仍然允许：那是明确意图，不是"顺路认领"。
+ */
+function isUnclaimableAncestor(start: string, dir: string): boolean {
+  if (dir === start) return false;
+  const d = path.resolve(dir).toLowerCase();
+  if (isTransientRoot(d)) return true;
+  const home = path.resolve(os.homedir()).toLowerCase();
+  return d === home;
+}
 
 export function findRelayRoot(startDir: string): string | null {
   const start = path.resolve(startDir);
@@ -14,7 +33,7 @@ export function findRelayRoot(startDir: string): string | null {
   if (isTransientRoot(start)) return existsSync(path.join(start, '.sessionrelay')) ? start : null;
   let dir = start;
   for (;;) {
-    if (existsSync(path.join(dir, '.sessionrelay'))) return dir;
+    if (existsSync(path.join(dir, '.sessionrelay')) && !isUnclaimableAncestor(start, dir)) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -38,7 +57,7 @@ export function inferProjectRoot(startDir: string): string {
   if (isTransientRoot(start)) return start;
   let dir = start;
   for (;;) {
-    if (existsSync(path.join(dir, '.sessionrelay')) || existsSync(path.join(dir, '.git'))) return dir;
+    if ((existsSync(path.join(dir, '.sessionrelay')) || existsSync(path.join(dir, '.git'))) && !isUnclaimableAncestor(start, dir)) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return start;
     dir = parent;
