@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   extractFiles, extractTopics, extractDecisions, extractQuestions,
   countCodeBlocks, extractMessages, summaryRule, extractKeyExchanges, stripInjected, looksInjected, isNegativeDecision,
-  extractEnvFacts, extractCorrections, sanitizeMsgs, stripInjected, stripMnemeMemory, quotesBalanced, type Msg,
+  extractEnvFacts, extractCorrections, sanitizeMsgs, stripInjected, stripMnemeMemory, quotesBalanced, isLikelyFile, type Msg,
 } from '../../src/core/extract/extract.js';
 
 const msg = (role: 'user' | 'assistant', content: string, seq = 1): Msg =>
@@ -19,6 +19,23 @@ describe('P2 · files 提取', () => {
     const many = Array.from({ length: 40 }, (_, i) => `file${i}.ts`).join(' ');
     expect(extractFiles([many]).length).toBeLessThanOrEqual(20);
   });
+
+  // [v20] 病历：抽取判据 v17 就修对了，但**存量数据不会自己变干净** ——
+  // 实测全库 5,478 条文件条目里 951 条（17%）没有扩展名，一直挂在"最近在动的文件"上。
+  // 清理工具要靠同一个判据去过滤存量，所以这里锁住"什么算文件"这一个定义。
+  it('[v20] isLikelyFile：斜杠命令/JSON 键串/目录都不算文件', () => {
+    expect(isLikelyFile('/kill')).toBe(false);                       // 斜杠命令
+    expect(isLikelyFile('/before/after/scriptPath/langFragment/issues')).toBe(false); // 注入载荷键串
+    expect(isLikelyFile('/task-id')).toBe(false);
+    expect(isLikelyFile('E:/music')).toBe(false);                    // 目录
+    expect(isLikelyFile('node_modules/react/index.js')).toBe(false);  // 噪声目录
+    expect(isLikelyFile('src/store/db.ts')).toBe(true);
+    expect(isLikelyFile('D:\\src\\a\\b.py')).toBe(true);
+  });
+
+  it('[v20] extractFiles 不吃斜杠命令与键串', () => {
+    expect(extractFiles(['/kill /status /task-id /tool-use-id 看看 src/a.ts'])).toEqual(['src/a.ts']);
+  });
 });
 
 describe('P2 · topics 提取', () => {
@@ -31,6 +48,17 @@ describe('P2 · topics 提取', () => {
     expect(topics[0]).toBe('索引'); // 用户双倍权重 + 频次
     expect(topics).toContain('数据库');
     expect(topics).not.toContain('怎么'); // 停用词
+  });
+
+  // [v20] 面板评审一眼抓到的可信度问题：话题榜上排着 if×143 / check×91 / ask×71 / what×39 / let×35。
+  // 一个本地记忆面板的招牌指标写着 if，读者会当场不信任整套数据 —— 英文虚词必须挡在门外。
+  it('[v20] 英文虚词与任务态词不进话题榜', () => {
+    const msgs = [msg('user', 'if if if what what let let ask check pending completed 索引 索引')];
+    const topics = extractTopics(msgs);
+    for (const w of ['if', 'what', 'let', 'ask', 'check', 'pending', 'completed']) {
+      expect(topics, w + ' 是噪声，不该进话题榜').not.toContain(w);
+    }
+    expect(topics).toContain('索引');
   });
 });
 

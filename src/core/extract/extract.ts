@@ -41,6 +41,26 @@ const PATH_RE = new RegExp(
 
 const FILE_NOISE = /^(?:v\d+\.\d+.*|\d+\.\d+.*|node_modules.*)$/
 
+/**
+ * [v20] **"这条算不算文件"的唯一判据** —— 路径最后一段必须带白名单扩展名（+ 长度/噪声过滤）。
+ *
+ * 为什么要单独导出一个函数：v17 把 PATH_RE 修对了（必须"文件名+扩展名"），但**库里已有的旧数据
+ * 不会自己变干净**。实测全部项目库合计 **5,478 条文件条目里 951 条（17%）没有扩展名**：
+ * `/kill`（斜杠命令）、`/before/after/scriptPath/langFragment/issues`（注入载荷 JSON 键串）、
+ * `/task-id`、`/status`、`E:/music`（目录）。它们一直挂在"最近在动的文件"这一列上。
+ *
+ * 归档会话正文已蒸发、重算吃不到，只能用**同一份判据**去过滤存量数组 —— 抽取与清理共用一个函数，
+ * 免得"抽取说不是文件、清理说留着"这种两套判据的老问题重演。
+ */
+export function isLikelyFile(p: string): boolean {
+  const s = String(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (s.length < 4 || s.length > 160) return false;
+  const base = s.split('/').pop() ?? '';
+  if (base.length > 64) return false;
+  if (FILE_NOISE.test(s)) return false;
+  return new RegExp('\\.(?:' + FILE_EXT + ')$', 'i').test(base);
+}
+
 export function extractFiles(texts: string[]): string[] {
   const out = new Set<string>()
   for (const raw of texts) {
@@ -48,10 +68,8 @@ export function extractFiles(texts: string[]): string[] {
     const t = String(raw).replace(/https?:\/\/\S+/g, ' ')
     for (const m of t.match(PATH_RE) ?? []) {
       const p = m.replace(/\\/g, '/').replace(/\/+$/, '')
-      if (p.length < 4 || p.length > 160 || FILE_NOISE.test(p)) continue
-      // ② 文件名段（最后一段）不许过长——实测能滤掉"把结论回写到使用速查.md"这类句子残片
-      const base = p.split('/').pop() ?? ''
-      if (base.length > 64) continue
+      // ② 统一判据（扩展名白名单 + 长度 + 噪声）——与存量清理工具共用同一个函数
+      if (!isLikelyFile(p)) continue
       out.add(p)
       if (out.size >= 20) return [...out]
     }
@@ -67,6 +85,21 @@ const STOPWORDS = new Set([
   '上面', '下面', '直接', '基本', '时候', '地方', '东西', '问题', '方案', '看看', '出来',
   'the', 'a', 'an', 'is', 'are', 'to', 'for', 'of', 'and', 'or', 'in', 'on', 'with',
   'this', 'that', 'you', 'i', 'we', 'it', 'be', 'as', 'at', 'by', 'from', 'not', 'will',
+  // [v20] 英文虚词/高频动词 —— 实测泄漏进话题榜：if×143、check×91、ask×71、what×39、let×35
+  // （面板评审时被一眼抓住："一个本地记忆面板的招牌指标写着 if，会让人当场不信任整套数据"）
+  'if', 'else', 'then', 'than', 'when', 'where', 'which', 'who', 'whom', 'whose', 'why', 'how',
+  'what', 'let', 'ask', 'check', 'see', 'look', 'tell', 'know', 'say', 'said', 'get', 'got',
+  'make', 'made', 'use', 'used', 'using', 'need', 'want', 'can', 'could', 'would', 'should',
+  'may', 'might', 'must', 'have', 'has', 'had', 'do', 'does', 'did', 'done', 'there', 'here',
+  'them', 'their', 'our', 'your', 'his', 'her', 'its', 'but', 'so', 'no', 'yes', 'ok', 'okay',
+  'just', 'also', 'only', 'more', 'most', 'much', 'many', 'some', 'any', 'all', 'one', 'two',
+  'first', 'last', 'next', 'new', 'old', 'good', 'bad', 'big', 'small', 'now', 'still', 'even',
+  // 任务态词：它们是看板状态，不是"话题"
+  'pending', 'completed', 'complete', 'todo', 'doing', 'blocked', 'cancelled', 'canceled', 'in_progress',
+  // 补第二轮（v20 补刀后实测残留：me×47、working×38、consider×31、没有×51）
+  'me', 'my', 'mine', 'working', 'work', 'consider', 'actually', 'really', 'thing', 'things', 'way',
+  'kind', 'sort', 'bit', 'lot', 'sure', 'okay', 'yep', 'yeah', 'nope', 'well', 'right', 'wrong',
+  '没有', '不是', '就是', '一下', '什么样', '怎么样', '为什么',
 ]);
 
 /**
@@ -101,11 +134,22 @@ export function isSystemToken(t: string): boolean {
   return segs.every((x) => SYSTEM_SEGMENTS.has(x) || /^\d+$/.test(x));
 }
 
+/**
+ * **一个 token 该不该出现在话题榜** —— 抽取与存量清理共用的唯一判据。
+ *
+ * 为什么要单独导出：和 files 那边同一个教训 —— 判据修好了，**库里已有的旧 topics 不会自己变干净**。
+ * 归档会话正文已蒸发、重算吃不到，只能拿同一份判据去过滤存量（tools/ses-fix-topics.mjs）。
+ * 实测（v20 补刀前）：归档行里还留着 `if`、`check`、`ask`、`what` 这些英文虚词。
+ */
+export function isTopicNoise(t: string): boolean {
+  return t.length < 2 || STOPWORDS.has(t) || /^\d+$/.test(t) || isSystemToken(t);
+}
+
 export function extractTopics(msgs: Msg[]): string[] {
   const freq = new Map<string, number>();
   for (const m of msgs) {
     for (const t of segment(m.content, { keepSingles: false })) {
-      if (t.length < 2 || STOPWORDS.has(t) || /^\d+$/.test(t) || isSystemToken(t)) continue;
+      if (isTopicNoise(t)) continue;
       freq.set(t, (freq.get(t) ?? 0) + (m.role === 'user' ? 2 : 1));
     }
   }

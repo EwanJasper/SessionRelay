@@ -9,4 +9,4 @@
 // ⚠️ 完整变更史（每一条都是实测驱动，别只改数字）在 src/capture/recompute.ts 顶部注释里，
 //    那是唯一权威；本文件只放常量，避免两处各写一份导致漂移。
 
-export const EXTRACT_VERSION = 19;
+export const EXTRACT_VERSION = 20;

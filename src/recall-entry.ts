@@ -23,7 +23,7 @@ export { globalDbFile } from './store/global.js';
 // [B3] 一次性探针会话的判据（SQL 片段）—— 适配器/守门要能拿到**同一份口径**，别各写一套
 export { PROBE_SQL, PROBE_MAX_MESSAGES, countProbeSessions } from './store/db.js';
 // [B4] harness 记账 token 判据（topics 清洗用；工具与核心库共用同一份词表）
-export { isSystemToken } from './core/extract/extract.js';
+export { isSystemToken, isLikelyFile, isTopicNoise } from './core/extract/extract.js';
 // [B4] 清 topics 时 meta_text 必须**按原规重算**（title+topics 的索引文本）；
 // 导出核心库这两个函数，工具才不会自己拼一份（拼错=把搜索面写坏）。
 export { metaTextOf, searchTextOf } from './store/db.js';
