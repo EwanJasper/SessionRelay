@@ -444,4 +444,17 @@ program
   .option('--json')
   .action(async (f) => { const { cmdArchive } = await import('../cli/archive.js'); await cmdArchive(f); });
 
+program
+  .command('lesson [sub] [text...]')
+  .description('全局经验层：add / list / search / maintain / export（跨项目，独立于各项目记忆库）')
+  .option('--source <ref>', '出处（消息 id / 文件:行 / 会话 id）——给了它才配得上非 inferred 定级')
+  .option('--quote <text>', '原文引用（可回指）')
+  .option('--grade <g>', 'verified-tool | verified-user | verified-file | inferred（默认 inferred）')
+  .option('--scope <s>', 'project（默认）| domain | global')
+  .option('--domain <d>', '领域标签（scope=domain 必填）')
+  .option('--workspace <w>', '工作区标识（默认取当前目录）')
+  .option('--status <st>', 'draft | verified | retired')
+  .option('--top <n>')
+  .option('--json')
+  .action(async (sub, text, f) => { const { cmdLesson } = await import('../cli/lesson.js'); await cmdLesson(sub, text ?? [], f); });
 program.parseAsync(process.argv);
