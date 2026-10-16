@@ -14,12 +14,20 @@ import { semanticCacheDir, readSemanticStatus, recordSemantic } from './semantic
 
 export const DEFAULT_MODEL = 'Xenova/bge-small-zh-v1.5';
 export const DEFAULT_THRESHOLD = 0.4;
-export const SEMANTIC_TOP_K = 5; // R4：写死，语义错配限量防线
+/** 语义候选上限的**默认值**（可被 config.semantic.top_k 覆盖，见 semanticTopKOf）。
+ *  R4 原设计是写死当「语义错配限量防线」；[1017 夜] 改成可配 —— 参数扫描要求它能被单变量地改。 */
+export const SEMANTIC_TOP_K = 5;
 const MAX_INPUT_CHARS = 1200;    // R6：bge max_seq 512 token ≈ 中文 500 字，双侧截断
+
+/** transformers.js 认得的量化档（写错就是静默按别的档加载，所以只认这张表） */
+export const KNOWN_DTYPES = ['fp32', 'fp16', 'q8', 'int8', 'uint8', 'q4', 'q4f16', 'bnb4'] as const;
+export type Dtype = typeof KNOWN_DTYPES[number];
 
 export interface Embedder {
   model: string;
   dim: number;
+  /** 检索侧查询前缀（文档侧不加）。非对称嵌入模型靠它把查询与文档放进同一子空间 */
+  queryPrefix?: string;
   embed(text: string): Promise<Float32Array>; // 实现负责 L2 归一化（R2）
 }
 
@@ -58,25 +66,61 @@ export function resolveTransformersEntry(): string | null {
   try {
     const base = semanticCacheDir();
     const req = createRequire(path.join(base, 'noop.js'));
-    return req.resolve('@huggingface/transformers', { paths: [base] });
+    const hit = req.resolve('@huggingface/transformers', { paths: [base] });
+    return preferEsmEntry(hit);
   } catch {
     return null;
   }
 }
 
-let transformersPipeline: ((t: string, m: string, o?: Record<string, unknown>) => Promise<(input: string[], o: Record<string, unknown>) => Promise<Float32Array[][]>>) | null = null;
+/**
+ * ⚠️ [1017 夜 · 真故障] `require.resolve` 走的是 package.json 的 **require 条件** ⇒ 拿到的是
+ * `dist/transformers.node.cjs`。而我们随后用 `import()` 加载它 —— 对一个 CJS 文件做动态 import，
+ * 具名导出要靠 cjs-module-lexer 静态识别；实测 @huggingface/transformers@3.8.1 的 `.cjs` 是打包产物，
+ * **`mod.pipeline` 是 undefined**，于是 `pipe is not a function`。
+ *
+ * 症状的恶劣之处：**只有真跑 CLI/守护时才会现形**（走 tsx 的开发态按 import 条件解析到 .mjs，一切正常），
+ * 而失败又被 getEmbedder 吞成「模型暂不可用」，用户看到的是「语义档开了但没效果」。
+ * 修法两层：① 解析时优先换到 ESM 入口（.mjs）；② 加载后**同时认具名导出与 default 上的导出**，
+ * 两层都拿不到就**抛**（不许再退回 null —— 那是静默降级）。
+ */
+function preferEsmEntry(hit: string): string {
+  if (!hit.endsWith('.cjs')) return hit;
+  const mjs = hit.slice(0, -4) + '.mjs';
+  try { return fs.existsSync(mjs) ? mjs : hit; } catch { return hit; }
+}
 
-async function getPipeline(model: string) {
+/** 从模块命名空间里取 pipeline：ESM 具名导出优先，其次 default（CJS interop） */
+export function pipelineOf(mod: unknown): PipelineFn | null {
+  const m = mod as { pipeline?: unknown; default?: { pipeline?: unknown } };
+  const cand = [m?.pipeline, m?.default?.pipeline];
+  for (const c of cand) if (typeof c === 'function') return c as PipelineFn;
+  return null;
+}
+
+/** transformers.js 的 pipeline 工厂签名（只用到 feature-extraction 这一档） */
+type PipelineFn = (task: string, model: string, opts?: Record<string, unknown>) => Promise<
+  (input: string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array | number[] }>>;
+let transformersPipeline: PipelineFn | null = null;
+
+async function getPipeline(model: string): Promise<PipelineFn> {
   if (transformersPipeline) return transformersPipeline;
   const entry = resolveTransformersEntry();
   if (!entry) throw new Error('transformers.js 未安装（srelay semantic enable 安装，或 npm i --prefix ~/.sessionrelay/semantic @huggingface/transformers）');
   const mod = (await import(pathToFileURL(entry).href)) as {
-    pipeline: (t: string, m: string, o?: Record<string, unknown>) => Promise<(input: string[], o: Record<string, unknown>) => Promise<Float32Array[][]>>;
-    env?: { allowRemoteModels?: boolean; remoteHost?: string };
+    env?: { allowRemoteModels?: boolean; remoteHost?: string; cacheDir?: string };
+    default?: { env?: { allowRemoteModels?: boolean; remoteHost?: string; cacheDir?: string } };
   };
   // 国内镜像（transformers.js env；HF_ENDPOINT 由用户 shell 提供时透传）
-  if (mod.env && process.env.HF_ENDPOINT) mod.env.remoteHost = process.env.HF_ENDPOINT;
-  transformersPipeline = mod.pipeline;
+  const env = mod.env ?? mod.default?.env;
+  if (env && process.env.HF_ENDPOINT) env.remoteHost = process.env.HF_ENDPOINT;
+  const pipe = pipelineOf(mod);
+  if (!pipe) {
+    throw new Error('transformers.js 加载成功但取不到 pipeline（入口 ' + entry + '）—— '
+      + '典型成因：解析到了 CJS 产物而具名导出没被识别（1017 实测的 `pipe is not a function`）。'
+      + '这条**必须**报出来，不许静默降级：否则语义档会一直「开着但没效果」。');
+  }
+  transformersPipeline = pipe;
   return transformersPipeline;
 }
 
@@ -88,11 +132,27 @@ async function getPipeline(model: string) {
 // 装载成功、检索返回结果、分数看着正常，内容全错 —— 正是"看起来在工作"的一号故障模式。
 //
 // 判据：认识的模型用档案；**不认识的模型直接拒绝**（报错→降级纯 FTS），不再默默按 cls 跑。
-export interface ModelProfile { pooling: 'cls' | 'mean' | 'last_token'; dim: number; dtype: string }
+/** BGE 中文系列的官方检索指令前缀（模型卡原文）；文档侧**不加** */
+export const BGE_ZH_QUERY_PREFIX = '为这个句子生成表示以用于检索相关文章：';
+
+export interface ModelProfile {
+  pooling: 'cls' | 'mean' | 'last_token';
+  dim: number;
+  dtype: string;
+  /**
+   * 检索侧的**查询指令前缀**。
+   *
+   * ⚠️ [1017 夜 · 实测发现] BGE 中文系列是**非对称**模型：官方用法要求给**查询**加一句指令
+   * （「为这个句子生成表示以用于检索相关文章：」），文档侧不加。不加前缀时查询与文档落在
+   * 两个不同的子空间里，余弦整体偏低且区分度变差 —— 表现就是「语义臂跑了但一条都没救回来」。
+   * 这条以前完全没做（代码里既没有前缀、档案里也没有这个字段）。
+   */
+  queryPrefix?: string;
+}
 
 export const MODEL_PROFILES: Record<string, ModelProfile> = {
   // 默认档：24M/512 维/MIT，q8 ONNX 约 22.9MB（C-MTEB 58.28，见调研件 §2）
-  'Xenova/bge-small-zh-v1.5': { pooling: 'cls', dim: 512, dtype: 'q8' },
+  'Xenova/bge-small-zh-v1.5': { pooling: 'cls', dim: 512, dtype: 'q8', queryPrefix: BGE_ZH_QUERY_PREFIX },
 };
 
 /** 按模型名推断档案。**认不出返回 null** —— 调用方据此拒绝，不猜。 */
@@ -100,26 +160,29 @@ export function profileOf(model: string): ModelProfile | null {
   const hit = MODEL_PROFILES[model];
   if (hit) return hit;
   // 家族兜底：只对"公知且稳定"的族做推断，且都按 cls（bge 全系都是 cls）。
-  if (/bge-small-zh/i.test(model)) return { pooling: 'cls', dim: 512, dtype: 'q8' };
-  if (/bge-base-zh/i.test(model)) return { pooling: 'cls', dim: 768, dtype: 'q8' };
-  if (/bge-large-zh/i.test(model)) return { pooling: 'cls', dim: 1024, dtype: 'q8' };
+  if (/bge-small-zh/i.test(model)) return { pooling: 'cls', dim: 512, dtype: 'q8', queryPrefix: BGE_ZH_QUERY_PREFIX };
+  if (/bge-base-zh/i.test(model)) return { pooling: 'cls', dim: 768, dtype: 'q8', queryPrefix: BGE_ZH_QUERY_PREFIX };
+  if (/bge-large-zh/i.test(model)) return { pooling: 'cls', dim: 1024, dtype: 'q8', queryPrefix: BGE_ZH_QUERY_PREFIX };
   if (/bge-m3/i.test(model)) return { pooling: 'cls', dim: 1024, dtype: 'q8' };
   // Qwen3-Embedding 官方用法是**最后一个 token**的隐状态（last_token），不是 cls —— 这条推错就是垃圾向量。
   if (/qwen3-embedding/i.test(model)) return { pooling: 'last_token', dim: 1024, dtype: 'q8' };
   return null;
 }
 
-export async function createTransformersEmbedder(model: string): Promise<Embedder> {
+export async function createTransformersEmbedder(model: string, override?: { dtype?: string }): Promise<Embedder> {
   const prof = profileOf(model);
   if (!prof) {
     throw new Error('未知模型档案：' + model + ' —— 它的 pooling/维度/量化档没有登记，按默认 cls 跑会**静默产出垃圾向量**。'
       + '请先在 core/SessionRelay/src/search-svc/semantic.ts 的 MODEL_PROFILES 里登记（pooling 与维度查该模型官方用法）。');
   }
+  const dtype = override?.dtype ?? prof.dtype;
+  if (!(KNOWN_DTYPES as readonly string[]).includes(dtype)) throw new Error('未知量化档：' + dtype);
   const pipe = await getPipeline(model);
-  const extractor = await pipe('feature-extraction', model, { dtype: prof.dtype });
+  const extractor = await pipe('feature-extraction', model, { dtype });
   return {
     model,
     dim: prof.dim,
+    queryPrefix: prof.queryPrefix,
     async embed(text: string): Promise<Float32Array> {
       // transformers.js v3：pipeline 返回 Tensor（.data 为扁平 Float32Array，单输入 shape [1, dim]）
       // normalized 选项实测未生效（分数呈点积量级）→ 按设计 R2 在此强制 L2，保证余弦阈值可比
@@ -168,6 +231,28 @@ export function semanticModelOf(cfg: RelayConfig): string {
 }
 
 /**
+ * 语义候选上限 top-k（默认 SEMANTIC_TOP_K=5，可被 config.semantic.top_k 覆盖）。
+ *
+ * 为什么要可配：top-k 与 reserve_slots 是**两套限量**（一个决定候选池、一个决定进名额几条），
+ * 参数扫描时必须能单独动其中一个，否则归因不可解（调研件 §4.3 R3）。
+ * 上限 50：再大对「注入几条」没有任何影响（reserve 早就截断了），只是白算余弦。
+ */
+export function semanticTopKOf(cfg: RelayConfig): number {
+  const k = Number(cfg.semantic?.top_k ?? SEMANTIC_TOP_K);
+  return Number.isFinite(k) && k > 0 ? Math.min(Math.floor(k), 50) : SEMANTIC_TOP_K;
+}
+
+/** 量化档：模型档案给默认值，config.semantic.dtype 可覆盖（只认 KNOWN_DTYPES，写错当场报） */
+export function dtypeOf(cfg: RelayConfig, prof: ModelProfile): string {
+  const want = cfg.semantic?.dtype;
+  if (!want) return prof.dtype;
+  if (!(KNOWN_DTYPES as readonly string[]).includes(want)) {
+    throw new Error('未知量化档：' + want + ' —— 只认 ' + KNOWN_DTYPES.join('/') + '（写错的代价是静默按别的档加载）');
+  }
+  return want;
+}
+
+/**
  * 取 embedder（惰性装载 + 空闲卸载）。
  *
  * ⚠️ [1017 夜] 失败**不再静默**：以前这里是 `catch { return null }`，于是"启用了但装载失败"
@@ -186,7 +271,7 @@ export async function getEmbedder(cfg: RelayConfig): Promise<Embedder | null> {
   }
   if (cachedEmbedder && cachedEmbedder.model !== model) unloadSemantic('swap');   // 换模型：先释放旧的
   try {
-    const e = await createTransformersEmbedder(model);
+    const e = await createTransformersEmbedder(model, { dtype: dtypeOf(cfg, profileOf(model)!) });
     cachedEmbedder = { model, e };
     touchIdleTimer(cfg);
     recordSemantic({ state: 'ready', model, usedAt: new Date().toISOString(), by: 'getEmbedder' });
@@ -233,7 +318,8 @@ export async function semanticSearch(
   const embedder = await getEmbedder(cfg);
   if (!embedder || !query.trim()) return null;
   try {
-    const qv = await embedder.embed(query);
+      // 检索侧套指令前缀（BGE 中文系列是非对称模型，不加前缀 = 查询与文档不在同一子空间）
+    const qv = await embedder.embed((embedder.queryPrefix ?? '') + query);
     const threshold = opts.threshold ?? cfg.semantic?.threshold ?? DEFAULT_THRESHOLD;
     // 候选：scope/A 档 SQL 过滤后的 confirmed 会话（与 FTS 同一过滤面）
     const conds = ["s.project_id = ?", "s.state = 'confirmed'"];
@@ -250,9 +336,16 @@ export async function semanticSearch(
       if (d >= threshold) scored.push({ sessionId: id, score: d });
     }
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, SEMANTIC_TOP_K);
-  } catch {
-    return null; // R3：推理任何异常 → 降级
+    return scored.slice(0, semanticTopKOf(cfg));
+  } catch (e) {
+    // [1017 夜] 这里原先也是**静默**的（catch 里直接 return null）。它跟 getEmbedder 的失败不是同一类：
+    // 那是「装载不了」，这是「装载好了、推理那一刻炸了」（模型文件损坏/内存不足/超长输入）。
+    // 两条路都必须留痕 —— 否则用户看到的现象只有一个：「语义好像没效果」（铁律：容错不许静默）。
+    recordSemantic({
+      state: 'failed', model: embedder.model, by: 'semanticSearch',
+      error: '语义推理失败：' + String((e as Error)?.message ?? e).slice(0, 300),
+    });
+    return null; // R3：降级纯 FTS —— 但这次**留下了证据**
   }
 }
 
@@ -289,9 +382,19 @@ export async function digestSemantic(db: DB, cfg: RelayConfig, opts: { projectId
         SELECT
           (SELECT title FROM sessions WHERE id = ?) AS t,
           (SELECT group_concat(substr(content, 1, 200), ' ') FROM
-            (SELECT content FROM messages WHERE session_id = ? ORDER BY seq_num LIMIT 30)) AS body
-      `).get(t.id, t.id) as { t: string | null; body: string | null };
-      const vec = await embedder.embed(semanticInputOf(row.t, row.body ?? ''));
+            (SELECT content FROM messages WHERE session_id = ? ORDER BY seq_num LIMIT 30)) AS head,
+          (SELECT group_concat(substr(content, 1, 200), ' ') FROM
+            (SELECT content FROM messages WHERE session_id = ? ORDER BY seq_num DESC LIMIT 30)) AS tail,
+          (SELECT COUNT(*) FROM messages WHERE session_id = ?) AS n
+      `).get(t.id, t.id, t.id, t.id) as { t: string | null; head: string | null; tail: string | null; n: number };
+      // [1017 夜 · 实测修复] 原先只嵌 title + **前 30 条**消息。对 600~2400 条消息的长会话，
+      // 这等于用开头的寒暄代表整个会话 —— 实测：题面词落在前 30 条内时语义 hit@1 4.6%，
+      // 落在 30 条之后时 **0.0%**（n=300）。长会话的向量与它自己的后段内容**根本不相关**。
+      // 修法：头 30 条 + **尾 30 条**（近期结论通常在后段），再按 MAX_INPUT_CHARS 截断。
+      // 实测（同一批 300 题）：hit@1 8.0% → 9.3%（方向一致，但 1.3pp 在 n=300 下**不显著**，
+      // 所以这条是按"原实现明显不对"改的，不是按"分数涨了"改的）。
+      const body = [row.head ?? '', row.tail ?? ''].filter(Boolean).join(' ');
+      const vec = await embedder.embed(semanticInputOf(row.t, body));
       upsertSessionVector(db, t.id, embedder.model, vec);
       failedSkip.delete(t.id); // 曾失败后成功 → 解除跳过
       embedded++;

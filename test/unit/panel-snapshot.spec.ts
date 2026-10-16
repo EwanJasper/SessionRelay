@@ -106,7 +106,16 @@ describe('面板 · 设置旋钮', () => {
     const v = panelConfigView(root);
     expect(v.knobs.length).toBe(KNOB_SPECS.length);
     expect(v.knobs.every((k) => k.source === 'default')).toBe(true);
-    for (const k of KNOB_SPECS) expect(validateKnob(k.path, k.type === 'number' ? 1 : k.type === 'boolean' ? true : k.type === 'string-list' ? [] : k.options ? k.options[0] : 'x'), k.path).toBeNull();
+    // 通用合法值必须落在**每个旋钮自己的区间内**：早先这里写死 1，于是任何 min>1 的旋钮
+    // （如 L3 的 compress.min_cluster，min=2）都会假红。不是把 min 放宽（那会失去防护），
+    // 而是让探测值跟着旋钮走。
+    const legalValue = (k: typeof KNOB_SPECS[number]) => {
+      if (k.type === 'boolean') return true;
+      if (k.type === 'string-list') return [];
+      if (k.type === 'number') return Math.min(Math.max(1, k.min ?? 1), k.max ?? Number.MAX_SAFE_INTEGER);
+      return k.options ? k.options[0] : 'x';
+    };
+    for (const k of KNOB_SPECS) expect(validateKnob(k.path, legalValue(k)), k.path).toBeNull();
   });
   it('校验是唯一入口：越界 / 未知旋钮 / 类型错都拒绝', () => {
     expect(validateKnob('archive.hot_days', 9999)).toContain('不能大于');

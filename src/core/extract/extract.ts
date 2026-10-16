@@ -476,6 +476,74 @@ function normalizeQuestion(q: string): string {
   return t.trim() || q
 }
 
+// ── [1017 夜 · U-A 真根治] 「这句后来被回答了吗」 ──
+//
+// 病历（docs/research/2026-10-18-U-A未决段处置调研.md §2.5，实测）：
+//   被标 unresolved 的 7 条，其后各有 **305~524 条 assistant 消息** —— 7/7 全被答过。
+//   原因不是"判得不准"，是**根本没有这一维**：原判据只有
+//     unresolved = tailAsked（位置靠后）|| UNRESOLVED_HINT（关键词命中）
+//   于是"未决"与"未答"在实测上不相关。
+//
+// 判据设计（三条纪律）：
+//   ① **只看问题之后的 assistant 消息**（之前的回复不算回答）—— 顺序在 msgs 里，不需要时间戳；
+//   ② 命中判据用"实词重叠"，且必须**同时**满足：与问题共享 ≥2 个实词（共享 1 个在中文里太容易偶然命中）；
+//   ③ **宁可判"未答"也不误判"答过"**：判"答过"= 这条不再进未决段（漏掉真问题的代价更高），
+//      所以窗口只取问题之后**前 N 条**回复（真回答通常紧跟其后），且 N 给小值。
+//
+// ⚠️ 它是**抽取期**判据，与显示期的四条过滤器是两层：这里决定"算不算未决"，
+//    过滤器决定"值不值得显示"。调研件 §5 明确：病根在这一层，过滤器没坏别动。
+
+/** 回答检测的窗口：问题之后最多看多少条 assistant 消息 */
+const ANSWER_LOOKAHEAD = 12;
+/** 共享实词数下限（1 太松：中文里单个词偶然重合很常见） */
+const ANSWER_MIN_SHARED = 2;
+
+/**
+ * 从文本里取"实词"。
+ *
+ * ⚠️ 必须走**项目自己的分词器**（segment），不能自己写字符级切分：
+ *   第一版按 [\u4e00-\u9fff]{2,6} 贪婪切，把"量化档位到底应该怎么选"切成一个 6 字块，
+ *   而回答里的"量化档位"只切出 4 字块 —— 两边词表根本对不上，实测集成用例直接判错。
+ *   分词器是**索引与查询共用的唯一实现**（tokenizer.ts 开头的铁律），这里必须同源。
+ */
+function contentWords(text: string): Set<string> {
+  const out = new Set<string>();
+  try {
+    for (const t of segment(String(text || ''), { keepSingles: false })) {
+      if (t.length >= 2) out.add(t);
+    }
+  } catch { /* 分词器不可用（极端情况）→ 退化为空集 = 判"未答"，与"宁缺勿滥"一致 */ }
+  return out;
+}
+
+/** 这句话像不像"又被问了一遍"（而不是回答） */
+function looksLikeQuestion(s: string): boolean {
+  return /[？?]\s*$/.test(s) || Q_HINT.test(s);
+}
+
+/**
+ * 问题 q 在其后窗口内是否被回答过。
+ *
+ * @param msgs    整个会话的消息（按 seq 升序）
+ * @param askIdx  问题所在消息的下标
+ * @param q       问题文本
+ */
+export function wasAnswered(msgs: Msg[], askIdx: number, q: string): boolean {
+  const qw = contentWords(q);
+  if (qw.size === 0) return false;
+  let seen = 0;
+  for (let i = askIdx + 1; i < msgs.length && seen < ANSWER_LOOKAHEAD; i++) {
+    if (msgs[i].role !== 'assistant') continue;
+    seen++;
+    // 只取前 1500 字：回答通常在开头就给结论，全文扫会把"顺带提一句"也算成回答
+    const head = String(msgs[i].content || '').slice(0, 1500);
+    const aw = contentWords(head);
+    let shared = 0;
+    for (const w of qw) if (aw.has(w)) { shared++; if (shared >= ANSWER_MIN_SHARED) return true; }
+  }
+  return false;
+}
+
 export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
   const total = msgs.length;
   const out: ExtractedMeta['questions'] = [];
@@ -507,7 +575,10 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
         q: qText,
         seq: m.seqNum,
         at: m.createdAt ?? undefined,
-        unresolved: tailAsked || UNRESOLVED_HINT.test(s),
+        // [1017 夜 · U-A 真根治] 加第三维：**这句后来被回答了吗**。
+        // 原判据（位置 ∨ 关键词）实测与「未答」不相关（7/7 都被答过，其后 305~524 条 assistant）。
+        // 现在：位置/关键词只决定「候选」，是否真未决由 wasAnswered 复核。
+        unresolved: (tailAsked || UNRESOLVED_HINT.test(s)) && !wasAnswered(msgs, idx, s),
       });
       if (out.length >= 10) return;
     }

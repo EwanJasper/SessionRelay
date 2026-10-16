@@ -74,7 +74,19 @@ program
   .option('--disable', '停用（向量数据保留，检索立即回退纯字面匹配）')
   .option('--status', '状态（默认）')
   .option('--test <query>', '对比模式：FTS-only vs 融合命中')
+  .option('--backfill', '只补嵌存量会话（已启用时用；不改开关、不装依赖）')
+  .option('--reembed', '把已有向量作废重算（换了嵌入口径后必须走它，否则旧向量会一直骗人）')
   .action(async (f) => { const { cmdSemantic } = await import('../cli/semantic.js'); await cmdSemantic(f); });
+
+program
+  .command('compress')
+  .description('L3 模型压缩：用生成模型把旧决策/旧经验合成上级条目（默认关；原文永不删；可审计可回滚）')
+  .option('--dry-run', '看它会合并什么（不调模型、不写库）')
+  .option('--apply', '真跑：调模型 + 写审计（原文快照进 compress_detail）')
+  .option('--logs', '看历史合并记录')
+  .option('--rollback <id>', '列出某次合并的回滚依据（不改库）')
+  .option('--json', '机器格式')
+  .action(async (f) => { const { cmdCompress } = await import('../cli/compress.js'); await cmdCompress(f); });
 
 program
   .command('status')

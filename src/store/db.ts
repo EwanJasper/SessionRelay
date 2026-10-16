@@ -149,6 +149,46 @@ CREATE TABLE IF NOT EXISTS cleanup_detail (
 CREATE INDEX IF NOT EXISTS idx_cleanup_detail_log ON cleanup_detail(cleanup_log_id);
 CREATE INDEX IF NOT EXISTS idx_cleanup_detail_session ON cleanup_detail(session_id);
 
+-- ═══════════ L3 模型压缩（docs/1018-夜-模型压缩与语义档-建设方案.md §2） ═══════════
+-- 边界③「可审计 + 可回滚」与边界④「配额落库」的落点。
+-- 形态刻意抄 cleanup_log/cleanup_detail（同一个项目里两种审计形态 = 迟早有人只查一种）。
+-- ⚠️ compress_detail 里存的是**合并前的原文快照**（text 全量），这样回滚不需要去猜。
+CREATE TABLE IF NOT EXISTS compress_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  triggered_by      TEXT NOT NULL,
+  scope             TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  provider          TEXT NOT NULL,
+  clusters_seen     INTEGER NOT NULL DEFAULT 0,
+  clusters_merged   INTEGER NOT NULL DEFAULT 0,
+  items_in          INTEGER NOT NULL DEFAULT 0,
+  items_out         INTEGER NOT NULL DEFAULT 0,
+  discarded         INTEGER NOT NULL DEFAULT 0,
+  calls             INTEGER NOT NULL DEFAULT 0,
+  status            TEXT NOT NULL DEFAULT 'applied',
+  rolled_back_at    TEXT,
+  note              TEXT,
+  created_at        TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS compress_detail (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  compress_log_id   INTEGER NOT NULL REFERENCES compress_log(id) ON DELETE CASCADE,
+  session_id        TEXT,
+  lesson_id         INTEGER,
+  merged_text       TEXT NOT NULL,
+  evidence_ids      TEXT NOT NULL,
+  originals         TEXT NOT NULL,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_compress_detail_log ON compress_detail(compress_log_id);
+
+-- 配额**落库**（边界④：重启不重置）。按小时窗口计数。
+CREATE TABLE IF NOT EXISTS compress_quota (
+  key       TEXT PRIMARY KEY,
+  used      INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 -- ═══════════ v3：遗忘（srelay forget，设计 v4 §3.2/§3.4） ═══════════
 -- 墓碑：防复活次级防线（主防线是 .sessionrelayignore 的 session: 规则，跨 rebuild 存活；
 -- 墓碑随库走，rebuild 后消失——故只是 ignore 被用户清理后的兜底）

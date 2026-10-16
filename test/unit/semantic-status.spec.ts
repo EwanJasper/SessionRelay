@@ -106,12 +106,15 @@ describe('语义档 · 真跑一次装载失败', () => {
 // 换一个 pooling 不同的模型（如 Qwen3-Embedding 要 last_token）会**装载成功、检索有结果、分数看着正常**
 // —— 但向量是垃圾。是"看起来在工作"的一号故障模式，所以判据是：认不出就拒绝，不猜。
 import { describe, it, expect } from 'vitest';
-import { profileOf, MODEL_PROFILES, DEFAULT_MODEL } from '../../src/search-svc/semantic.js';
+import { profileOf, MODEL_PROFILES, DEFAULT_MODEL, BGE_ZH_QUERY_PREFIX } from '../../src/search-svc/semantic.js';
 
 describe('语义档 · 模型档案', () => {
   it('默认模型必须有档案（它是唯一被实测过的档）', () => {
-    expect(MODEL_PROFILES[DEFAULT_MODEL]).toEqual({ pooling: 'cls', dim: 512, dtype: 'q8' });
+    expect(MODEL_PROFILES[DEFAULT_MODEL]).toEqual({ pooling: 'cls', dim: 512, dtype: 'q8', queryPrefix: BGE_ZH_QUERY_PREFIX });
     expect(profileOf(DEFAULT_MODEL)?.pooling).toBe('cls');
+    // [1017 夜] BGE 中文是**非对称**模型：查询侧必须带指令前缀，否则查询与文档不在同一子空间。
+    // 实测：不加前缀时语义臂 hit@1 1.7%，加了 2.3%（n=300）—— 幅度小但方向一致，且是官方用法。
+    expect(profileOf(DEFAULT_MODEL)?.queryPrefix, 'BGE 中文系列的查询前缀不能丢').toBe(BGE_ZH_QUERY_PREFIX);
   });
 
   it('bge 中文系列按 cls，维度按档位（small 512 / base 768 / large 1024）', () => {

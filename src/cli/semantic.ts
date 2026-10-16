@@ -20,6 +20,9 @@ export interface SemanticFlags {
   status?: boolean;
   test?: string;
   threshold?: string;
+  backfill?: boolean;
+  /** 重嵌：把已有向量**作废重算**（换了嵌入口径/模型档案后必须走它，否则旧向量会一直骗人） */
+  reembed?: boolean;
 }
 
 // enable 时安装依赖：npm --prefix 用户缓存目录（不进主包；Windows .cmd 必须 shell——R10）
@@ -34,10 +37,56 @@ function installTransformers(): boolean {
   return r.status === 0 && !!resolveTransformersEntry();
 }
 
+/** 存量回填：confirmed 且无（匹配模型）向量的会话，分批嵌入直到两轮零产出。
+ *  为什么抽出来：enable 与 --backfill 要走**同一份**实现（两份实现必然漂移）。 */
+async function backfill(root: string, cfg: ReturnType<typeof loadConfig>, model: string): Promise<void> {
+  console.log(pc.dim(`  模型 ${model} 就绪，开始回填存量 confirmed 会话...`));
+  const db = openExisting(dbFile(root));
+  try {
+    let total = 0, failedTotal = 0, idleRounds = 0;
+    for (;;) {
+      const { embedded, failed } = await digestSemantic(db, loadConfig(root), { projectId: cfg.identity.project_id, limit: 50 });
+      total += embedded;
+      failedTotal += failed;
+      if (embedded === 0) {
+        // 连续两轮零产出（毒丸全部失败或全部完成）即收——不留死循环
+        if (++idleRounds >= 2) break;
+      } else {
+        idleRounds = 0;
+      }
+      process.stdout.write(`\r  已嵌入 ${total} 个会话`);
+    }
+    console.log('');
+    const backlog = countSemanticBacklog(db, model);
+    console.log(pc.green('✓') + ` 向量：${total} 条已嵌 · 待嵌 ${backlog}` + (failedTotal > 0 ? pc.yellow(` · ${failedTotal} 个失败已跳过（下个 sync/守护周期或重启进程自动重试）`) : ''));
+    console.log(pc.dim('  验证：srelay semantic test "换一种说法的查询"'));
+  } finally { db.close(); }
+}
+
 export async function cmdSemantic(f: SemanticFlags): Promise<void> {
   const root = findRelayRoot(process.cwd());
   if (!root) die('未找到 .sessionrelay（本项目尚未初始化）', '在项目根目录运行 srelay init');
   const cfg = loadConfig(root);
+
+  // ── backfill：只补嵌，不动开关（扫描/换模型后补向量用） ──
+  if (f.backfill || f.reembed) {
+    if (cfg.semantic?.enabled !== true) { console.log(pc.yellow('语义检索未启用 —— 先 srelay semantic enable（回填只对启用的档有意义）')); return; }
+    const model = cfg.semantic?.model ?? DEFAULT_MODEL;
+    const embedder = await getEmbedder(cfg);
+    if (!embedder) {
+      const rs = readSemanticStatus();
+      die('模型不可用，回填中止（不留半开状态）', (rs.error ? '上次失败：' + rs.error : '') + '\n  依赖检查：srelay semantic status；重装：srelay semantic enable');
+    }
+    if (f.reembed) {
+      const db0 = openExisting(dbFile(root));
+      try {
+        const n = db0.prepare('DELETE FROM session_vectors WHERE model = ?').run(embedder.model).changes;
+        console.log(pc.dim('  已作废 ' + n + ' 条旧向量（模型 ' + embedder.model + '）—— 下面重新嵌入'));
+      } finally { db0.close(); }
+    }
+    await backfill(root, cfg, embedder.model);
+    return;
+  }
 
   // ── enable ──
   if (f.enable) {
@@ -66,27 +115,7 @@ export async function cmdSemantic(f: SemanticFlags): Promise<void> {
       console.log(pc.dim('  提示：HF_ENDPOINT=https://hf-mirror.com srelay sync 触发下载（国内镜像）'));
       return;
     }
-    console.log(pc.dim(`  模型 ${embedder.model} 就绪，开始回填存量 confirmed 会话...`));
-    const db = openExisting(dbFile(root));
-    try {
-      let total = 0, failedTotal = 0, idleRounds = 0;
-      for (;;) {
-        const { embedded, failed } = await digestSemantic(db, loadConfig(root), { projectId: cfg.identity.project_id, limit: 50 });
-        total += embedded;
-        failedTotal += failed;
-        if (embedded === 0) {
-          // 连续两轮零产出（毒丸全部失败或全部完成）即收——不留死循环
-          if (++idleRounds >= 2) break;
-        } else {
-          idleRounds = 0;
-        }
-        process.stdout.write(`\r  已嵌入 ${total} 个会话`);
-      }
-      console.log('');
-      const backlog = countSemanticBacklog(db, embedder.model);
-      console.log(pc.green('✓') + ` 语义检索已启用：${total} 向量 · 待嵌 ${backlog}` + (failedTotal > 0 ? pc.yellow(` · ${failedTotal} 个失败已跳过（下个 sync/守护周期或重启进程自动重试）`) : ''));
-      console.log(pc.dim('  验证：srelay semantic test "换一种说法的查询"'));
-    } finally { db.close(); }
+    await backfill(root, cfg, embedder.model);
     return;
   }
 

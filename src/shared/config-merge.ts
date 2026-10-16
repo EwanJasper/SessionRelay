@@ -43,6 +43,12 @@ export interface RelayConfig {
      *  为什么要它：embedder 一旦装载就常驻内存（几百 MB 级的 ONNX 会话），
      *  而 DSH 宿主与守护都是常驻进程 —— 用完不还，用户机器上就一直占着。 */
     idle_unload_min?: number;
+    /** [1017 夜] 语义候选上限（默认 5）。与 reserve_slots 是两套限量：一个定候选池、一个定进名额几条。
+     *  参数扫描要求它能被**单变量**地改（调研件 §4.3 R3）。 */
+    top_k?: number;
+    /** [1017 夜] 量化档覆盖（fp32/fp16/q8/int8/…；不给 = 用模型档案的默认档）。
+     *  为什么要它：EmbeddingGemma **不支持 fp16**，写死一个档迟早静默出错（调研件 §3.6）。 */
+    dtype?: string;
   };
   /** [fork 1011] D26 自动归档：守护按窗口把旧会话正文蒸发（决策/话题骨架保留），增量式 VACUUM 回收空页 */
   archive?: {
@@ -50,6 +56,25 @@ export interface RelayConfig {
     hot_days?: number;
     workflow_days?: number;
     check_every_min?: number;
+  };
+  /** ═══ L3 模型压缩（docs/1018-夜-模型压缩与语义档-建设方案.md §2）═══
+   *  用**生成模型**把旧条目合成上级条目。与 semantic 块**刻意分开**：
+   *  嵌入模型管「找得到」，生成模型管「存得省」—— 共用一套配置会让换嵌入模型意外改掉压缩行为。
+   *  默认关（默认档零模型是项目底线）；原文永不删；掉召回整批回滚。 */
+  compress?: {
+    enabled?: boolean;
+    provider?: 'openai' | 'ollama';
+    model?: string;
+    endpoint?: string;
+    api_key?: string;
+    timeout_ms?: number;
+    max_calls_per_round?: number;
+    max_calls_per_hour?: number;
+    min_cluster?: number;
+    topic_overlap?: number;
+    min_age_days?: number;
+    projects?: boolean;
+    lessons?: boolean;
   };
   /** [fork 1013] 审计 P3：提取规则版本落后时的后台分批重算节奏（分钟，默认 6h） */
   recompute?: {
@@ -89,6 +114,7 @@ export function mergeConfig(raw: Record<string, unknown> | null): RelayConfig {
     privacy: { ...def.privacy, ...((raw.privacy ?? {}) as object) },
     identity: { ...def.identity, ...((raw.identity ?? {}) as object) },
     semantic: { ...((raw.semantic ?? {}) as object) },
+    compress: { ...((raw.compress ?? {}) as object) },
     archive: { ...def.archive, ...((raw.archive ?? {}) as object) },
     recompute: { ...def.recompute, ...((raw.recompute ?? {}) as object) },
   } as RelayConfig;

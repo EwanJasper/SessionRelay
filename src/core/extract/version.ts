@@ -9,4 +9,8 @@
 // ⚠️ 完整变更史（每一条都是实测驱动，别只改数字）在 src/capture/recompute.ts 顶部注释里，
 //    那是唯一权威；本文件只放常量，避免两处各写一份导致漂移。
 
-export const EXTRACT_VERSION = 20;
+// [v21 · 1017 夜 · U-A 真根治] 未决判据加第三维「这句后来被回答了吗」（wasAnswered）。
+//   原判据 unresolved = tailAsked || UNRESOLVED_HINT 实测与「未答」不相关：7/7 被标未决的条目
+//   其后各有 305~524 条 assistant 消息（调研件 §2.5）。加这一维会**减少** unresolved 数量 ——
+//   这正是目的：宁缺勿滥。改判据必须递增版本，否则存量库不会被重算。
+export const EXTRACT_VERSION = 21;
