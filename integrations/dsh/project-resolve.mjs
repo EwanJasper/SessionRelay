@@ -203,8 +203,29 @@ export function findGitRoot(startDir) {
   }
 }
 
+// 临时目录判据**调核心那一份**（isTransientRoot：pathKey 归一 + 全部临时目录形态）。
+// 判据只许有一份（铁律 1）；以前这里自己写 startsWith(tmpdir)，于是漏掉 %LOCALAPPDATA%\Temp。
+// 拿不到核心（integrations/headless 这类无 vendor 的副本）才退回本地兜底——兜底只做最小判断。
+let coreTransient = null
+try {
+  const core = await import('./vendor/dist/recall.js')
+  if (typeof core.isTransientRoot === 'function') coreTransient = core.isTransientRoot
+} catch { coreTransient = null }
+
+function isTempFallback(dir) {
+  const list = [os.tmpdir()]
+  for (const k of ['TEMP', 'TMP']) if (process.env[k]) list.push(process.env[k])
+  if (process.env.LOCALAPPDATA) list.push(path.join(process.env.LOCALAPPDATA, 'Temp'))
+  const d = path.resolve(dir).toLowerCase()
+  return list.some((t) => {
+    try { const b = path.resolve(t).toLowerCase(); return d === b || d.startsWith(b + path.sep) } catch { return false }
+  })
+}
+
 /** 不该建库的地方：临时目录 / DSH 自身 / npm 全局 / 盘符根 */
 export function isInternalDir(dir) {
+  // 临时目录先走核心判据（含 pathKey 归一：8.3 短名/盘符大小写/两种分隔符都能判）
+  if (coreTransient ? coreTransient(dir) : isTempFallback(dir)) return true
   let d
   try { d = path.resolve(dir).toLowerCase() } catch { return true }
   // 盘符根（D:\、C:\）：在上面建库毫无意义

@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createDb, upsertCapturedSession, insertMessage, confirmSession, countMessages } from '../../src/store/db.js';
-import { autoArchiveProject, autoArchivePolicyOf, type AutoArchivePolicy } from '../../src/capture/archive.js';
+import { autoArchiveProject, autoArchivePolicyOf, strengthGateOf, type AutoArchivePolicy } from '../../src/capture/archive.js';
+import { EXTRACT_VERSION } from '../../src/core/extract/version.js';
 
 let tmp = '';
 let db: ReturnType<typeof createDb>;
@@ -31,6 +32,10 @@ function seed(uuid: string, title: string, opts: {
     insertMessage(db, { sessionId: id, role: i % 2 ? 'assistant' : 'user', content: `消息 ${i} of ${title}`, seqNum: ++seqCounter, createdAt: iso(opts.daysAgo) });
   }
   db.prepare('UPDATE sessions SET message_count = ? WHERE id = ?').run(n, id);
+  // [1017 合并] 自动归档改走 planAging，多了**抽取版本门**：只有"已按当前规则抽取过"的会话
+  // 才允许归档正文（否则等于结论还没提炼就先删了原文）。夹具必须显式满足这个前提，
+  // 否则测的就不是归档逻辑，而是"版本旧所以全都不动"。
+  db.prepare('UPDATE sessions SET extracted_version = ? WHERE id = ?').run(EXTRACT_VERSION, id);
   if ((opts.state ?? 'confirmed') === 'confirmed') confirmSession(db, id, iso(1));
   return id;
 }
@@ -65,6 +70,26 @@ describe('fork · D26 自动归档', () => {
     expect(byId.get(hot)!.cleanup_at).toBeNull();
     expect(byId.get(old)!.cleanup_at).not.toBeNull();
     expect(byId.get(act)!.cleanup_at).toBeNull();
+  });
+
+  it('[1017 合并] 抽取版本门：还没按当前规则抽取过的老会话**不许**归档正文', () => {
+    // 这条门是合并新增的（原 autoArchiveProject 只看时间窗）——没有它，一次规则升级后
+    // 老会话的正文会先被删，而它们的新结论还没抽出来。
+    const stale = seed('stale-version', '七十天前但版本旧', { daysAgo: 70 });
+    db.prepare('UPDATE sessions SET extracted_version = ? WHERE id = ?').run(EXTRACT_VERSION - 1, stale);
+    const r = autoArchiveProject(db, POLICY);
+    expect(r.hotArchived).toBe(0);
+    const row = db.prepare('SELECT cleanup_at FROM sessions WHERE id = ?').get(stale) as { cleanup_at: string | null };
+    expect(row.cleanup_at).toBeNull();
+  });
+
+  it('[1017 合并] 强度门与窗口推导一致（strengthGateOf）', () => {
+    // strength = 1 − ageDays/90 ⇒ 窗 30d 对应阈 0.667、窗 90d 对应阈 0（越老越严，两门边界重合）
+    expect(strengthGateOf(30)).toBeCloseTo(0.667, 3);
+    expect(strengthGateOf(90)).toBe(0);
+    // 超过 90 天窗口在数学上会算出负数 → 夹到 0（只有 ≥90d 的会话能过），不许变成"全放行"
+    expect(strengthGateOf(120)).toBe(0);
+    expect(strengthGateOf(-5)).toBe(1);
   });
 
   it('审计：cleanup_log triggered_by=auto 且明细逐会话', () => {

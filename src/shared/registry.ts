@@ -80,10 +80,29 @@ function pathKey(p: string): string {
   return s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
+/**
+ * 本机上算"临时目录"的**全部形态**（1017 补）。
+ * 病历：以前只认 os.tmpdir()，而它只反映 TMPDIR/TMP/TEMP 里的一个 —— 本机 os.tmpdir()=D:\Temp，
+ * 但 %LOCALAPPDATA%\Temp 同样真实存在：DSH 插件侧的自动接入就漏过它，在那儿建了库、
+ * 还写进注册表，连"插件在临时目录上不建库"这条自测的前提都被改掉了（假红至今）。
+ * 判据只维护这一处，插件侧（project-resolve.mjs）经 vendor 复用同一函数。
+ */
+function tempRoots(): string[] {
+  const out: string[] = [os.tmpdir()];
+  for (const k of ['TEMP', 'TMP']) { const v = process.env[k]; if (v) out.push(v); }
+  const la = process.env.LOCALAPPDATA;
+  if (la) out.push(path.join(la, 'Temp'));
+  if (process.platform !== 'win32') out.push('/tmp', '/var/tmp');   // Windows 上 resolve('/tmp') 会落到当前盘根，不能收
+  return out;
+}
+
 export function isTransientRoot(abs: string): boolean {
-  const tmp = pathKey(os.tmpdir());
   const p = pathKey(abs);
-  return p === tmp || p.startsWith(tmp + '/');
+  for (const t of tempRoots()) {
+    const tk = pathKey(t);
+    if (p === tk || p.startsWith(tk + '/')) return true;
+  }
+  return false;
 }
 
 /** [fork 1013] 审计 P2：注册表条目过期阈值（天）。超过且守护已死 → 视为废弃，

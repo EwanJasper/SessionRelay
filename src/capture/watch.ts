@@ -186,7 +186,8 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
         try {
           const r = autoArchiveProject(db, archivePolicy);
           if (r.workflowArchived + r.hotArchived > 0 || r.vacuumEnabled) {
-            log(`自动归档：workflow ${r.workflowArchived} · 普通 ${r.hotArchived} · 释放 ${r.freedPages} 页${r.vacuumEnabled ? '（已启用增量式 VACUUM）' : ''}`);
+            // 带上判据摘要：ADR-003 D1 要求"淘汰决定必须能从数字上说清"——只报条数等于没说清
+            log(`自动归档：workflow ${r.workflowArchived} · 普通 ${r.hotArchived} · 释放 ${r.freedPages} 页${r.vacuumEnabled ? '（已启用增量式 VACUUM）' : ''} · ${r.criteria}`);
           }
         } catch (e) {
           log(`自动归档失败（不退出，下周期重试）: ${(e as Error).message}`);

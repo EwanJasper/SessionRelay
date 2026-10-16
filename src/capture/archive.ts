@@ -5,6 +5,10 @@ import type { DB } from '../store/db.js';
 import { listSessions, getSessionFull, countMessages, insertCleanupLog, insertCleanupDetail } from '../store/db.js';
 import type { SessionRow } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
+// [1017 夜] 自动归档改走 ADR-003 的连续强度模型 —— 判据只留一份，理由见 autoArchiveProject 注释
+import { planAging } from '../core/compact/aging.js';
+import type { AgingRow, AgingPlan } from '../core/compact/aging.js';
+import { EXTRACT_VERSION } from '../core/extract/version.js';
 
 export interface ArchiveCriteria {
   days?: number;
@@ -206,6 +210,8 @@ export interface AutoArchivePolicy {
 export interface AutoArchiveResult {
   workflowArchived: number;
   hotArchived: number;
+  /** 本轮判据摘要（进守护日志）——"为什么归档它/为什么没动"要能从数字上说清 */
+  criteria: string;
   /** 本次是否执行了启用式 VACUUM（auto_vacuum NONE → INCREMENTAL，一次性） */
   vacuumEnabled: boolean;
   /** incremental_vacuum 回收的空页数 */
@@ -223,12 +229,34 @@ export function autoArchivePolicyOf(cfg: RelayConfig): AutoArchivePolicy | null 
   };
 }
 
+/** 每轮自动归档的封顶条数（渐变不突变：配置写错也不会一轮清空整库） */
+const ARCHIVE_CAP_PER_ROUND = 200;
+
+/** 窗 → 强度阈值：strength = 1 − ageDays/90（见 aging.ts strengthOf）。
+ *  这样"窗"与"强度门"在数学上边界重合 —— 不会出现两套判据各说各话（1017 前的病）。 */
+export function strengthGateOf(minAgeDays: number): number {
+  return Number(Math.max(0, Math.min(1, 1 - minAgeDays / 90)).toFixed(3));
+}
+
 /** 检查一次自动归档（守护按 checkEveryMin 调用；首次顺带启用增量式 VACUUM）。
- * 双通道顺序关键：先 workflow（7d 窗）后普通（60d 窗）——workflow 会话的 7~60 天
+ *
+ * ⚠️ 1017 夜重构：**判据只留一份**。
+ * 以前这里是两套并存：本函数自己按时间窗挑（workflow 7d / 普通 30d），而 ADR-003 定下的
+ * 连续强度模型 planAging 只被测量脚本用着，**守护根本不走它**。两套判据必然分叉，而且守护这套：
+ *   · **没有抽取版本门** ⇒ 会把"还没按当前规则重算过"的会话正文先删掉（结论还没提炼就先删正文，
+ *     这是记忆库最不该犯的错）；
+ *   · 没有强度这个可解释量 ⇒ 日志里说不出"凭什么归档它"，也调不动（ADR-003 D1 就是为这个来的）。
+ * 现在：planAging = **唯一选择器**，runArchive = **唯一执行器**（真删正文的实现，保护规则/审计/复活全在里面）。
+ *   · 按 origin 给"下限窗"：workflow 用 workflowDays，其余用 hotDays —— 比窗年轻的绝不碰；
+ *   · 强度门由窗推导（strengthGateOf）⇒ 与窗边界重合，只是把同一个边界写成连续量；
+ *   · minDecisions 取 0：gate②（extracted_version === 当前版本）已保证"按当前规则抽过"，
+ *     抽过而 0 结论 = 确实没结论 ⇒ 正文归档不丢信息（原文在客户端那边），
+ *     不这样 0 结论的老会话会永久占着 94% 的正文空间（无界增长的唯一入口）。
+ * 双通道顺序关键：先 workflow（7d 窗）后普通（30d 窗）——workflow 会话的 7~30 天
  * 区间在第一通道清零后，普通通道不会再提前蒸发它们。
- * 保护规则/复活/审计全部复用 runArchive；triggered_by 记 'auto' 供 cleanup_log 区分。 */
+ * triggered_by 记 'auto' 供 cleanup_log 区分。 */
 export function autoArchiveProject(db: DB, policy: AutoArchivePolicy): AutoArchiveResult {
-  const result: AutoArchiveResult = { workflowArchived: 0, hotArchived: 0, vacuumEnabled: false, freedPages: 0 };
+  const result: AutoArchiveResult = { workflowArchived: 0, hotArchived: 0, criteria: '', vacuumEnabled: false, freedPages: 0 };
   // ① 增量式 VACUUM 启用（一次性）：auto_vacuum=NONE 时切 INCREMENTAL 并 VACUUM 重建
   //    （71MB 库实测秒级）；之后 PRAGMA 持久生效，incremental_vacuum 小步回收即可
   const mode = db.pragma('auto_vacuum', { simple: true }) as number;
@@ -237,14 +265,41 @@ export function autoArchiveProject(db: DB, policy: AutoArchivePolicy): AutoArchi
     db.exec('VACUUM');
     result.vacuumEnabled = true;
   }
-  // ② workflow 通道
-  if (policy.workflowDays > 0) {
-    result.workflowArchived = runArchive(db, { origin: 'workflow', days: policy.workflowDays, triggeredBy: 'auto' }).archived;
-  }
-  // ③ 普通通道（workflow 已清，剩余即普通/手动源）
-  if (policy.hotDays > 0) {
-    result.hotArchived = runArchive(db, { days: policy.hotDays, triggeredBy: 'auto' }).archived;
-  }
+  // ② 选择：planAging 是唯一判据（每轮读一次候选列；封顶 ARCHIVE_CAP_PER_ROUND）
+  const rows = db.prepare(
+    'SELECT id, origin, state, last_event_at, message_count, extracted_version, decisions, cleanup_at FROM sessions'
+  ).all() as AgingRow[];
+  const planFor = (subset: AgingRow[], minAgeDays: number): AgingPlan => minAgeDays > 0
+    ? planAging(subset, {
+      currentVersion: EXTRACT_VERSION,
+      minAgeDays,
+      maxStrength: strengthGateOf(minAgeDays),
+      minDecisions: 0,                      // 见函数注释：版本门才是真安全网
+      cap: ARCHIVE_CAP_PER_ROUND,
+    })
+    : { archive: [], kept: subset, reasons: {} };
+
+  const workflowRows = rows.filter((r) => String(r.origin || '') === 'workflow');
+  const otherRows = rows.filter((r) => String(r.origin || '') !== 'workflow');
+  const planWorkflow = planFor(workflowRows, policy.workflowDays);
+  const planOther = planFor(otherRows, policy.hotDays);
+
+  // ③ 执行：唯一执行器 runArchive（保护规则/复活/审计都在里面）。
+  //    顺序关键：先 workflow 后普通 —— workflow 会话的 7~30 天区间在第一通道清零后，
+  //    普通通道不会再提前蒸发它们。
+  const runPlan = (plan: AgingPlan): number => plan.archive.length
+    ? runArchive(db, { sessionIds: plan.archive.map((r) => r.id), triggeredBy: 'auto' }).archived
+    : 0;
+  result.workflowArchived = runPlan(planWorkflow);
+  result.hotArchived = runPlan(planOther);
+
+  // 判据摘要进日志：planAging 只放候选，这里补上"计划 vs 实际"（实际少 = 被保护规则拦下）
+  result.criteria = 'strength≤' + strengthGateOf(policy.hotDays) + '(窗' + policy.hotDays + 'd)'
+    + ' / workflow strength≤' + strengthGateOf(policy.workflowDays) + '(窗' + policy.workflowDays + 'd)'
+    + ' · 计划 ' + planWorkflow.archive.length + '+' + planOther.archive.length
+    + ' · 实际 ' + result.workflowArchived + '+' + result.hotArchived
+    + ' · 上限 ' + ARCHIVE_CAP_PER_ROUND + '/轮';
+
   // ④ 增量回收空页
   const before = db.pragma('freelist_count', { simple: true }) as number;
   db.pragma('incremental_vacuum');
