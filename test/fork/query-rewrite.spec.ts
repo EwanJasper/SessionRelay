@@ -47,8 +47,8 @@ describe('[1016] 查询改写：引擎层行为', () => {
   it('④ rewrite:false 逐字回到旧行为（A/B 开关有效）', () => {
     const db = createDb(':memory:');
     mk(db, 'a', '甲', '把旧会话归档处理');
-    const on = searchSessions(db, { project: 'p', query: '归档', limit: 10 });
-    const off = searchSessions(db, { project: 'p', query: '归档', limit: 10, rewrite: false });
+    const on = searchSessions(db, { project: 'p', query: '归档', limit: 10, fusion: false });
+    const off = searchSessions(db, { project: 'p', query: '归档', limit: 10, rewrite: false, fusion: false });
     expect(off.every((h) => !h.viaRewrite)).toBe(true);
     expect(off.map((h) => h.sessionId)).toEqual(on.filter((h) => !h.viaRewrite).map((h) => h.sessionId));
   });
@@ -57,7 +57,7 @@ describe('[1016] 查询改写：引擎层行为', () => {
     const db = createDb(':memory:');
     const strong = mk(db, 'strong', '强命中', '归档 归档 归档');
     mk(db, 'weak', '同义命中', '存档 存档');
-    const hits = searchSessions(db, { project: 'p', query: '归档', limit: 10 });
+    const hits = searchSessions(db, { project: 'p', query: '归档', limit: 10, fusion: false });
     expect(hits[0].sessionId).toBe(strong);            // 主路第一不动
     const weakIdx = hits.findIndex((h) => h.sessionId !== strong);
     if (weakIdx >= 0) expect(hits[weakIdx].viaRewrite).toBe(true);

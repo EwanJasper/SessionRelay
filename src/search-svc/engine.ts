@@ -23,6 +23,10 @@ export interface SearchHit {
   viaSemantic?: boolean; // 语义补充命中（design-semantic §3.2：B−A 追加，排序在 FTS 之后）
   /** [1016] 零模型查询改写补充命中（同义家族 / CJK bigram 展开）——**只做加法**，排在主路之后 */
   viaRewrite?: boolean;
+  /** [1016] 子串路（不走分词器）命中 */
+  viaLike?: boolean;
+  /** [1016] 多路融合后**多路互证**的命中 */
+  viaRRF?: boolean;
 }
 
 interface UnitHits {
@@ -90,6 +94,8 @@ export interface SearchOptions {
   rewrite?: boolean;
   /** 主路命中少于这个数才启用改写补充（默认 3；设 0 = 永远启用） */
   rewriteBelow?: number;
+  /** [1016] 多路加权融合（默认关：先量再开，见交接 §15/§16） */
+  fusion?: boolean;
 }
 
 /**
@@ -208,8 +214,17 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
   //   否则（拆词拆坏 / 问句外壳词多 / 只覆了一半）→ 补一路。
   // ⚠️ 先判空：limit 可以是 0，或者查询零命中 —— 直接读 hits[0].coverage 会炸
   //   （实测：test/integration/deep.spec.ts 用 limit:0 打过这条路）。
+  // [1016] 多路加权融合（第二版，实测有效）。三条路径：
+  //   fusion === true   → **强制融合**（不受闸门限制，用于基准 A/B）：
+  //                       否则单/双词查询的 top-1 天然 coverage=1 ⇒ 永远不触发，
+  //                       两臂会跑出逐位相同的数字（实测踩过，387 条样本一模一样）。
+  //   fusion 默认（未指定）→ 主路不硬时融合；主路够硬（coverage≥1）时逐字不动 ⇒ 关键词查询零回归
+  //   fusion === false  → 逐字回旧行为（改写补充那版），供 A/B 与回归
+  if (opts.fusion === true) return fusedSearch(db, opts, hits);
+
   const strong = hits.length > 0 && hits.length >= Math.min(limit, below) && hits[0].coverage >= 1;
   if (strong) return hits;
+  if (opts.fusion !== false) return fusedSearch(db, opts, hits);
 
   const primary = parseQuery(opts.query);
   const tokens = primary.units.flat();
@@ -230,4 +245,96 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
     merged.push({ ...h, score: h.score * 0.5, viaRewrite: true });
   }
   return merged.slice(0, limit);
+}
+
+/** 会话长度惩罚：把「两三千条消息的巨无霸」压下去（它什么词都碰得到，是所有路的天然第一名） */
+function lengthPenalty(db: DB, sids: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (sids.length === 0) return out;
+  const ph = sids.map(() => '?').join(',');
+  try {
+    const rows = db.prepare('SELECT id, message_count AS c FROM sessions WHERE id IN (' + ph + ')').all(...sids) as Array<{ id: string; c: number }>;
+    for (const r of rows) out.set(r.id, 1 / (1 + Math.log10(1 + Number(r.c ?? 0) / 300)));
+  } catch { /* 取不到就不惩罚 */ }
+  return out;
+}
+
+/** P3 子串路：不走分词器的 LIKE 匹配（jieba 切坏时这条能救） */
+function likeHits(db: DB, tokens: string[], project: string, extra: ExtraWhere | null | undefined, limit: number): SearchHit[] {
+  const toks = [...new Set(tokens.filter((t) => t.length >= 2))].slice(0, 6);
+  if (toks.length === 0) return [];
+  const acc = new Map<string, { n: number; c: number; rid: number }>();
+  const where = extra ? (' AND ' + extra.sql) : '';
+  const params = extra && Array.isArray(extra.params) ? extra.params : [];
+  for (const t of toks) {
+    const sql = 'SELECT m.session_id AS sid, COUNT(*) AS c, MIN(m.id) AS rid'
+      + ' FROM messages m JOIN sessions s ON s.id = m.session_id'
+      + ' WHERE m.content LIKE ? AND s.project_id = ?' + where
+      + ' GROUP BY m.session_id ORDER BY c DESC LIMIT ?';
+    const rows = db.prepare(sql).all('%' + t + '%', project, ...params, Math.max(limit * 3, 30)) as Array<{ sid: string; c: number; rid: number }>;
+    for (const r of rows) {
+      const prev = acc.get(r.sid);
+      acc.set(r.sid, { n: (prev ? prev.n : 0) + 1, c: (prev ? prev.c : 0) + Number(r.c), rid: prev ? prev.rid : r.rid });
+    }
+  }
+  return [...acc.entries()]
+        .filter(([, v]) => v.n >= toks.length)
+    .sort((a, b) => b[1].n - a[1].n || b[1].c - a[1].c)
+    .slice(0, limit)
+    .map(([sid, v]) => ({ sessionId: sid, score: v.n, snippet: excerpt(db, v.rid, toks[0]), viaMeta: false, coverage: 0, seq: 0, viaLike: true }));
+}
+
+/**
+ * 多路加权融合（第二版；第一版纯 RRF 实测**负结果**已回滚）。
+ *
+ * 与第一版的三个关键差别（都是被实测逼出来的）：
+ *   ① **不用纯名次，用归一化分数**：(N-i)/N —— 纯 RRF 只看名次，分数是白算的；
+ *   ② **长度惩罚进到每条路内部**，而不是融合完再乘：巨无霸在**每一条路**上都是第一名，
+ *      事后乘系数改不动这个事实（第一版就栽在这）；
+ *   ③ **互证加分削弱**（0.05/条，上限 0.1）：第一版给 0.08/条，等于给巨无霸发奖金。
+ */
+function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[] {
+  const limit = opts.limit ?? 20;
+  const tokens = parseQuery(opts.query).units.flat();
+  const paths: Array<{ w: number; hits: SearchHit[] }> = [{ w: 1.0, hits: main }];
+  const rw = rewriteQuery(tokens, (t) => segment(t, { keepSingles: false }));
+  if (rw.extraUnits.length > 0) {
+    const ex = searchOnce(db, { ...opts, query: rw.extraUnits.flat().join(' '), rewrite: false, limit });
+    if (ex.length > 0) paths.push({ w: 0.6, hits: ex });
+  }
+// ⚠️ 查询里有**短语单元**（带引号的多词）时不加子串路：
+  // LIKE 只看「字面包含」，分不出 按月分区 与「先按月再分区」——
+  // 实测它把词序不符的会话拉进了结果，违反 C5 短语验收。短语要的是顺序，不是包含。
+  const hasPhrase = parseQuery(opts.query).units.some((u) => u.length > 1);
+  if (!hasPhrase) {
+    try {
+      const lk = likeHits(db, tokens, opts.project, opts.extraWhere, limit);
+      if (lk.length > 0) paths.push({ w: 0.4, hits: lk });
+    } catch { /* LIKE 路失败不影响主路 */ }
+  }
+  const all: string[] = [];
+  const seenSid = new Set<string>();
+  for (const p of paths) for (const h of p.hits) if (!seenSid.has(h.sessionId)) { seenSid.add(h.sessionId); all.push(h.sessionId); }
+  const pen = lengthPenalty(db, all);
+  const score = new Map<string, number>();
+  const nPaths = new Map<string, number>();
+  const first = new Map<string, SearchHit>();
+  for (const p of paths) {
+    const N = Math.max(1, p.hits.length);
+    p.hits.forEach((h, i) => {
+      const norm = (N - i) / N;
+      const w = p.w * norm * (pen.get(h.sessionId) ?? 1);
+      score.set(h.sessionId, (score.get(h.sessionId) ?? 0) + w);
+      nPaths.set(h.sessionId, (nPaths.get(h.sessionId) ?? 0) + 1);
+      if (!first.has(h.sessionId)) first.set(h.sessionId, h);
+    });
+  }
+  const out: SearchHit[] = [];
+  for (const [sid, sc] of score) {
+    const n = nPaths.get(sid) ?? 1;
+    const h = first.get(sid)!;
+    out.push({ ...h, score: sc + Math.min(0.1, 0.05 * (n - 1)), viaRRF: n > 1 });
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out.slice(0, limit);
 }
