@@ -24,6 +24,8 @@ export { globalDbFile } from './store/global.js';
 export { PROBE_SQL, PROBE_MAX_MESSAGES, countProbeSessions } from './store/db.js';
 // [B4] harness 记账 token 判据（topics 清洗用；工具与核心库共用同一份词表）
 export { isSystemToken, isLikelyFile, isTopicNoise } from './core/extract/extract.js';
+// 冲突消解（新话压旧话）：判据与执行都只在核心库这一份
+export { findSupersedeConflicts, subjectTokens, hasNegation } from './store/global.js';
 // [B4] 清 topics 时 meta_text 必须**按原规重算**（title+topics 的索引文本）；
 // 导出核心库这两个函数，工具才不会自己拼一份（拼错=把搜索面写坏）。
 export { metaTextOf, searchTextOf } from './store/db.js';

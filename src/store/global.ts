@@ -76,6 +76,8 @@ export interface LessonRow {
   id: number; scope: Scope; workspace_id: string | null; domain: string | null;
   text: string; grade: Grade; importance: number; status: Status;
   hits: number; uses: number; needs_review: number; created_at: string;
+  // 表里本来就有这两列（见建表语句），接口一直漏着 —— 冲突消解要用到"出处"和"最后改动时间"
+  source_ref?: string | null; updated_at?: string | null; quote?: string | null; search_text?: string | null;
 }
 
 /**
@@ -190,7 +192,7 @@ export function ftsExpr(q: string): string {
   return toks.map((t) => '"' + t + '"').join(' OR ');
 }
 
-export function maintainLessons(db: Database.Database): { decayed: number; retired: number; resurrected: number } {
+export function maintainLessons(db: Database.Database): { decayed: number; retired: number; resurrected: number; superseded: number } {
   const rows = db.prepare('SELECT * FROM lessons').all() as LessonRow[];
   const upd = db.prepare('UPDATE lessons SET status = ?, updated_at = ? WHERE id = ?');
   const now = new Date().toISOString();
@@ -204,7 +206,24 @@ export function maintainLessons(db: Database.Database): { decayed: number; retir
       if (r.status !== 'retired') { upd.run('retired', now, r.id); retired++; }
     } else if (r.status === 'retired') { upd.run('verified', now, r.id); resurrected++; }
   }
-  return { decayed, retired, resurrected };
+  // [新] 冲突消解：新话压旧话 —— 此前只有"环境事实"抽取有 supersede，决策/经验层完全没有。
+  //
+  // ⚠️ **实测之后改的设计（诚实记录）**：第一版做的是"自动把旧的那条退休"，
+  // 拿真库一跑，判出的 4 对**全是误判** —— 共用的词是"必须/于是/会话/实测"这类泛词，
+  // 两条其实互补而不是矛盾。**自动作废在这里是不可信的**：错杀一条真经验，比漏判十条严重得多。
+  // 所以降级为**advisory**：只把旧的标成 needs_review（人工看一眼），绝不改它的 status ——
+  // 这本身就是"自我怀疑"原则的正确用法：机器不确定的时候，标记不确定，而不是替人下结论。
+  let conflicts = 0;
+  const alive = db.prepare("SELECT * FROM lessons WHERE status = 'verified'").all() as LessonRow[];
+  for (const pair of findSupersedeConflicts(alive)) {
+    const older = alive.find((x) => x.id === pair.olderId);
+    if (!older || Number(older.needs_review) === 1) continue;
+    const note = (String(older.source_ref || '') ? String(older.source_ref) + ' · ' : '') + pair.reason;
+    db.prepare('UPDATE lessons SET needs_review = 1, updated_at = ?, source_ref = ? WHERE id = ?')
+      .run(now, note.slice(0, 400), pair.olderId);
+    conflicts++;
+  }
+  return { decayed, retired, resurrected, superseded: conflicts };
 }
 
 /** Markdown 导出：经验库必须人可读、可 git、可手改（借鉴实测做法） */
@@ -355,6 +374,75 @@ export function pickForInjection(db: Database.Database, o: PickOptions = {}): Le
     out.push(r);
     used += len;
     if (out.length >= top) break;
+  }
+  return out;
+}// ─────────────────────── 冲突消解：新话压旧话（判据唯一一份）───────────────────────
+// 用户直接质疑过："记忆会过期、会冲突，这些你们到底做了没？"
+// 实测审计（2026-10-17）：出生证 ✅（source_ref/created_at/extracted_version）、
+// 保质期 ✅（liveImportance 按日衰减 + INJECT_THRESHOLD，过期自动不注入）、
+// 会忘 ✅（cleanup_at/archive/retire/reject）、自我怀疑 ⚠️半做（needs_review 覆盖面有限）、
+// **新话压旧话 ⚠️只存在于环境事实抽取**（extractEnvFacts 的 supersede）——决策与经验层完全没有。
+// 这正是"今天说了新要求，它却翻出半年前旧记忆继续执行"的根因，所以在这里补上。
+//
+// 判据**故意保守**：宁可漏判（交人工），也不乱杀一条真经验。四条全中才算冲突。
+const NEG_MARKERS = ['不要', '不能', '不用', '不许', '不再', '别用', '避免', '禁止', '弃用', '废弃', '取消',
+  '关闭', '禁用', '停止', '撤掉', '移除', '删掉', '不准', '不', '别', '勿', '没有'];
+
+/** 泛词表：它们出现在任何两段技术文字里都不代表"同一主题"（实测误判就是这么来的） */
+const GENERIC_TOKENS = new Set([
+  '必须', '于是', '因为', '所以', '但是', '而且', '可以', '需要', '使用', '问题', '情况', '时候', '东西',
+  '地方', '一个', '这个', '那个', '这些', '那些', '自己', '里面', '上面', '下面', '直接', '基本', '一下',
+  '会话', '实测', '根因', '测试', '结果', '原因', '方案', '做法', '写法', '处理', '出现', '导致', '就是',
+  '不是', '没有', '不会', '不能', '不要', '如果', '来说', '而是', '还是', '这样', '那样', '什么',
+]);
+
+/** 取"实词"：英文词 + CJK 二元组（不引分词器：判据自洽、可单测） */
+export function subjectTokens(text: string): Set<string> {
+  const s = String(text || '');
+  const out = new Set<string>();
+  for (const m of s.matchAll(/[A-Za-z][A-Za-z0-9_.\-]{1,}/g)) out.add(m[0].toLowerCase());
+  for (const seg of s.replace(/[^一-龥]+/g, ' ').split(' ')) {
+    for (let i = 0; i + 2 <= seg.length; i++) out.add(seg.slice(i, i + 2));
+  }
+  return out;
+}
+
+export function hasNegation(text: string): boolean {
+  const s = String(text || '');
+  return NEG_MARKERS.some((m) => s.includes(m));
+}
+
+export interface SupersedePair { olderId: number; newerId: number; shared: string[]; reason: string }
+
+/** 找出"同一主题、极性相反"的经验对（新的在前）。纯函数 ⇒ 可单测；判据错了要立刻红。 */
+export function findSupersedeConflicts(rows: LessonRow[]): SupersedePair[] {
+  const out: SupersedePair[] = [];
+  const seen = new Set<number>();
+  const cand = rows.filter((r) => String(r.status) === 'verified');
+  for (let i = 0; i < cand.length; i++) {
+    for (let j = i + 1; j < cand.length; j++) {
+      const a = cand[i], b = cand[j];
+      const ka = String(a.scope) + '|' + String(a.workspace_id || '');
+      const kb = String(b.scope) + '|' + String(b.workspace_id || '');
+      if (ka !== kb) continue;
+      const ta = subjectTokens(a.text), tb = subjectTokens(b.text);
+      const sharedAll = [...ta].filter((t) => tb.has(t));
+      // ⚠️ 关键收紧（实测教训）：泛词（"必须/于是/会话/实测/根因"）不该算共同主题 ——
+      // 第一版就是被它们骗出 4 对误判。要求**至少 3 个具体词**，且两条文本本身要够像。
+      const shared = sharedAll.filter((t) => !GENERIC_TOKENS.has(t));
+      if (shared.length < 3) continue;
+      // 相似度用**重叠系数**（除以较短那条的词数）而不是 Jaccard：
+      // 两条长度差一倍时 Jaccard 会被稀释到 0.15，把真冲突也筛掉了（实测）。
+      const shorter = Math.min(ta.size, tb.size) || 1;
+      if (sharedAll.length / shorter < 0.25) continue;
+      if (hasNegation(a.text) === hasNegation(b.text)) continue;
+      const ta2 = String(a.updated_at || a.created_at || ''), tb2 = String(b.updated_at || b.created_at || '');
+      const newer = ta2 >= tb2 ? a : b, older = ta2 >= tb2 ? b : a;
+      if (seen.has(older.id)) continue;
+      seen.add(older.id);
+      out.push({ olderId: older.id, newerId: newer.id, shared: shared.slice(0, 6),
+        reason: '被 #' + newer.id + ' 取代（同一主题上出现了相反的说法：' + shared.slice(0, 3).join('/') + '）' });
+    }
   }
   return out;
 }
