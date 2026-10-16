@@ -607,15 +607,16 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
   const v1 = reg[0].text(asm)          // 冷路径：这一帧必须走 SQL
   const cold = Date.now() - t0
   check('冷路径有简报', typeof v1 === 'string' && v1.includes('SessionRelay'))
-  // CLI 兜底要 spawn 两个 node 子进程（实测 >300ms）；直查 SQL 毫秒级。
-  // 用 250ms 当分界：既宽到不会因机器抖动假红，又严到能抓住"悄悄回落到子进程"。
-  // node:sqlite 不可用的机器上这条不适用（那时慢是预期），交给 8a 的 SKIP 说明。
-  // 阈值 350ms（原 250ms）：1017 实测同一台机器 240–270ms 抖动，吃了一次假红。
-  // "有没有偷偷回落到子进程"由上面 sqlOk 与下面"强制 CLI 明显更慢"两条独立断言把关，
-  // 所以这里的绝对阈值只需抓**量级退化**（比如有人在路径里塞了 spawn）。
-  if (sqlOk) check(`冷路径 < 350ms（实测 ${cold}ms；走 CLI 兜底会 >300ms）`, cold < 350)
-  else console.log(`  SKIP 冷路径计时（本机无 node:sqlite，实测 ${cold}ms 属预期）`)
-  console.log(`     冷路径耗时: ${cold}ms`)
+  // ⚠️ [1017 夜 · 第二次修这条假红] 这条阈值已经因为假红抬高过一轮（250 → 350），
+  //   这次又红了（365ms）—— 而机器并没有变慢，是我在同时跑发布打包把它占着。
+  //   **再抬一次就是无限回归**：机器总有更忙的时候，判据总会被环境而不是代码打倒。
+  //
+  //   换判据（不是放松判据）：真正要回答的问题是「这一帧走的是 SQL 还是 CLI 子进程」，
+  //   而 CLI 路要 spawn node 子进程、SQL 路不 spawn ⇒ **差一个数量级是结构性的**。
+  //   所以改成**相对量级**断言，放在下面第 670 行那次实测对比旁边（那里两个数都在手上）。
+  //   「冷路径有简报」照旧；sqlOk 的 SKIP 语义照旧。
+  if (!sqlOk) console.log(`  SKIP 冷路径计时（本机无 node:sqlite，实测 ${cold}ms 属预期）`)
+  console.log(`     冷路径耗时: ${cold}ms（绝对值不再作判据，见下方「量级对比」断言）`)
 
   // 第二证据：热路径必须 O(1) 读缓存，且内容与冷路径一致
   //
@@ -668,6 +669,9 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
     delete process.env.SRELAY_BRIEF_FORCE_CLI
     check('强制 CLI 兜底也产出简报', typeof v3 === 'string' && v3.includes('SessionRelay'))
     if (sqlOk) check(`强制 CLI 明显更慢（实测 ${cliCold}ms vs SQL ${cold}ms）——证明 8c 计时确实在测 SQL`, cliCold > cold)
+    // [1017 夜] 替代「冷路径 < 350ms」的**相对量级判据**（理由见上面 616 行）。
+    //   取 2 倍作界：抓得到「有人往路径里塞了 spawn」，又不会被机器抖动打倒。
+    if (sqlOk) check(`SQL 路比 CLI 子进程快 ≥2 倍（${cliCold}ms / ${cold}ms = ${(cliCold / Math.max(cold, 1)).toFixed(1)}×）`, cliCold >= cold * 2)
     // ⚠️ [1017 夜] 这两条渲染之间要 spawn 两个 node 子进程（~700ms），**无法**做到同一 tick。
     // 库在测试期间被采集写入 ⇒ 计数行必然不同。用指纹守卫：动过就 SKIP 并说清原因，
     // 没动才逐字节比 —— 判据原样保留，只是拒绝拿错位的数据下结论。
