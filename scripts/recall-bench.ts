@@ -24,10 +24,9 @@ const N = Number(arg('n', '150'));
 const LIMIT = Number(arg('limit', '10'));
 const REWRITE = arg('rewrite', '1') !== '0';
 const FUSION = arg('fusion', '0') === '1';
-// ⚠️ 默认必须**等于产品默认**：产品默认是关（engine 只在 `lengthNorm === true` 时才归一化），
-// 所以这里默认 0。要复现交接 §21 那组"三臂全涨"的数字，请显式 `--lengthnorm 1`（口径见那段记录）。
-// 复审指出原先这里默认 1 且注释写"产品默认开"——那会让任何不传参的 A/B 对照与产品口径不一致。
-const LENGTHNORM = arg('lengthnorm', '0') === '1';
+// ⚠️ 默认必须**等于产品默认**。产品默认 2026-10-16 起是**开**（用户拍板，见 engine.ts 的 A5 注释），
+// 所以这里默认 1；要用"关"当对照组请显式 `--lengthnorm 0`。
+const LENGTHNORM = arg('lengthnorm', '1') !== '0';
 
 const db = new Database(dbPath, { readonly: true });
 const projRow = db.prepare('SELECT project_id FROM sessions LIMIT 1').get() as { project_id: string };

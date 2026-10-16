@@ -174,14 +174,24 @@ describe('[1016 收口] 根发现的两个脆点（红队 A-7 / A-12）', () => 
   });
 
   it('A-7：被跳过的祖先库要**报出来**（而不是静默 null）', () => {
-    const home = path.resolve(os.homedir());
-    if (!fs.existsSync(path.join(home, '.sessionrelay'))) return;   // 本机没有这种布局就跳过
-    const sub = ['Desktop', '.dsh', 'Documents', 'Downloads']
-      .map((d) => path.join(home, d))
-      .find((d) => fs.existsSync(d) && !isTransientRoot(d));
-    if (!sub) return;
-    const info = findRelayRootInfo(sub);
-    expect(info.root).toBeNull();
-    expect(info.skipped).toContain(home);
+    // 用**假主目录**构造这个局面（绝不真在 ~ 下建库；上一版用例依赖真主目录上恰好有个幽灵项目，
+    // 而那个幽灵本轮已经被清掉了 —— 测试依赖脏数据，本身就是缺陷）。
+    // 位置选在 %TEMP% **外**（临时目录会走 transient 短路，测不到"跳过"这条分支）。
+    const realHome = process.env.USERPROFILE || process.env.HOME;
+    const fakeHome = fs.mkdtempSync(path.join(path.dirname(os.tmpdir()), 'ses-fakehome-'));
+    const sub = path.join(fakeHome, 'sub', 'deep');
+    try {
+      fs.mkdirSync(path.join(fakeHome, '.sessionrelay'), { recursive: true });
+      fs.writeFileSync(path.join(fakeHome, '.sessionrelay', 'relay.sqlite'), '');
+      fs.mkdirSync(sub, { recursive: true });
+      process.env.USERPROFILE = fakeHome;
+      process.env.HOME = fakeHome;
+      const info = findRelayRootInfo(sub);
+      expect(info.root).toBeNull();
+      expect(info.skipped).toContain(path.resolve(fakeHome));
+    } finally {
+      if (realHome !== undefined) { process.env.USERPROFILE = realHome; process.env.HOME = realHome; }
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
   });
 });

@@ -218,9 +218,17 @@ export function queryRecentFiles(root, { days = 7, top = 3, maxSessions = 300 } 
   try {
     db = openDb(file)
     const cutoff = new Date(Date.now() - days * 86400000).toISOString()
+    // [B3] 一次性探针会话（0~2 条消息、无决策无问题、非手动/导入）不进这个信号。
+    // ⚠️ 这一段的判据与核心库 `core/SessionRelay/src/store/db.ts` 的 PROBE_SQL **同规**：
+    //    两个运行时不能共用模块，所以守门 H 段拿真实库对拍两侧输出（改一边不改另一边会立刻变红）。
+    const PROBE = "(coalesce(message_count, 0) <= 2"
+      + " AND (origin IS NULL OR origin NOT IN ('manual','imported','note'))"
+      + " AND (decisions IS NULL OR length(decisions) <= 2)"
+      + " AND (key_questions IS NULL OR length(key_questions) <= 2))"
     const rows = db.prepare(`SELECT files_mentioned, decisions, coalesce(last_event_at, created_at) AS t
       FROM sessions
       WHERE files_mentioned IS NOT NULL AND files_mentioned != '[]' AND coalesce(last_event_at, created_at) >= ?
+        AND NOT ${PROBE}
       ORDER BY t DESC LIMIT ?`).all(cutoff, maxSessions)
     const agg = new Map()
     for (const r of rows) {

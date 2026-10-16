@@ -20,6 +20,8 @@ export { resolveDomain, resolveWorkspaceId, workspaceKey } from './shared/worksp
 export { findRelayRootInfo, findRelayRoot, inferProjectRoot, isUnclaimableAncestor } from './shared/paths.js';
 export { isTransientRoot } from './shared/registry.js';
 export { globalDbFile } from './store/global.js';
+// [B3] 一次性探针会话的判据（SQL 片段）—— 适配器/守门要能拿到**同一份口径**，别各写一套
+export { PROBE_SQL, PROBE_MAX_MESSAGES, countProbeSessions } from './store/db.js';
 
 import fs from 'node:fs';
 import os from 'node:os';

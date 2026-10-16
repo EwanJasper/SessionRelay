@@ -435,6 +435,31 @@ export function recentScopeLogs(db: DB, limit = 10): Array<{ action: string; pre
   return db.prepare('SELECT action, predicate, created_at FROM scope_log ORDER BY id DESC LIMIT ?').all(limit) as Array<{ action: string; predicate: string; created_at: string }>;
 }
 
+/**
+ * 「一次性探针会话」的判据（[B3]，2026-10-16 新增）—— **SQL 片段，只此一份**。
+ *
+ * 什么是探针会话：0~2 条消息、没有决策、没有问题，而且不是用户手动保存/导入/笔记。
+ * 为什么要单独认出来：实测某天 15 场会话里 **12 场** 是这种"问一句就走"的探针，
+ * 它们把**会话数**和「最近在动」的信号稀释掉（一场探针也可能顺手提到一个文件）。
+ *
+ * ⚠️ 口径只影响**统计与展示**：数据一条不删，`srelay search / show / list` 照样找得到；
+ *    想连它们一起看，把这里的判据去掉就行（就这一处）。
+ * ⚠️ DSH 插件（另一个运行时，不能共用模块）里有一份**同规 SQL**：`plugins/dsh/src/brief-sql.mjs`。
+ *    改这里必须改那里 —— 守门 `check-versions` 的 H 段拿真实库对拍两侧输出，漂移会立刻变红。
+ */
+export const PROBE_MAX_MESSAGES = 2;
+export const PROBE_SQL = '(coalesce(message_count, 0) <= ' + PROBE_MAX_MESSAGES
+  + " AND (origin IS NULL OR origin NOT IN ('manual','imported','note'))"
+  + ' AND (decisions IS NULL OR length(decisions) <= 2)'
+  + ' AND (key_questions IS NULL OR length(key_questions) <= 2))';
+
+/** 这场会话算不算"一次性探针"（口径见 PROBE_SQL） */
+export function countProbeSessions(db: DB, projectId?: string): number {
+  const sql = 'SELECT COUNT(*) n FROM sessions s WHERE ' + PROBE_SQL + (projectId ? ' AND s.project_id = ?' : '');
+  const row = (projectId ? db.prepare(sql).get(projectId) : db.prepare(sql).get()) as { n: number };
+  return Number(row?.n ?? 0);
+}
+
 export function countsByState(db: DB, projectId: string): Record<string, number> {
   const rows = db.prepare('SELECT state, COUNT(*) n FROM sessions WHERE project_id = ? GROUP BY state').all(projectId) as Array<{ state: string; n: number }>;
   return Object.fromEntries(rows.map(r => [r.state, r.n]));
@@ -796,9 +821,11 @@ export function listRecentFiles(db: DB, opts: { days?: number; top?: number; max
   const top = opts.top ?? 3
   const maxSessions = opts.maxSessions ?? 300
   const cutoff = new Date(Date.now() - days * 86_400_000).toISOString()
+  // [B3] 一次性探针会话不进这个信号：它们也常常"顺手提到一个文件"，但那是噪声不是"在动"。
   const rows = db.prepare(`SELECT files_mentioned, decisions, coalesce(last_event_at, created_at) AS t
     FROM sessions
     WHERE files_mentioned IS NOT NULL AND files_mentioned != '[]' AND coalesce(last_event_at, created_at) >= ?
+      AND NOT ${PROBE_SQL}
     ORDER BY t DESC LIMIT ?`).all(cutoff, maxSessions) as Array<{ files_mentioned: string; decisions: string | null }>
   const agg = new Map<string, RecentFileRow>()
   for (const r of rows) {

@@ -96,7 +96,19 @@ export interface SearchOptions {
   rewriteBelow?: number;
   /** [1016] 多路加权融合（默认关：先量再开，见交接 §15/§16） */
   fusion?: boolean;
-  /** [1016 A5] 长度归一化：默认关。129 题自动基准有结构性偏置（出题只取 <=600 条的会话，被罚的巨无霸永远不是答案），红队 B 反向出题（答案是巨无霸）hit@1 -11.9pt；20 问人类基准同代码五配置对照：关 -> 关键词 15/16/20 大白话 12/15/19，开 -> 15/17/18 大白话 10/14/17。净收益只在「答案是小会话」时成立，故保留代码但不做默认。 */
+  /**
+   * [1016 A5] 长度归一化：**默认开**（用户 2026-10-16 拍板）。`lengthNorm: false` 才关，用于 A/B。
+   *
+   * 它做什么：`score *= 1 / (1 + log10(1 + message_count / 300))` —— 给"两三千条消息的巨无霸"降权。
+   * 为什么必须在**打分阶段**做：那种会话什么词都碰得到，在每一条路上都是第一名；事后乘系数改不动这件事。
+   *
+   * 证据（两边都有，一并留档，别只引对自己有利的一半）：
+   *   · 自然混合（129~143 题/臂，公平出题口径）：三臂 hit@1 全涨（K +6.2 / S +16.3 / M +21.7 个百分点），hit@10 也涨；
+   *   · 20 问人类基准：关键词 15/16/20 不变；大白话 hit@1 10→11、hit@10 18→19；
+   *   · **反向代价**：反向出题"答案恰好是那个巨无霸"时 hit@1 21.4%→9.5%；20 问里有一组短题面大白话 hit@1 −2。
+   * 净判断：日常问法里"答案在巨型老会话里"是小概率，用户在 2026-10-16 明确选择开启；
+   * 但如果以后发现某些问法变差，第一个该动的是**衰减曲线的常数 300**（改大 = 更温和），不是这条开关。
+   */
   lengthNorm?: boolean;
 }
 
@@ -163,11 +175,13 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   // [1016 A5] 长度归一化：BM25 的 b 参数思想——长文档天然容易命中更多词，不打折就会霸榜。
   // 实测依据：20 问基准里 9/20 的 top1 落在两三千条消息的会话上；且大样本里 RRF 融合
   // 也栽在这（每条路它都第一）⇒ 必须**在打分阶段**压，而不是事后乘系数。
-  if (opts.lengthNorm === true && hits.length > 0) {
+  // 默认开（`lengthNorm: false` 才关）。⚠️ 原先这里把 SQL 写成一串 String.fromCharCode —— 那是
+  // "别用字符串拼接生成代码"那条教训被过度执行的产物，可读性为零；直接写字面量与参数绑定就够了。
+  if (opts.lengthNorm !== false && hits.length > 0) {
     const ids = hits.map((h) => h.sessionId);
-    const ph = ids.map(() => String.fromCharCode(63)).join(String.fromCharCode(44));
+    const ph = ids.map(() => '?').join(',');
     try {
-      const rows = db.prepare(String.fromCharCode(83,69,76,69,67,84) + String.fromCharCode(32,105,100,44,32,109,101,115,115,97,103,101,95,99,111,117,110,116,32,65,83,32,99,32,70,82,79,77,32,115,101,115,115,105,111,110,115,32,87,72,69,82,69,32,105,100,32,73,78,32,40) + ph + String.fromCharCode(41)).all(...ids);
+      const rows = db.prepare('SELECT id, message_count AS c FROM sessions WHERE id IN (' + ph + ')').all(...ids);
       const pen = new Map();
       for (const r of rows as Array<{ id: string; c: number }>) pen.set(r.id, 1 / (1 + Math.log10(1 + Number(r.c || 0) / 300)));
       for (const h of hits) h.score = h.score * (pen.get(h.sessionId) || 1);
@@ -333,11 +347,10 @@ function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[
   const all: string[] = [];
   const seenSid = new Set<string>();
   for (const p of paths) for (const h of p.hits) if (!seenSid.has(h.sessionId)) { seenSid.add(h.sessionId); all.push(h.sessionId); }
-  // [复审 C-4] 融合路也必须认 `lengthNorm` 这个开关。
-  // 病历：这里原来**无条件**惩罚，于是 `--lengthnorm 0` 只关了主路、没关融合路 ——
-  // 用 lengthNorm:false 当对照组的 A/B（开 fusion 时）对照组是脏的（复核实测：只改 message_count，
-  // fusion:true 的排序会变，而 fusion:false 不变）。产品默认 fusion 关，所以线上没受影响，但仪器必须干净。
-  const pen = opts.lengthNorm === true ? lengthPenalty(db, all) : new Map<string, number>();
+  // [复审 C-4] 融合路也必须认 `lengthNorm` 这个开关，且**口径与主路一致**（默认开、false 才关）。
+  // 病历：这里原先无条件惩罚 ⇒ `--lengthnorm 0` 只关了主路、没关融合路，A/B 对照组是脏的
+  // （复核实测：只改 message_count，fusion:true 的排序会变，而 fusion:false 不变）。
+  const pen = opts.lengthNorm !== false ? lengthPenalty(db, all) : new Map<string, number>();
   const score = new Map<string, number>();
   const nPaths = new Map<string, number>();
   const first = new Map<string, SearchHit>();
