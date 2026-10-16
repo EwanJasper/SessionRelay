@@ -33,7 +33,7 @@ describe('[1016 S1] 全局经验层', () => {
 
   it('定级基础分与阈值照抄实测值', () => {
     expect([GRADES['verified-tool'], GRADES['verified-user'], GRADES['verified-file'], GRADES.inferred]).toEqual([9, 7.5, 6, 1.5]);
-    expect(INJECT_THRESHOLD).toBe(6);
+    expect(INJECT_THRESHOLD).toBe(5.5);
   });
 
   it('中文检索：换词能命中', () => {

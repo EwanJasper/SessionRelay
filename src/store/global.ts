@@ -23,8 +23,14 @@ export type Grade = keyof typeof GRADES;
 export type Scope = 'project' | 'domain' | 'global';
 export type Status = 'draft' | 'verified' | 'retired';
 
-/** 能进注入层的最低分（写入时的基础分，之后按年龄衰减） */
-export const INJECT_THRESHOLD = 6.0;
+/**
+ * 能进注入层的最低分。
+ *
+ * ⚠️ 必须是 5.5 而不是 6.0：verified-file 的基础分正好是 6.0，阈值若也取 6.0，
+ * 那么**任何一丁点年龄衰减都会把它压到线下**（哪怕只过了几毫秒）——实测被测试抓到过
+ * （expected 1 to be 2）。留 0.5 的间隔 = 新经验白送约 60 天曝光期，之后要靠被用来续命。
+ */
+export const INJECT_THRESHOLD = 5.5;
 /** 年龄衰减：每天扣多少分（照抄实测值） */
 export const DECAY_PER_DAY = 0.0083;
 
