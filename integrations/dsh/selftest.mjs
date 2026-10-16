@@ -563,7 +563,10 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
   const v2 = reg[0].text(asm)
   const hot = Date.now() - t1
   check(`热路径 20 次求值 < 50ms（实测 ${hot}ms）`, hot < 50)
-  check('热路径内容与冷路径一致', v1 === v2)
+  // [B5] 🌿 Git 行是**异步路径专有**的（要起 git 子进程，绝不能进 prompt 组装的关键路径）——
+  // 所以"逐字节一致"这条要把它排除掉再比；除此之外任何差异仍然是真问题。
+  const stripGit = (t) => String(t ?? '').split('\n').filter((l) => !l.startsWith('🌿 Git')).join('\n')
+  check('热路径内容与冷路径一致（🌿 Git 行除外：它只在异步路径取）', stripGit(v1) === stripGit(v2))
 
   // 第三证据：若 vendor CLI 可达，用手算 CLI 简报与 SQL 简报比对正文
   if (fsx.existsSync(cli)) {

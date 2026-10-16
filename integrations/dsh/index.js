@@ -283,6 +283,33 @@ function kanbanText(root) {
   } catch { return '' }   // 绝不因为看板读失败而让整条简报消失
 }
 
+// ── Git 脏状态（[B5]，2026-10-16）──
+// 为什么值得占预算：模型看不到工作区状态时，会把"已经改了一半的东西"当成不存在 ——
+// 典型症状是它让你"先写 X"，而 X 其实早就写完、只差提交。
+// 为什么只在**异步路径**做：这里要起一个 git 子进程（实测 20~60ms）；prompt 组装的关键路径
+// 绝不能有子进程（那是插件架构的第一条约束）。冷路径没有这一行，下一轮就有。
+// 失败一律静默：不是 git 仓库 / 没装 git / 超时 → 返回空串，整行不出现。
+function gitStatusText(root) {
+  try {
+    // -c core.quotepath=false：否则中文文件名会被 git 转义成 \345\233\276 这种八进制（实测踩到）
+    const out = execFileSync('git', ['-c', 'core.quotepath=false', '-C', root, 'status', '--porcelain=v1', '--branch'], {
+      timeout: 1500, windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
+    })
+    const lines = String(out || '').split(/\r?\n/).filter(Boolean)
+    if (lines.length === 0) return ''
+    const head = lines[0].startsWith('##') ? lines[0].slice(2).trim() : ''
+    // 分支行形如：main...origin/main [ahead 3, behind 1] —— 只留分支名与 ahead/behind 摘要
+    const br = /^([^\s.]+)/.exec(head)?.[1] ?? ''
+    const gap = /\[([^\]]+)\]/.exec(head)?.[1] ?? ''
+    const files = lines.slice(1)
+    if (!br && files.length === 0) return ''
+    const names = files.slice(0, 3).map((l) => l.slice(3).trim().replace(/^"|"$/g, '')).map((n) => (n.length > 28 ? '…' + n.slice(-26) : n))
+    const more = files.length > names.length ? ` 等 ${files.length} 个` : ''
+    const body = files.length === 0 ? '工作区干净' : `${files.length} 个未提交：${names.join('、')}${more}`
+    return `🌿 Git：${br}${gap ? ' ' + gap : ''} · ${body}`
+  } catch { return '' }
+}
+
 // ── 最近在动哪些文件（v17：files 列精确度修到 99%/100% 之后才有意义） ──
 // 为什么是**一行而不是一段**：它是"定位线索"，不是内容——告诉模型"这几处最近反复被碰过，
 // 要细节就去检索"。全自动、零噪声，不依赖任何从对话里嗅意义的猜测。
@@ -308,6 +335,7 @@ function recentFilesText(root) {
 
 // 供 selftest 用（与 __testRenderItems 同理）：不导出就没法断言这一行的行为。
 export const __testRecentFilesText = (root) => recentFilesText(root)
+export const __testGitStatusText = (root) => gitStatusText(root)
 
 // [1015 夜 · 排版] 在**标点边界**截断，而不是硬切。
 // 病历：实测主库简报里出现「…zcode CLI/webui/ttyd」「…· 严」这种半截词——
@@ -322,13 +350,13 @@ function clipAt(s, max) {
 }
 export const __testClipAt = clipAt
 // [1016 A3] 降档逻辑的测试钩子：三档 + 最小体都要能被断言
-export const __testRenderBrief = (root, dec, unr, counts, kanban = '', recent = '', experiences = '', modulesLine = '') =>
-  renderBrief(root, dec, unr, counts, kanban, recent, experiences, modulesLine)
+export const __testRenderBrief = (root, dec, unr, counts, kanban = '', recent = '', experiences = '', modulesLine = '', gitLine = '') =>
+  renderBrief(root, dec, unr, counts, kanban, recent, experiences, modulesLine, gitLine)
 export const __testMaxChars = MAX_CHARS
 
-function renderBrief(root, dec, unr, counts, kanban = '', recent = '', experiences = '', modulesLine = '') {
+function renderBrief(root, dec, unr, counts, kanban = '', recent = '', experiences = '', modulesLine = '', gitLine = '') {
   // [红队 A-4] 早退判据必须把**新加的两段**也算上：新项目常常没有决策/未决/看板，但有 🌍 经验或 🗺 锚点
-  if (!dec.length && !unr.length && !kanban && !recent && !experiences && !modulesLine) return ''
+  if (!dec.length && !unr.length && !kanban && !recent && !experiences && !modulesLine && !gitLine) return ''
   // Phase 1 ② 工具提示句：DSH 侧 MCP 已按方案 C 卸掉，检索只能靠 CLI，
   // 所以这里说的是命令而不是 MCP 工具名（两侧措辞不同、语义同向——
   // 都是"有检索可用、什么时候用"。check-brief-filters.mjs 只比对过滤器，
@@ -346,7 +374,7 @@ function renderBrief(root, dec, unr, counts, kanban = '', recent = '', experienc
   const build = (clip) => {
     const cut = (s) => (clip >= 9999 ? s : clipAt(s, clip))
     return [
-      header, kanban, recent, experiences,
+      header, kanban, recent, gitLine, experiences,
       dec.length ? '近期决策：\n' + dec.map(cut).join('\n') : '',
     // [1016 A6] 「其余未展开决策涉及模块」——**只在确实有决策没显示时才出**，
     // 否则它跟 🗂 行重复。它补的是"模型不知道自己漏了什么"。
@@ -392,9 +420,11 @@ function extraSections(root, counts, opts = {}) {
 /** 真正取数的地方：异步，跑在组装路径之外。直查 SQL 优先，CLI 子进程兜底 */
 async function buildBrief(root) {
   const sql = sqlItems(root)
+  // [B5] Git 脏状态：**只在异步路径**取（要起子进程，见 gitStatusText 的注释）
+  const gitLine = gitStatusText(root)
   if (sql) {
     const { experiences, modulesLine } = extraSections(root, { dec: sql.counts?.dec ?? 0, shown: sql.dec?.length ?? 0 })
-    return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root), recentFilesText(root), experiences, modulesLine)
+    return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root), recentFilesText(root), experiences, modulesLine, gitLine)
   }
   const [decRaw, unrRaw] = await Promise.all([
     runSrelay(['decisions', '--limit', '200', '--json'], root, 4000),
@@ -408,7 +438,7 @@ async function buildBrief(root) {
   // 又是"静默少一段"，而 selftest 的"两条路逐字节一致"比的是两个冷路径，抓不到它。
   const { experiences, modulesLine } = extraSections(root, { dec: counts.dec, shown: dec.length })
   return renderBrief(root, dec, parseItems(unrRaw, 'unresolved', UNR_SLOTS), counts, kanbanText(root), recentFilesText(root),
-    experiences, modulesLine)
+    experiences, modulesLine, gitLine)
 }
 
 /** 从两份 --json 原始串里取条数（复用已取到的数据，不新增子进程——低延迟是硬约束） */
