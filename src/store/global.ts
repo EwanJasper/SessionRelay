@@ -103,7 +103,13 @@ export function addLesson(db: Database.Database, input: AddInput): { id: number;
   let reason = '';
   if (grade !== 'inferred' && !input.sourceRef) { effectiveGrade = 'inferred'; reason = '给了定级但没给来源，降为 inferred'; }
   // 状态：有证据的显式录入 = verified；自动产 / 无来源 = draft（设计 §11.2 的「不能随便入库」）
-  const status: Status = input.status ?? (effectiveGrade !== 'inferred' && !!input.sourceRef ? 'verified' : 'draft');
+  let status: Status = input.status ?? (effectiveGrade !== 'inferred' && !!input.sourceRef ? 'verified' : 'draft');
+  // [红队 A-9] 显式 `--status verified` 不能绕开"没有定级就是草稿"：注入闸有 `grade <> 'inferred'` 兜着，
+  // 但库里留一条"verified 且 inferred"的矛盾记录会让人误判（列表里到底算 ● 还是 ○）。
+  if (status === 'verified' && effectiveGrade === 'inferred') {
+    status = 'draft';
+    reason = reason ? reason + '；inferred 只能是草稿' : 'inferred 只能是草稿（要进注入层先 lesson confirm）';
+  }
   const info = db.prepare(
     'INSERT INTO lessons (scope, workspace_id, domain, text, search_text, quote, source_ref, route, grade, importance, status, created_at, updated_at)'
     + ' VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
