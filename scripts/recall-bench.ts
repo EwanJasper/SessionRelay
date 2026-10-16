@@ -10,8 +10,13 @@
 //   M  错位臂  ：取 3 个普通词、且**不含任何低频专名**（模拟「换了说法」）
 //
 // 用法：npx tsx scripts/recall-bench.ts <库路径> [--n 150] [--limit 10] [--rewrite 0|1] [--fusion 0|1] [--lengthnorm 0|1] [--json out.json]
+//                                        [--save-questions f.json] [--use-questions f.json]
+//   ⚠️ 做 A/B **必须**先 --save-questions 固定一批题面，之后每轮 --use-questions 复用它 ——
+//      否则 ORDER BY RANDOM() 会换题面，跨轮差异里混着题面差异（P1 仪器缺陷，见交接 §10）。
+//   现成的一批：scripts/bench-questions-agent1super.json（agent1super 库，198 条，2026-10-17 落盘）
 //   --fusion 不给 = 产品默认（主路不硬时才融合）；1 = 强制融合；0 = 关（对照组）
 import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 const require2 = createRequire(import.meta.url);
 const Database = require2('better-sqlite3');
@@ -64,7 +69,24 @@ const pickMsg = db.prepare("SELECT content FROM messages WHERE session_id = ? AN
 const stats = { sess: sessions.length, toks: 0, noRare: 0, fewCommon: 0, ok: 0 };
 interface Item { arm: 'K' | 'S' | 'M'; query: string; target: string }
 const items: Item[] = [];
-for (const s of sessions) {
+
+// [1017 夜 · P1 仪器缺陷修复] 题面**必须可落盘复用**。
+// 病历：抽样用的是 ORDER BY RANDOM()，每跑一次题面就换一批 —— 于是"这轮 vs 上轮"的差异里
+//   混着题面差异，跨轮不可比（2026-10-17 那组融合 A/B 就是这么量的，只能看方向不能看幅度）。
+// 用法：
+//   node ... --save-questions bench/q-20261017.json   # 第一次：固定一批题面
+//   node ... --use-questions  bench/q-20261017.json   # 之后每次 A/B 都用这同一批
+const SAVE_Q = arg('save-questions', '');
+const USE_Q = arg('use-questions', '');
+if (USE_Q) {
+  const j = JSON.parse(fs.readFileSync(USE_Q, 'utf8')) as { dbPath?: string; limit?: number; items: Item[] };
+  if (j.dbPath && j.dbPath !== dbPath) console.log('⚠️ 题面来自另一个库（' + j.dbPath + '）—— 只在你明确跨库对照时才这么做');
+  if (j.limit && j.limit !== LIMIT) console.log('⚠️ 题面的 limit=' + j.limit + ' 与本次 --limit=' + LIMIT + ' 不同，命中率不可直接比');
+  items.push(...j.items);
+  stats.ok = items.length / 3;
+  console.log('题面来自 ' + USE_Q + '（' + items.length + ' 条，可跨轮对照）');
+}
+if (!USE_Q) for (const s of sessions) {
   if (items.length >= N * 3) break;
   const msgs = pickMsg.all(s.id) as Array<{ content: string }>;
   if (msgs.length === 0) continue;
@@ -79,6 +101,13 @@ for (const s of sessions) {
   items.push({ arm: 'K', query: rare[0], target: s.id });
   items.push({ arm: 'S', query: common.slice(0, 2).join(' '), target: s.id });
   items.push({ arm: 'M', query: common.slice(0, 3).join(' '), target: s.id });
+}
+if (SAVE_Q && !USE_Q) {
+  try {
+    fs.mkdirSync(path.dirname(SAVE_Q), { recursive: true });
+    fs.writeFileSync(SAVE_Q, JSON.stringify({ at: new Date().toISOString(), dbPath, limit: LIMIT, n: N, items }, null, 2));
+    console.log('题面已落盘：' + SAVE_Q + '（' + items.length + ' 条）—— 下次用 --use-questions 复用同一批');
+  } catch (e) { console.log('题面落盘失败（不影响本次结果）：' + String((e as Error)?.message ?? e)); }
 }
 
 let probeN = 0, fuseDiff = 0, gateOpen = 0;

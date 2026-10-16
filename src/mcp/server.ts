@@ -195,9 +195,14 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     const callPred = predFrom(args);
     // T28：每次调用重新装配（scope.json 热更新）
     const asm = assembleScope({ root: cur.root, cfg: cur.cfg, callPred, includeAuto: true });
+    // [1017 夜] 语义档的开关/模型**必须每次调用重读配置**：serve 是常驻进程，把 config 读一次就缓存
+    // ⇒ 用户关掉语义档或换模型都不生效，出现"看起来在工作"的半开状态（调研件 §4 的头号风险）。
+    // 重读代价是一次小文件读+parse，MCP 工具调用不在 prompt 热路径上，可以接受。
+    let cfgNow = cur.cfg;
+    try { cfgNow = loadConfig(cur.root); } catch { /* 配置坏了就沿用旧的，语义档本身也有状态记录 */ }
     // 语义补充命中（design-semantic：未启用返回 null = 纯 FTS，行为与 0.2.5 等价）
     const { semanticSearch } = await import('../search-svc/semantic.js');
-    const semHits = await semanticSearch(cur.db, cur.cfg, args.query, { project: cur.project, extraWhere: asm.where });
+    const semHits = await semanticSearch(cur.db, cfgNow, args.query, { project: cur.project, extraWhere: asm.where });
 
     // ── kind=files：某文件路径被哪些会话讨论过（跨 agent）──
     if (kind === 'files') {

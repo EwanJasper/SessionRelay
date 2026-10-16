@@ -165,8 +165,12 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
           log(`${why}: +${s.newMessages} 消息 · resumed ${s.resumed} · pending ${j.toPending} · confirmed ${j.confirmed}${spool.endSignals ? ` · hook信号 ${spool.endSignals}` : ''}`);
         }
         // 语义 digest（design-semantic §3.2）：confirmed 且无向量的会话限量补嵌，CPU 友好
+        // [1017 夜] **每 tick 重读配置**：守护是常驻进程，缓存 config 会让"关掉语义档"不生效 ——
+        // 用户关了开关，后台还在默默补嵌向量（调研件 §4 的头号风险：看起来在工作）。
         const { digestSemantic } = await import('../search-svc/semantic.js');
-        await digestSemantic(db, opts.config, { projectId, limit: 20 });
+        let cfgTick = opts.config;
+        try { cfgTick = loadConfig(root); } catch { /* 配置坏了沿用启动时那份 */ }
+        await digestSemantic(db, cfgTick, { projectId, limit: 20 });
       } catch (e) {
         log(`周期失败（不退出）: ${(e as Error).message}`);
       }

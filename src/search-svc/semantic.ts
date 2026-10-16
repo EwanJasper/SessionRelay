@@ -80,17 +80,54 @@ async function getPipeline(model: string) {
   return transformersPipeline;
 }
 
+// ── 模型档案：pooling / 维度 / 量化档**必须与模型匹配** ──
+//
+// 病历（1017 夜调研，docs/research/2026-10-18-语义档引擎与模型选型.md §4/§5）：
+// 这三样原先全是写死的 —— dtype 固定 'q8'、pooling 固定 'cls'、dim 写死 512。
+// 于是**换一个 pooling 不同的模型（如 Qwen3-Embedding 要 last_token）会静默产出垃圾向量**：
+// 装载成功、检索返回结果、分数看着正常，内容全错 —— 正是"看起来在工作"的一号故障模式。
+//
+// 判据：认识的模型用档案；**不认识的模型直接拒绝**（报错→降级纯 FTS），不再默默按 cls 跑。
+export interface ModelProfile { pooling: 'cls' | 'mean' | 'last_token'; dim: number; dtype: string }
+
+export const MODEL_PROFILES: Record<string, ModelProfile> = {
+  // 默认档：24M/512 维/MIT，q8 ONNX 约 22.9MB（C-MTEB 58.28，见调研件 §2）
+  'Xenova/bge-small-zh-v1.5': { pooling: 'cls', dim: 512, dtype: 'q8' },
+};
+
+/** 按模型名推断档案。**认不出返回 null** —— 调用方据此拒绝，不猜。 */
+export function profileOf(model: string): ModelProfile | null {
+  const hit = MODEL_PROFILES[model];
+  if (hit) return hit;
+  // 家族兜底：只对"公知且稳定"的族做推断，且都按 cls（bge 全系都是 cls）。
+  if (/bge-small-zh/i.test(model)) return { pooling: 'cls', dim: 512, dtype: 'q8' };
+  if (/bge-base-zh/i.test(model)) return { pooling: 'cls', dim: 768, dtype: 'q8' };
+  if (/bge-large-zh/i.test(model)) return { pooling: 'cls', dim: 1024, dtype: 'q8' };
+  if (/bge-m3/i.test(model)) return { pooling: 'cls', dim: 1024, dtype: 'q8' };
+  // Qwen3-Embedding 官方用法是**最后一个 token**的隐状态（last_token），不是 cls —— 这条推错就是垃圾向量。
+  if (/qwen3-embedding/i.test(model)) return { pooling: 'last_token', dim: 1024, dtype: 'q8' };
+  return null;
+}
+
 export async function createTransformersEmbedder(model: string): Promise<Embedder> {
+  const prof = profileOf(model);
+  if (!prof) {
+    throw new Error('未知模型档案：' + model + ' —— 它的 pooling/维度/量化档没有登记，按默认 cls 跑会**静默产出垃圾向量**。'
+      + '请先在 core/SessionRelay/src/search-svc/semantic.ts 的 MODEL_PROFILES 里登记（pooling 与维度查该模型官方用法）。');
+  }
   const pipe = await getPipeline(model);
-  const extractor = await pipe('feature-extraction', model, { dtype: 'q8' });
+  const extractor = await pipe('feature-extraction', model, { dtype: prof.dtype });
   return {
     model,
-    dim: 512, // bge-small-zh-v1.5 是 512 维（384 是英文版）；实际以 vec.length 落库，此声明仅文档性
+    dim: prof.dim,
     async embed(text: string): Promise<Float32Array> {
       // transformers.js v3：pipeline 返回 Tensor（.data 为扁平 Float32Array，单输入 shape [1, dim]）
       // normalized 选项实测未生效（分数呈点积量级）→ 按设计 R2 在此强制 L2，保证余弦阈值可比
-      const out = (await extractor([text.slice(0, MAX_INPUT_CHARS)], { pooling: 'cls' })) as unknown as { data: Float32Array | number[] };
-      return l2(Float32Array.from(out.data));
+      const out = (await extractor([text.slice(0, MAX_INPUT_CHARS)], { pooling: prof.pooling })) as unknown as { data: Float32Array | number[] };
+      const v = l2(Float32Array.from(out.data));
+      // 维度自检：档案写 512 却出 768 ⇒ 档案错了（或模型换了），当场报而不是让垃圾向量进库
+      if (v.length !== prof.dim) throw new Error('模型维度与档案不符：档案 ' + prof.dim + '，实际 ' + v.length + '（模型 ' + model + '）');
+      return v;
     },
   };
 }

@@ -100,3 +100,38 @@ describe('语义档 · 真跑一次装载失败', () => {
     expect(readSemanticStatus().state).toBe('never');
   });
 });
+// 语义档 · 模型档案（防"静默产出垃圾向量"）
+//
+// 病历（1017 夜调研）：dtype/pooling/维度原先全写死（q8 / cls / 512）。
+// 换一个 pooling 不同的模型（如 Qwen3-Embedding 要 last_token）会**装载成功、检索有结果、分数看着正常**
+// —— 但向量是垃圾。是"看起来在工作"的一号故障模式，所以判据是：认不出就拒绝，不猜。
+import { describe, it, expect } from 'vitest';
+import { profileOf, MODEL_PROFILES, DEFAULT_MODEL } from '../../src/search-svc/semantic.js';
+
+describe('语义档 · 模型档案', () => {
+  it('默认模型必须有档案（它是唯一被实测过的档）', () => {
+    expect(MODEL_PROFILES[DEFAULT_MODEL]).toEqual({ pooling: 'cls', dim: 512, dtype: 'q8' });
+    expect(profileOf(DEFAULT_MODEL)?.pooling).toBe('cls');
+  });
+
+  it('bge 中文系列按 cls，维度按档位（small 512 / base 768 / large 1024）', () => {
+    expect(profileOf('Xenova/bge-base-zh-v1.5')?.dim).toBe(768);
+    expect(profileOf('BAAI/bge-large-zh-v1.5')?.dim).toBe(1024);
+    expect(profileOf('BAAI/bge-m3')?.pooling).toBe('cls');
+  });
+
+  it('Qwen3-Embedding 必须走 last_token —— 推成 cls 就是垃圾向量', () => {
+    expect(profileOf('onnx-community/Qwen3-Embedding-0.6B')?.pooling).toBe('last_token');
+  });
+
+  it('不认识的模型返回 null（装载前就拒绝，不按默认 cls 蒙一把）', () => {
+    expect(profileOf('text-embedding-3-large')).toBeNull();
+    expect(profileOf('随便一个没登记的模型')).toBeNull();
+  });
+
+  it('真的去装未知模型 → 报错里说清"该怎么办"，而不是静默降级', async () => {
+    const { createTransformersEmbedder } = await import('../../src/search-svc/semantic.js');
+    await expect(createTransformersEmbedder('没登记/model')).rejects.toThrow(/未知模型档案/);
+    await expect(createTransformersEmbedder('没登记/model')).rejects.toThrow(/MODEL_PROFILES/);
+  });
+});
