@@ -26,6 +26,17 @@ interface DshHeader {
   cwd?: string;
   delegationDepth?: number;
   isSeeded?: boolean;
+  /**
+   * [B2] 父会话指针（形如 "session-1b1aea52-…"）。
+   *
+   * ⚠️ 交接文档里曾写"DSH 有 delegationDepth，但没有指向父会话的可靠字段"——**实测是有的**：
+   * 会话头第一行就带 parentSession（新旧格式都有：version 0 的 8 月会话与 version 4 的都验过）。
+   * 委派（subagent）会话按**它们自己的工作目录**分组（实测落在 --E-work--），
+   * 所以任何项目都发现不到它们（941 个会话目录一条没采）；顺着这个指针回到发起者，
+   * 才知道"这活是给哪个项目的"。
+   */
+  parentSession?: string;
+  origin?: string;
 }
 
 /** 头帧缓存：discover 每周期扫全组，头部 (mtime,size) 未变的文件零解压（zcode discoverCache 同范式） */
@@ -49,6 +60,87 @@ function readHeaderCached(fp: string, st: fs.Stats): DshHeader | null {
   } catch { /* 头帧异常：discover 降级为无元数据，不阻塞 */ }
   headerCache.set(fp, { mtimeMs: st.mtimeMs, size: st.size, header });
   return header;
+}
+
+/**
+ * [B2] 「这个会话属于哪个项目」——按**会话自己 + 祖先链的 cwd** 判定。
+ *
+ * 为什么需要：DSH 把会话按 cwd 分组（`--D-agent1super--` 这种），而委派（subagent）会话的
+ * cwd 是它自己的工作目录（实测 `E:\work`）⇒ 全部落在 `--E-work--` 组里，
+ * **任何已注册项目都发现不到**（实测那个组有 941 个会话目录、一条没采，其中包含历次红队/子代理的
+ * 真实工作记录）。会话头里的 parentSession 指向发起它的会话，顺着父链走到底就是真项目。
+ *
+ * 口径：只回答"存到哪个库" —— originHint 仍是 workflow（施工日志不进简报，这条既有纪律不变）。
+ * 代价：全量扫一遍头帧（~1500 个会话目录），但有 (mtime,size) 头帧缓存 + 30s 结果缓存，
+ * steady state 下每个 daemon 周期只多付一次 stat。
+ */
+interface ScannedSession { uuid: string; file: string; st: fs.Stats; header: DshHeader | null }
+interface ScanIndex {
+  at: number;
+  /** 每个会话的"归属候选 cwd 链"（自己 → 父 → 祖父 …），已归一化小写 */
+  chains: Map<string, string[]>;
+  byUuid: Map<string, ScannedSession>;
+}
+// ⚠️ 缓存必须**按 sessionsDir 分键**：测试每个用例换一个临时目录、生产里 DSH_HOME 也可能变，
+// 用单槽缓存会让新目录读到旧索引（本回归测试第一版就是这么红的）。
+const scanCache = new Map<string, ScanIndex>();
+const SCAN_TTL_MS = 30_000;
+const MAX_PARENT_HOPS = 6;
+
+const normPath = (p: string) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidOfDir = (name: string) => name.replace(/^session-/, '');
+
+/**
+ * [B2 顺带抓到的真 bug] 会话目录名有**两种**命名，DSH 新版直接用裸 uuid：
+ *   · 老：`session-<uuid>`
+ *   · 新：`<uuid>`
+ * 实测同一组里两种混存：`--D-agent1super--` 22 个目录里 15 个带前缀、7 个裸 uuid；
+ * `--E-work--` 941 个里只有 74 个带前缀。
+ * ⚠️ 只认前缀 = **新版会话一条都发现不到**，而且不报错（静默漏采）——
+ * 本机实测：agent1super 少 7 场、E-work 少 867 场。
+ */
+const isSessionDirName = (n: string) => n.startsWith('session-') || UUID_RE.test(n);
+
+function scanAllGroupSessions(dir: string): ScanIndex {
+  const cached = scanCache.get(dir);
+  if (cached && Date.now() - cached.at < SCAN_TTL_MS) return cached;
+  const byUuid = new Map<string, ScannedSession>();
+  let groups: string[] = [];
+  try { groups = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name); }
+  catch { /* 没有 sessions 目录：空索引 */ }
+  for (const g of groups) {
+    const gd = path.join(dir, g);
+    let subs: fs.Dirent[] = [];
+    try { subs = fs.readdirSync(gd, { withFileTypes: true }); } catch { continue; }
+    for (const e of subs) {
+      if (!e.isDirectory() || !isSessionDirName(e.name)) continue;
+      const best = sessionFileOf(path.join(gd, e.name));
+      if (!best) continue;
+      byUuid.set(uuidOfDir(e.name), { uuid: uuidOfDir(e.name), file: best.file, st: best.st, header: readHeaderCached(best.file, best.st) });
+    }
+  }
+  // 递归解析归属链（自己 → 父 → …），带记忆化；父链断裂/成环都安全退出
+  const chains = new Map<string, string[]>();
+  const resolve = (uuid: string, seen = new Set<string>()): string[] => {
+    const memo = chains.get(uuid);
+    if (memo) return memo;
+    if (seen.has(uuid) || seen.size > MAX_PARENT_HOPS) return [];
+    seen.add(uuid);
+    const s = byUuid.get(uuid);
+    if (!s) return [];
+    const own: string[] = [];
+    if (s.header?.cwd) own.push(normPath(s.header.cwd));
+    const parentUuid = String(s.header?.parentSession ?? '').replace(/^session-/, '');
+    const up = parentUuid ? resolve(parentUuid, seen) : [];
+    const chain = [...own, ...up.filter((p) => !own.includes(p))];
+    chains.set(uuid, chain);
+    return chain;
+  };
+  for (const uuid of byUuid.keys()) resolve(uuid);
+  const idx: ScanIndex = { at: Date.now(), chains, byUuid };
+  scanCache.set(dir, idx);
+  return idx;
 }
 
 /** 会话目录里取会话文件（正常恰一个 *.jsonl.zstd；多文件取最新） */
@@ -127,25 +219,44 @@ export const adapter: SessionSourceAdapter = {
     if (!hasNativeZstd) return [];
     const dir = (config.sessionsDir as string) ?? defaultSessionsDir();
     const groupDir = path.join(dir, dshSessionSlug(path.resolve(root)));
-    if (!fs.existsSync(groupDir)) return [];
+    const want = normPath(root);
     const out: DiscoveredSession[] = [];
-    for (const e of fs.readdirSync(groupDir, { withFileTypes: true })) {
-      if (!e.isDirectory() || !e.name.startsWith('session-')) continue;
-      const sessionDir = path.join(groupDir, e.name);
-      const best = sessionFileOf(sessionDir);
-      if (!best) continue;
-      const uuid = e.name.replace(/^session-/, '');
-      const header = readHeaderCached(best.file, best.st);
+    const seen = new Set<string>();
+
+    const push = (uuid: string, file: string, st: fs.Stats, header: DshHeader | null) => {
+      if (seen.has(uuid)) return;
+      seen.add(uuid);
       out.push({
         source: SOURCE_ID,
         sourceSessionId: uuid,
-        sourceFile: best.file,
+        sourceFile: file,
         title: null,
         createdAt: header?.createdAt ? new Date(header.createdAt).toISOString() : undefined,
-        sizeBytes: best.st.size,
-        mtimeMs: best.st.mtimeMs,
+        sizeBytes: st.size,
+        mtimeMs: st.mtimeMs,
         originHint: (header?.delegationDepth ?? 0) > 0 ? 'workflow' : undefined,
       });
+    };
+
+    // ① 本项目自己的组（原有路径，一字不变）
+    if (fs.existsSync(groupDir)) {
+      for (const e of fs.readdirSync(groupDir, { withFileTypes: true })) {
+        if (!e.isDirectory() || !isSessionDirName(e.name)) continue;
+        const best = sessionFileOf(path.join(groupDir, e.name));
+        if (!best) continue;
+        const uuid = uuidOfDir(e.name);
+        push(uuid, best.file, best.st, readHeaderCached(best.file, best.st));
+      }
+    }
+
+    // ② [B2] 归属链命中本项目的"外来会话"（委派会话的 cwd 是它自己的工作目录，
+    //    靠 parentSession 走回发起者才知道属于谁）。只多认"链上有这个项目"的，
+    //    别人的会话一个都不会被拉进来。
+    const idx = scanAllGroupSessions(dir);
+    for (const [uuid, s] of idx.byUuid) {
+      if (seen.has(uuid)) continue;
+      const chain = idx.chains.get(uuid) ?? [];
+      if (chain.includes(want)) push(uuid, s.file, s.st, s.header);
     }
     return out;
   },

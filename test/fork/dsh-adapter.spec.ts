@@ -37,12 +37,16 @@ const uuid2 = 'bbbbbbbb-1111-2222-3333-444444444444';
 function frame(lines: string[]): Buffer {
   return zlib.zstdCompressSync(Buffer.from(lines.join('\n') + '\n'));
 }
-function writeSession(uuid: string, cwd: string, depth: number, frames: Buffer[]): void {
-  const d = path.join(sessionsDir, dshSessionSlug(projRoot), 'session-' + uuid);
+function writeSession(uuid: string, cwd: string, depth: number, frames: Buffer[], opts: { bareDir?: boolean; group?: string; parent?: string } = {}): void {
+  // [B2] DSH 两种目录命名都真实存在：老 = session-<uuid>，新 = 裸 <uuid>。
+  // 同一组里混存（实测 --D-agent1super-- 22 个目录里 15 带前缀 / 7 裸）。
+  const dirName = opts.bareDir ? uuid : 'session-' + uuid;
+  const d = path.join(sessionsDir, opts.group ?? dshSessionSlug(projRoot), dirName);
   fs.mkdirSync(d, { recursive: true });
   const header = JSON.stringify({
     type: 'session', version: 4, id: uuid, createdAt: Date.now(),
     cwd, isSeeded: false, delegationDepth: depth, agentPreset: 'ptc',
+    ...(opts.parent ? { parentSession: opts.parent } : {}),
   });
   fs.writeFileSync(path.join(d, 'session.v4.jsonl.zstd'), Buffer.concat([frame([header]), ...frames]));
 }
@@ -74,6 +78,28 @@ describe('fork · DSH discover', () => {
     expect(out[0].originHint).toBeUndefined();
     // 另一个项目根（未建组）→ 空
     expect(adapter.discover(path.join(tmp, 'other'), cfg)).toEqual([]);
+  });
+
+  it('[B2] 裸 uuid 目录（新版 DSH 命名）也要发现——只认 session- 前缀=静默漏采', () => {
+    const uuid3 = 'cccccccc-1111-2222-3333-444444444444';
+    writeSession(uuid3, projRoot, 0, [frame([ev('user/message', 7, { content: [{ type: 'text', text: '新版命名' }] })])], { bareDir: true });
+    const out = adapter.discover(projRoot, cfg) as DiscoveredSession[];
+    expect(out.map((s) => s.sourceSessionId)).toContain(uuid3);
+  });
+
+  it('[B2] 委派会话按 parentSession 链归到发起它的项目（父在别的组）', () => {
+    const parentUuid = 'dddddddd-1111-2222-3333-444444444444';
+    const childUuid = 'eeeeeeee-1111-2222-3333-444444444444';
+    // 父会话在【本项目组】里，cwd = 项目根
+    writeSession(parentUuid, projRoot, 0, [frame([ev('user/message', 3, { content: [{ type: 'text', text: '父会话' }] })])]);
+    // 子会话（subagent）落在【另一个组】（实测：subagent 的 cwd 是它自己的工作目录 E:\work）
+    writeSession(childUuid, path.join(tmp, 'workdir'), 1,
+      [frame([ev('user/message', 4, { content: [{ type: 'text', text: '子任务' }] })])],
+      { group: '--tmp-workdir--', parent: 'session-' + parentUuid });
+    const out = adapter.discover(projRoot, cfg) as DiscoveredSession[];
+    const child = out.find((s) => s.sourceSessionId === childUuid);
+    expect(child, '委派会话应归到发起它的项目').toBeTruthy();
+    expect(child?.originHint).toBe('workflow');   // 仍是施工日志：不进简报（既有纪律不变）
   });
 
   it('delegationDepth > 0 标注 workflow（子代理碎片不进决策）', () => {
