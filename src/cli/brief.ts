@@ -16,6 +16,7 @@
 
 import { loadConfig } from '../shared/config.js';
 import { listDecisions, listUnresolved, listRecentFiles } from '../store/db.js';
+import { foldNearDuplicates, lengthRatioGate } from '../core/compact/fold.js';
 import type { DB, DecisionRow, UnresolvedRow, RecentFileRow } from '../store/db.js';
 import { requireRoot, openRelayDb, pc } from './ui.js';
 import { openGlobal, pickForInjection, type LessonRow } from '../store/global.js';
@@ -24,7 +25,7 @@ import { resolveDomain, resolveWorkspaceId } from '../shared/workspace.js';
 export interface BriefPayload {
   decisions: DecisionRow[];
   unresolved: UnresolvedRow[];
-  counts: { decisions: number; unresolved: number };
+  counts: { decisions: number; decisionsRaw?: number; folded?: number; unresolved: number };
   recentFiles: RecentFileRow[];
   /** 🌍 全局经验（两道闸 + 预算后；没命中就是空数组，客户端应整段不渲染） */
   experiences: Array<{ text: string; scope: string; grade: string }>;
@@ -33,14 +34,19 @@ export interface BriefPayload {
 /** 纯取数（不碰 CLI / 不开库）——便于单测与组件复用 */
 export function collectBrief(db: DB, projectId: string, opts: { limit?: number; days?: number; top?: number } = {}, root?: string): BriefPayload {
   const limit = opts.limit ?? 200;
-  const decisions = listDecisions(db, projectId, {}).slice(-limit).reverse();
+  // 呈现层折叠（ADR-003 D3）：近重复只折叠"这一次显示"，存储一条不动 —— 简报里 5 个名额
+  // 应该给 5 件不同的事，而不是同一件事说 3 遍。判据复用核心 isNearDuplicate（含长度比门，
+  // 修掉生产前缀键误杀「采用 Vite 作为前端构建工具」那个 bug）。
+  const rawDecisions = listDecisions(db, projectId, {}).slice(-limit).reverse();
+  const { rows: decisions, folded } = foldNearDuplicates<DecisionRow>(rawDecisions, 0.8, lengthRatioGate);
   const cutoff = Date.now() - 14 * 86_400_000;
   const unresolved = listUnresolved(db, projectId, 100)
     .filter((r) => new Date(r.at).getTime() >= cutoff)
     .slice(0, limit);
   const recentFiles = listRecentFiles(db, { days: opts.days ?? 7, top: opts.top ?? 3 });
   const experiences = collectExperiences(root ?? process.cwd(), opts);
-  return { experiences, decisions, unresolved, counts: { decisions: decisions.length, unresolved: unresolved.length }, recentFiles };
+  return { experiences, decisions, unresolved, recentFiles,
+    counts: { decisions: decisions.length, decisionsRaw: rawDecisions.length, folded, unresolved: unresolved.length } };
 }
 
 export async function cmdBrief(opts: { limit?: number; days?: number; top?: number; json?: boolean }): Promise<void> {

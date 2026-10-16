@@ -28,6 +28,10 @@ export { isSystemToken, isLikelyFile, isTopicNoise } from './core/extract/extrac
 export { findSupersedeConflicts, subjectTokens, hasNegation } from './store/global.js';
 // 压缩 L1：确定性去重合并（判据唯一一份，工具与 CLI 都从这里取）
 export { compactItems, isNearDuplicate } from './core/compact/dedup.js';
+// 呈现层折叠：适配器/插件要折叠显示也必须调这一份（不许自己抄一套判据）
+export { foldNearDuplicates, lengthRatioGate } from './core/compact/fold.js';
+// 老化压缩计划（只做计划；执行复用 capture/archive.ts 的 runArchive）
+export { planAging } from './core/compact/aging.js';
 // [B4] 清 topics 时 meta_text 必须**按原规重算**（title+topics 的索引文本）；
 // 导出核心库这两个函数，工具才不会自己拼一份（拼错=把搜索面写坏）。
 export { metaTextOf, searchTextOf } from './store/db.js';
