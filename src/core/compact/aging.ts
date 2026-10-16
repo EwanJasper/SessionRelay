@@ -33,6 +33,27 @@ export interface AgingOptions {
   currentVersion: number;
   minDecisions?: number;
   cap?: number;
+  /** 连续强度阈值（0~1）：低于它才考虑归档。见 strengthOf() 的注释 —— 取代原来的布尔状态位。 */
+  maxStrength?: number;
+}
+
+/**
+ * **连续强度**（0~1，越大越"还被需要"）——取代"布尔状态位"当淘汰判据。
+ *
+ * 依据（ADR-003 D1）：MemoryBank 用"强度 + 阈值"剪枝；ACT-R 用 `B = ln(Σ t^-d)`（decay 0.35）；
+ * Wixted & Ebbesen 证幂律优于指数。我们不去实现 B 公式（那是给检索用的），而是给**淘汰**一个
+ * 连续量：近期活跃 + 派生结论多 = 强度高；又老又没产出 = 强度低。
+ * ⚠️ 公式改过一次（记录教训）：第一版给"结论密度"和"对话规模"各 0.3/0.1 权重，结果
+ * **结论多的会话反而永远不会被归档** —— 但归档只删**正文**、结论是留着的，所以"结论多"
+ * 恰恰是**该归档**的理由（信息已经提炼出来了）。真正决定"正文还要不要"的只有**最近性**：
+ * 越近越可能要回原文；越老越只剩结论的价值。
+ * 最终公式：`strength = max(0, 1 - ageDays/90)`（0~1），配合 minAgeDays 一起用。
+ * 之所以要它：写死 `state==='active'` 这类布尔门的结果是——门一错，计划恒空/恒满，
+ * 而且**没人能从数字上看出为什么**（我们的 aging 就在这上面栽过）。连续量可解释、可调、可测。
+ */
+export function strengthOf(r: AgingRow, now = Date.now()): number {
+  const age = ageDays(r.last_event_at, now);
+  return Number(Math.max(0, 1 - age / 90).toFixed(3));
 }
 
 function ageDays(at: string | null | undefined, now: number): number {
@@ -52,6 +73,7 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
   const minAge = o.minAgeDays ?? 90;
   const minDec = o.minDecisions ?? 1;
   const cap = o.cap ?? 100;
+  const maxStrength = o.maxStrength ?? 0.25;        // 默认：已经很老且几乎没产出（强度 ≤0.25）才归档
   const plan: AgingPlan = { archive: [], kept: [], reasons: {} };
   const cand: AgingRow[] = [];
   for (const r of rows) {
@@ -65,6 +87,10 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
     if (decisionCount(r.decisions) < minDec) { plan.reasons[r.id] = '没有派生结论，归档了就真没了'; plan.kept.push(r); continue; }
     const d = ageDays(r.last_event_at, now);
     if (d < minAge) { plan.reasons[r.id] = '还不到 ' + minAge + ' 天'; plan.kept.push(r); continue; }
+    const s = strengthOf(r, now);
+    if (s > maxStrength) { plan.reasons[r.id] = '强度 ' + s.toFixed(2) + ' 仍高于阈值 ' + maxStrength; plan.kept.push(r); continue; }
+    (r as unknown as Record<string, unknown>).strength = s;   // 可解释：报告能打印"为什么归档它"
+    plan.reasons[r.id] = '强度 ' + s.toFixed(2) + ' ≤ ' + maxStrength;
     cand.push(r);
   }
   // 老的先归档，每轮封顶（渐变，不突变）
