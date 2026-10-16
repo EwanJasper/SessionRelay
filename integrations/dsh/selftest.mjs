@@ -579,6 +579,30 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
     effect: (fn) => fn(),
   })
   const asm = { agent: { id: 't', session: { header: { cwd: ROOT } } } }
+  // ⚠️ [1017 夜] sqlOk 的导入**必须在冷渲染之前**：原先它夹在 v1 与 v2 之间，
+  // 那个 await 正好给冷路径排下的异步 refresh 让了路 ⇒ v2 拿到刷新后的版本 ⇒ 假红。
+  const bs0 = await import(HERE + 'src/brief-sql.mjs?sql=3')
+  const sqlOk = bs0.sqlChannelAvailable()
+  // 库指纹：用来判断"两次渲染之间数据有没有动"。WAL 模式下写的是 -wal，
+  // 只 stat 主库文件会漏掉绝大多数写入，所以两个都取。
+  // 指纹必须**读内容**，不能读文件大小 —— 这条是踩出来的：
+  //   第一版用 size+mtime 守卫，结果抓到一次"指纹完全没变、🗂 行却从 58 变成 60"的差异。
+  //   原因：SQLite 在 WAL 里是**覆写帧**，既不增文件大小也不一定改 mtime（checkpoint 后复用）。
+  //   于是"库在动"被漏判成"代码不一致"，假红照旧。
+  // 现在用内容探针：会话数 / 消息最大 rowid / 最近事件时间。三者任一变化都说明记忆动过。
+  // 三个值都走 O(1) 或 O(会话数) 的路径（rowid 是 INTEGER PRIMARY KEY，last_event_at 只扫 719 行）。
+  const dbStamp = async () => {
+    try {
+      const { createRequire } = await import('node:module')
+      const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+      const db = new DatabaseSync(pathx.join(ROOT, '.sessionrelay', 'relay.sqlite'), { readOnly: true })
+      try {
+        const r = db.prepare('SELECT (SELECT COUNT(*) FROM sessions) s, (SELECT MAX(rowid) FROM messages) m, (SELECT MAX(last_event_at) FROM sessions) t').get()
+        return 'sessions=' + r.s + ' maxMsgRowid=' + r.m + ' lastEvent=' + r.t
+      } finally { db.close() }
+    } catch { return 'n/a' }
+  }
+  const stamp0 = await dbStamp()
   const t0 = Date.now()
   const v1 = reg[0].text(asm)          // 冷路径：这一帧必须走 SQL
   const cold = Date.now() - t0
@@ -586,8 +610,6 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
   // CLI 兜底要 spawn 两个 node 子进程（实测 >300ms）；直查 SQL 毫秒级。
   // 用 250ms 当分界：既宽到不会因机器抖动假红，又严到能抓住"悄悄回落到子进程"。
   // node:sqlite 不可用的机器上这条不适用（那时慢是预期），交给 8a 的 SKIP 说明。
-  const bs0 = await import(HERE + 'src/brief-sql.mjs?sql=3')
-  const sqlOk = bs0.sqlChannelAvailable()
   // 阈值 350ms（原 250ms）：1017 实测同一台机器 240–270ms 抖动，吃了一次假红。
   // "有没有偷偷回落到子进程"由上面 sqlOk 与下面"强制 CLI 明显更慢"两条独立断言把关，
   // 所以这里的绝对阈值只需抓**量级退化**（比如有人在路径里塞了 spawn）。
@@ -596,10 +618,23 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
   console.log(`     冷路径耗时: ${cold}ms`)
 
   // 第二证据：热路径必须 O(1) 读缓存，且内容与冷路径一致
+  //
+  // ⚠️ [1017 夜 · 修掉一条长期假红] 这两条断言在**库被并发写入**时必然抖动：
+  //   · 实测同一进程内连续两次 queryRecentFiles(root) 结果相同，但**间隔 500ms** 再取，
+  //     🗂 行的三个计数每次都变（MEMORY.md 66/67/68、providers.json 40/41/43…）——
+  //     采集守护正在往这个库里写，这不是测试环境的问题，是正常生产状态。
+  //   · 8c 的三次渲染本身**跨时间**（v1 在 T、v3 在 T+700ms，中间要起两个 node 子进程），
+  //     内联的计数行必然不同 ⇒ 断言把"数据在动"误判成了"代码不一致"。
+  //   · 决定性证据：**未改动的基线 dcecc79 同样红**（连跑 4 次红 2 次），与本轮改动无关。
+  // 修法**不放松判据**：
+  //   ① v1 与 v2 之间不许有 await（已把 sqlOk 的 import 上移到冷渲染之前）——
+  //      同一 tick 内异步 refresh 落不了盘，库没变就必然逐字节相同；
+  //   ② v1 与 v3 之间跨时间无法消除 ⇒ 用**库指纹**守卫：数据动过就 SKIP 并说清原因，
+  //      数据没动就照旧逐字节比。假红会让下一个人直接删掉这条断言，比没有更糟。
   const t1 = Date.now()
   const v2 = reg[0].text(asm)
   const hot = Date.now() - t1
-  check(`热路径 20 次求值 < 50ms（实测 ${hot}ms）`, hot < 50)
+  check('热路径 20 次求值 < 50ms（实测 ' + hot + 'ms）', hot < 50)
   // [B5] 🌿 Git 行是**异步路径专有**的（要起 git 子进程，绝不能进 prompt 组装的关键路径）——
   // 所以"逐字节一致"这条要把它排除掉再比；除此之外任何差异仍然是真问题。
   const stripGit = (t) => String(t ?? '').split('\n').filter((l) => !l.startsWith('🌿 Git')).join('\n')
@@ -633,7 +668,16 @@ console.log('=== 8c. index.js 真的走 SQL（计时 + 正文双证据）===')
     delete process.env.SRELAY_BRIEF_FORCE_CLI
     check('强制 CLI 兜底也产出简报', typeof v3 === 'string' && v3.includes('SessionRelay'))
     if (sqlOk) check(`强制 CLI 明显更慢（实测 ${cliCold}ms vs SQL ${cold}ms）——证明 8c 计时确实在测 SQL`, cliCold > cold)
-    check('两条路简报正文逐字节一致', v1 === v3)
+    // ⚠️ [1017 夜] 这两条渲染之间要 spawn 两个 node 子进程（~700ms），**无法**做到同一 tick。
+    // 库在测试期间被采集写入 ⇒ 计数行必然不同。用指纹守卫：动过就 SKIP 并说清原因，
+    // 没动才逐字节比 —— 判据原样保留，只是拒绝拿错位的数据下结论。
+    const stampA = await dbStamp()
+    if (stampA !== stamp0) {
+      console.log('  SKIP 两条路简报逐字节一致（库在测试期间被写入：' + stamp0 + '  →  ' + stampA + '）')
+      console.log('       判据没放松：库安静时它仍然逐字节比。要看它跑，请在采集守护空闲时重跑。')
+    } else {
+      check('两条路简报正文逐字节一致', v1 === v3)
+    }
     console.log(`     CLI 兜底冷路径耗时: ${cliCold}ms`)
     // [复审 C-1 回归] 冷路径**看得到的段，refresh 之后不许消失**。
     // 病历：🌍/🗺 的 counts 曾在 `if (sql)` 之前统一算 ⇒ CLI 路拿到 {dec:0,shown:0} ⇒ 🗺 恒空；
