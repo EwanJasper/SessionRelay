@@ -96,6 +96,8 @@ export interface SearchOptions {
   rewriteBelow?: number;
   /** [1016] 多路加权融合（默认关：先量再开，见交接 §15/§16） */
   fusion?: boolean;
+  /** [1016 A5] 会话长度归一化：把「几千条消息的巨无霸」在**打分阶段**压下去（不是融合后乘系数） */
+  lengthNorm?: boolean;
 }
 
 /**
@@ -156,6 +158,20 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   for (const [sid, sc] of metaHits) {
     if (hits.some((h) => h.sessionId === sid)) continue; // messages 优先（T27）
     hits.push({ sessionId: sid, score: sc * 0.5, snippet: '', viaMeta: true, coverage: coverageOf(sid), seq: 0 });
+  }
+
+  // [1016 A5] 长度归一化：BM25 的 b 参数思想——长文档天然容易命中更多词，不打折就会霸榜。
+  // 实测依据：20 问基准里 9/20 的 top1 落在两三千条消息的会话上；且大样本里 RRF 融合
+  // 也栽在这（每条路它都第一）⇒ 必须**在打分阶段**压，而不是事后乘系数。
+  if (opts.lengthNorm !== false && hits.length > 0) {
+    const ids = hits.map((h) => h.sessionId);
+    const ph = ids.map(() => String.fromCharCode(63)).join(String.fromCharCode(44));
+    try {
+      const rows = db.prepare(String.fromCharCode(83,69,76,69,67,84) + String.fromCharCode(32,105,100,44,32,109,101,115,115,97,103,101,95,99,111,117,110,116,32,65,83,32,99,32,70,82,79,77,32,115,101,115,115,105,111,110,115,32,87,72,69,82,69,32,105,100,32,73,78,32,40) + ph + String.fromCharCode(41)).all(...ids);
+      const pen = new Map();
+      for (const r of rows as Array<{ id: string; c: number }>) pen.set(r.id, 1 / (1 + Math.log10(1 + Number(r.c || 0) / 300)));
+      for (const h of hits) h.score = h.score * (pen.get(h.sessionId) || 1);
+    } catch { /* 取不到就不惩罚 */ }
   }
 
   hits.sort((a, b) => b.score - a.score || b.coverage - a.coverage);

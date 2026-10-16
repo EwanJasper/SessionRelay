@@ -24,6 +24,8 @@ const N = Number(arg('n', '150'));
 const LIMIT = Number(arg('limit', '10'));
 const REWRITE = arg('rewrite', '1') !== '0';
 const FUSION = arg('fusion', '0') === '1';
+// 默认 = 产品默认（长度归一默认开）；--lengthnorm 0 才关掉，用于 A/B
+const LENGTHNORM = arg('lengthnorm', '1') !== '0';
 
 const db = new Database(dbPath, { readonly: true });
 const projRow = db.prepare('SELECT project_id FROM sessions LIMIT 1').get() as { project_id: string };
@@ -68,7 +70,7 @@ for (const s of sessions) {
 const acc: Record<string, { n: number; h1: number; h3: number; h10: number }> = { K: { n: 0, h1: 0, h3: 0, h10: 0 }, S: { n: 0, h1: 0, h3: 0, h10: 0 }, M: { n: 0, h1: 0, h3: 0, h10: 0 } };
 for (const it of items) {
   let ids: string[] = [];
-  try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION } as never).map((h) => h.sessionId); } catch { continue; }
+  try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId); } catch { continue; }
   const i = ids.indexOf(it.target);
   const a = acc[it.arm];
   a.n++;
@@ -77,7 +79,7 @@ for (const it of items) {
   if (i >= 0) a.h10++;
 }
 
-console.log('库: ' + dbPath + '  改写: ' + (REWRITE ? 'on' : 'off') + '  融合: ' + (FUSION ? 'on' : 'off') + '  limit=' + LIMIT);
+console.log('库: ' + dbPath + '  改写: ' + (REWRITE ? 'on' : 'off') + '  融合: ' + (FUSION ? 'on' : 'off') + '  长度归一: ' + (LENGTHNORM ? 'on' : 'off'));
 console.log('臂   样本    hit@1        hit@3        hit@10');
 for (const k of ['K', 'S', 'M']) {
   const a = acc[k];
