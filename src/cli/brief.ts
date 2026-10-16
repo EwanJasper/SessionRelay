@@ -18,12 +18,15 @@ import { loadConfig } from '../shared/config.js';
 import { listDecisions, listUnresolved, listRecentFiles } from '../store/db.js';
 import type { DB, DecisionRow, UnresolvedRow, RecentFileRow } from '../store/db.js';
 import { requireRoot, openRelayDb, pc } from './ui.js';
+import { openGlobal, pickForInjection, type LessonRow } from '../store/global.js';
 
 export interface BriefPayload {
   decisions: DecisionRow[];
   unresolved: UnresolvedRow[];
   counts: { decisions: number; unresolved: number };
   recentFiles: RecentFileRow[];
+  /** 🌍 全局经验（两道闸 + 预算后；没命中就是空数组，客户端应整段不渲染） */
+  experiences: Array<{ text: string; scope: string; grade: string }>;
 }
 
 /** 纯取数（不碰 CLI / 不开库）——便于单测与组件复用 */
@@ -35,7 +38,8 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
     .filter((r) => new Date(r.at).getTime() >= cutoff)
     .slice(0, limit);
   const recentFiles = listRecentFiles(db, { days: opts.days ?? 7, top: opts.top ?? 3 });
-  return { decisions, unresolved, counts: { decisions: decisions.length, unresolved: unresolved.length }, recentFiles };
+  const experiences = collectExperiences(opts) ;
+  return { experiences, decisions, unresolved, counts: { decisions: decisions.length, unresolved: unresolved.length }, recentFiles };
 }
 
 export async function cmdBrief(opts: { limit?: number; days?: number; top?: number; json?: boolean }): Promise<void> {
@@ -52,4 +56,15 @@ export async function cmdBrief(opts: { limit?: number; days?: number; top?: numb
   } finally {
     db.close();
   }
+}
+
+/** 经验段的取数：**没命中就返回空数组**，由调用方决定整段渲不渲染 */
+function collectExperiences(opts: { top?: number; maxChars?: number }): Array<{ text: string; scope: string; grade: string }> {
+  try {
+    const db = openGlobal();
+    try {
+      const rows = pickForInjection(db, { workspaceId: process.cwd(), top: opts.top ?? 3, maxChars: opts.maxChars ?? 200 });
+      return rows.map((r: LessonRow) => ({ text: r.text, scope: r.scope, grade: r.grade }));
+    } finally { db.close(); }
+  } catch { return []; }   // 全局库还不存在/打不开 = 没有经验，不影响简报其他段
 }

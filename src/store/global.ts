@@ -95,12 +95,14 @@ export function addLesson(db: Database.Database, input: AddInput): { id: number;
   let effectiveGrade: Grade = grade;
   let reason = '';
   if (grade !== 'inferred' && !input.sourceRef) { effectiveGrade = 'inferred'; reason = '给了定级但没给来源，降为 inferred'; }
+  // 状态：有证据的显式录入 = verified；自动产 / 无来源 = draft（设计 §11.2 的「不能随便入库」）
+  const status: Status = input.status ?? (effectiveGrade !== 'inferred' && !!input.sourceRef ? 'verified' : 'draft');
   const info = db.prepare(
     'INSERT INTO lessons (scope, workspace_id, domain, text, search_text, quote, source_ref, route, grade, importance, status, created_at, updated_at)'
     + ' VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).run(scope, input.workspaceId ?? null, input.domain ?? null, text, searchTextOf(text), input.quote ?? null,
     input.sourceRef ?? null, input.route ?? 'none', effectiveGrade, GRADES[effectiveGrade],
-    input.status ?? 'draft', now, now);
+    status, now, now);
     const id = Number(info.lastInsertRowid);
   // 手工维护 FTS：不用触发器 —— 触发器与表定义容易不同步（实测：改了 FTS 列名，触发器还在写旧列，
   // 报错却是「no column named text」，指向上游看不出真因）。写在同一条代码路径上，改一次就够。
@@ -169,4 +171,61 @@ export function exportMarkdown(db: Database.Database): string {
     g.push('- [' + r.grade + ' | ' + r.status + ' | ' + Number(liveImportance(r)).toFixed(1) + '] ' + r.text);
   }
   return g.join(String.fromCharCode(10)) + String.fromCharCode(10);
+}
+/**
+ * 注入挑选：**两道闸 + 预算**（设计见 docs/1016-经验层收什么怎么筛.md §11.2）
+ *
+ *   闸 1 定级：只有 importance ≥ INJECT_THRESHOLD 的才算（draft 与 retired 一律不进）
+ *   闸 2 相关性：与本轮要有**具体**重合——命中标识符（含 . / _ / - 的长词），或共享**实词**；
+ *              常用词不算数（实测有插件因为「这个」两个字把无关经验注进了无关的一轮）。
+ *   预算：超了就截（默认 ≤200 字符 / ≤3 条），**没命中就返回空数组**——空输出优于塞噪声。
+ */
+const COMMON_WORDS = new Set(['这个','那个','什么','怎么','为什么','可以','需要','应该','我们','你们','他们','现在','然后','没有','不是','还是','或者','因为','所以','但是','如果','已经','还有','就是','一下','东西','时候','问题','这样','那样','之外','而且']);
+
+export interface PickOptions {
+  workspaceId?: string; domain?: string; query?: string; top?: number; maxChars?: number;
+}
+
+export function pickForInjection(db: Database.Database, o: PickOptions = {}): LessonRow[] {
+  const top = o.top ?? 3;
+  const maxChars = o.maxChars ?? 200;
+  const w = visibleWhere(o);
+  const rows = (db.prepare(
+    "SELECT * FROM lessons WHERE " + w.sql
+    + " AND status IN ('verified','confirmed') AND grade <> 'inferred'"
+    + " ORDER BY importance DESC LIMIT 40"
+  ).all(...w.params) as LessonRow[]).map((r) => ({ ...r, importance: Number(liveImportance(r)) }))
+    .filter((r) => r.importance >= INJECT_THRESHOLD);
+  if (rows.length === 0) return [];
+
+  // 闸 2 相关性：有本轮查询时才筛；没有查询（如 ZCode 开场）就退化为「按重要度给最重要的几条」
+  let ranked = rows;
+  if (o.query && o.query.trim()) {
+    const q = parseQuery(o.query).units.flat();
+    const specific = q.filter((t) => t.length >= 3 || /[._\-/]/.test(t));
+    const content = q.filter((t) => !COMMON_WORDS.has(t) && t.length >= 2);
+    if (specific.length > 0 || content.length > 0) {
+      const scored = rows.map((r) => {
+        const text = String(r.text ?? '');
+        let idHit = 0, wordHit = 0;
+        for (const t of specific) if (text.includes(t)) idHit++;
+        for (const t of content) if (text.includes(t)) wordHit++;
+        // 标识符命中权重高（与实测设计一致）；一个实词都不共享 = 不相关
+        return { r, hit: idHit * 2 + wordHit, idHit, wordHit };
+      }).filter((s) => s.hit > 0);
+      scored.sort((a, b) => b.hit - a.hit || b.r.importance - a.r.importance);
+      ranked = scored.map((s) => s.r);
+    } else ranked = [];
+  }
+
+  const out: LessonRow[] = [];
+  let used = 0;
+  for (const r of ranked) {
+    const len = String(r.text).length;
+    if (used + len > maxChars && out.length > 0) break;
+    out.push(r);
+    used += len;
+    if (out.length >= top) break;
+  }
+  return out;
 }
