@@ -20,6 +20,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+// [1016 红队 A-10] 「祖先不许被认领」的判据与核心库共用一份（见 src/root-rules.mjs 的说明）
+import { isUnclaimableAncestor } from './src/root-rules.mjs'
 
 const DSH_SESSIONS = path.join(process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh'), 'sessions')
 
@@ -183,11 +185,18 @@ export function resolveProjectRoot(envRoot) {
 //     npm 全局目录、盘符根
 //   放开的安全性由两件事兜底：init 可逆（删目录即消失）+ 注册表 TTL 剪枝自愈。
 
-/** 从 startDir 向上找第一个含 .git 的目录；找不到返回 null */
+/**
+ * 从 startDir 向上找第一个含 .git 的目录；找不到返回 null。
+ *
+ * [1016 红队 A-10] **主目录/临时目录不算祖先**——这是本项目第三个向上探测，
+ * 而判据必须与核心库（paths.ts 的 findRelayRoot / inferProjectRoot）共用一份：
+ * 否则只要 ~ 或 %TEMP% 恰好有 .git，自动接入就会在**主目录**上建库（原始事故形态，换了个入口）。
+ */
 export function findGitRoot(startDir) {
-  let dir = path.resolve(startDir)
+  const start = path.resolve(startDir)
+  let dir = start
   for (;;) {
-    if (fs.existsSync(path.join(dir, '.git'))) return dir
+    if (fs.existsSync(path.join(dir, '.git')) && !isUnclaimableAncestor(start, dir)) return dir
     const parent = path.dirname(dir)
     if (parent === dir) return null
     dir = parent

@@ -2,7 +2,7 @@
 import pc from 'picocolors';
 import { openExisting } from '../store/db.js';
 import type { DB } from '../store/db.js';
-import { findRelayRoot, dbFile } from '../shared/paths.js';
+import { findRelayRootInfo, dbFile } from '../shared/paths.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -17,11 +17,32 @@ export function die(msg: string, hint?: string): never {
   process.exit(1);
 }
 
+/**
+ * 项目根：显式 > 向上探测。
+ *
+ * [1016 红队 A-7 处置] 向上探测**遇到主目录/临时目录会跳过**（那是对的：否则 ~ 下面的一切都被并进主目录），
+ * 但旧实现"跳过即终点"⇒ 老布局（库就建在 ~ 上）在子目录里所有命令都只说"未初始化"，
+ * 用户无从知道祖先其实有库。现在：把被跳过的库**报出来**，并给出可直接复制的出口。
+ * 出口就是 SRELAY_PROJECT_ROOT（MCP 侧早就在用同一个变量）——显式指定优先于探测。
+ */
 export function requireRoot(): string {
-  const root = findRelayRoot(process.cwd());
-  if (!root) die('未找到 .sessionrelay（本项目尚未初始化）', '在项目根目录运行 srelay init');
-  ensureDaemon(root);
-  return root;
+  const envRoot = (process.env.SRELAY_PROJECT_ROOT ?? '').trim();
+  if (envRoot) {
+    const abs = path.resolve(envRoot);
+    if (fs.existsSync(path.join(abs, '.sessionrelay'))) { ensureDaemon(abs); return abs; }
+    console.error(pc.yellow('⚠ SRELAY_PROJECT_ROOT=' + abs + ' 下没有 .sessionrelay，已忽略'));
+  }
+  const info = findRelayRootInfo(process.cwd());
+  if (!info.root) {
+    if (info.skipped.length > 0) {
+      die('未找到可用的 .sessionrelay：祖先里有记忆库，但它不是本目录的项目',
+        '被跳过的是 ' + info.skipped.join(' / ') + '（主目录/临时目录不参与向上认领）'
+        + '；要用它：SRELAY_PROJECT_ROOT="' + info.skipped[0] + '" 再跑一次，或 cd 到那个目录');
+    }
+    die('未找到 .sessionrelay（本项目尚未初始化）', '在项目根目录运行 srelay init');
+  }
+  ensureDaemon(info.root);
+  return info.root;
 }
 
 /** 只在只读命令中调用懒启动（search/list/status 等）；写命令（save/sync/archive）自身会做同步 */

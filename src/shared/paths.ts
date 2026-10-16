@@ -17,7 +17,7 @@ import { isTransientRoot } from './registry.js';
  * 判据：**主目录与临时目录都不算"项目祖先"** —— 它们下面的一切不可能都属于它们。
  * 但**显式在它俩里面 init**（start === 该目录）仍然允许：那是明确意图，不是"顺路认领"。
  */
-function isUnclaimableAncestor(start: string, dir: string): boolean {
+export function isUnclaimableAncestor(start: string, dir: string): boolean {
   if (dir === start) return false;
   const d = path.resolve(dir).toLowerCase();
   if (isTransientRoot(d)) return true;
@@ -25,19 +25,45 @@ function isUnclaimableAncestor(start: string, dir: string): boolean {
   return d === home;
 }
 
-export function findRelayRoot(startDir: string): string | null {
+export interface RootSearch {
+  /** 可用的项目根（null = 没有） */
+  root: string | null;
+  /**
+   * 沿途**看到但因"不许认领"而跳过**的记忆库（主目录 / 临时目录）。
+   *
+   * [1016 红队 A-7] 为什么要有它：判据（主目录/临时目录不算祖先）是对的，但"跳过即终点"会让
+   * 老布局（库就建在 ~ 上）在子目录里的**所有只读命令**都报"未接入"，而且没有任何线索说明为什么。
+   *   处置**不是**改回自动认领——那会重新把 ~ 下面的一切并进主目录，正是当初的事故
+   *   （在 %TEMP% 里 init 却被 ~ 认领、回说"已初始化"而当前目录一个字节没建）。
+   *   处置是**把跳过这件事报出来**（见 cli/ui.ts requireRoot）：静默失效 → 可操作的提示。
+   */
+  skipped: string[];
+}
+
+/** findRelayRoot 的完整结果（含被跳过的祖先）——排障与提示用 */
+export function findRelayRootInfo(startDir: string): RootSearch {
   const start = path.resolve(startDir);
+  const skipped: string[] = [];
   // [1016 · 同一 bug 的另一半] 与 inferProjectRoot 同因：**临时目录不许向上认领**。
   // 不修这里的话，%TEMP% 下的任何东西都会被认成"属于用户主目录那个项目"——
   // 实测：serve 的根解析用例会因为这个判定响亮失败（测试自己想抓住的就是这类污染）。
-  if (isTransientRoot(start)) return existsSync(path.join(start, '.sessionrelay')) ? start : null;
+  if (isTransientRoot(start)) {
+    return { root: existsSync(path.join(start, '.sessionrelay')) ? start : null, skipped };
+  }
   let dir = start;
   for (;;) {
-    if (existsSync(path.join(dir, '.sessionrelay')) && !isUnclaimableAncestor(start, dir)) return dir;
+    if (existsSync(path.join(dir, '.sessionrelay'))) {
+      if (!isUnclaimableAncestor(start, dir)) return { root: dir, skipped };
+      skipped.push(dir);
+    }
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) return { root: null, skipped };
     dir = parent;
   }
+}
+
+export function findRelayRoot(startDir: string): string | null {
+  return findRelayRootInfo(startDir).root;
 }
 
 /**

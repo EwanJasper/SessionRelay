@@ -60,11 +60,28 @@ export function touchRegistry(root: string): void {
   write(r);
 }
 
-/** [fork 1013] 审计 P2：判定临时/一次性目录（os.tmpdir() 前缀）。
- *  Windows: %TEMP%\sb7-* 这类测试沙盒；Linux: /tmp/*。 */
+/**
+ * [fork 1013 审计 P2 / 1016 红队 A-12 加固] 判定临时/一次性目录。
+ * Windows: %TEMP%\sb7-* 这类测试沙盒；Linux: /tmp/*。
+ *
+ * 旧判据是字符串前缀 `startsWith(tmp + path.sep)`，三条脆点（红队 A-12 实测）：
+ *   ① 8.3 短名 / 盘符大小写变体（C:/Users/CRX~1/... vs C:/Users/crx/...）**判据整条静默失效**
+ *      —— 本机没触发，换机器才炸；
+ *   ② 用 path.sep 拼前缀，而 Windows 两种分隔符都合法（反斜杠输入、正斜杠调用会漏判）；
+ *   ③ 临时目录**自身**不算临时目录（靠 + sep 兜着），于是 %TEMP% 本身能被登记成项目根。
+ * 现在：两边都过 realpath（存在的话）+ 分隔符归一 + 大小写归一，并显式把 tmpdir 自身算作临时目录。
+ * ⚠️ realpath 失败（路径不存在——正是"还没建"的常见情形）就退回 path.resolve，绝不因为探测失败而改变判定。
+ */
+function pathKey(p: string): string {
+  let s = path.resolve(p);
+  try { s = fs.realpathSync.native(s); } catch { /* 不存在：用 resolve 结果 */ }
+  return s.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
 export function isTransientRoot(abs: string): boolean {
-  const tmp = path.resolve(os.tmpdir()).toLowerCase();
-  return path.resolve(abs).toLowerCase().startsWith(tmp + path.sep);
+  const tmp = pathKey(os.tmpdir());
+  const p = pathKey(abs);
+  return p === tmp || p.startsWith(tmp + '/');
 }
 
 /** [fork 1013] 审计 P2：注册表条目过期阈值（天）。超过且守护已死 → 视为废弃，

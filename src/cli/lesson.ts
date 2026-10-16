@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pc } from './ui.js';
 import { openGlobal, addLesson, listLessons, searchLessons, maintainLessons, exportMarkdown, globalDbFile, liveImportance, INJECT_THRESHOLD, type Grade, type Scope } from '../store/global.js';
+import { resolveDomain, resolveWorkspaceId } from '../shared/workspace.js';
 
 export interface LessonFlags {
   since?: string; dry?: boolean;
@@ -12,15 +13,18 @@ export interface LessonFlags {
 
 export async function cmdLesson(sub: string | undefined, text: string[], f: LessonFlags): Promise<void> {
   const db = openGlobal();
-  const ws = f.workspace || process.cwd();
-  const sel = { workspaceId: ws, domain: f.domain, status: f.status as never, top: f.top ? Number(f.top) : undefined };
+  // [1016 红队 A-5] 工作区 = **项目根**（不是 cwd），领域标签来自项目配置 —— 写读两侧同源。
+  // 病历：在子目录里 add 的经验，回到项目根 list 就看不见（写者存 cwd、读者拿 root）。
+  const ws = f.workspace || resolveWorkspaceId(process.cwd());
+  const dom = f.domain || resolveDomain(ws);
+  const sel = { workspaceId: ws, domain: dom, status: f.status as never, top: f.top ? Number(f.top) : undefined };
   try {
     if (sub === 'add') {
       const body = text.join(' ').trim();
       if (!body) { console.error('用法: srelay lesson add "<一句话经验>" [--source <出处>] [--quote <原文>] [--grade verified-user] [--scope project|domain|global] [--domain <标签>]'); process.exit(2); }
       const r = addLesson(db, {
         text: body, grade: (f.grade as Grade) ?? undefined, scope: (f.scope as Scope) ?? undefined,
-        workspaceId: ws, domain: f.domain, quote: f.quote, sourceRef: f.source, route: f.route,
+        workspaceId: ws, domain: dom, quote: f.quote, sourceRef: f.source, route: f.route,
       });
       if (f.json) console.log(JSON.stringify(r));
       else console.log(pc.green('✓ 已记下经验 #' + r.id) + (r.reason ? pc.yellow('（' + r.reason + '）') : ''));
@@ -80,7 +84,7 @@ export async function cmdLesson(sub: string | undefined, text: string[], f: Less
     // 默认 list
     const rows = listLessons(db, sel);
     if (f.json) { console.log(JSON.stringify(rows)); return; }
-    console.log(pc.dim('库: ' + globalDbFile() + '  可见范围: ' + ws + (f.domain ? ' + domain:' + f.domain : '')));
+    console.log(pc.dim('库: ' + globalDbFile() + '  可见范围: ' + ws + (dom ? ' + domain:' + dom : '')));
     if (rows.length === 0) { console.log('（还没有经验）用法: srelay lesson add "<一句话经验>" --source <出处>'); return; }
     for (const r of rows) {
       // ⚠️ 这里必须用**与注入闸同一个常量**（INJECT_THRESHOLD=5.5）。

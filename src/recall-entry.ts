@@ -8,7 +8,18 @@
 //   2) recall(root, { query, limit })：项目决策 + 全局经验的统一召回（两道闸 + 长度归一）。
 export { decodeSessionFile, dshSessionSlug } from './adapters/dsh/format.js';
 export { searchSessions } from './search-svc/engine.js';
-export { openGlobal, pickForInjection } from './store/global.js';
+// [1016 红队 A-5 收敛] 可见性 / 闸 2 / 工作区解析都只有**一份实现**，适配器直接 import 这里的。
+// 病历：三个面各抄一份 SQL 与关键词打分 ⇒ 抄完就漂移（插件缺 domain、hook 缺 workspace、
+// hook 的中文 2 字滑窗把"我写"这种偶然重合判成相关）。适配器凡是"要不要注入"的判断，
+// 都必须走这几个导出，不准自己再写一套。
+export {
+  openGlobal, pickForInjection, gate2Score, gate2Tokens,
+  INJECT_THRESHOLD, liveImportance,
+} from './store/global.js';
+export { resolveDomain, resolveWorkspaceId, workspaceKey } from './shared/workspace.js';
+export { findRelayRootInfo, findRelayRoot, inferProjectRoot, isUnclaimableAncestor } from './shared/paths.js';
+export { isTransientRoot } from './shared/registry.js';
+export { globalDbFile } from './store/global.js';
 
 import fs from 'node:fs';
 import os from 'node:os';

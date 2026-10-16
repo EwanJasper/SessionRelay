@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { searchTextOf } from './db.js';
-import { parseQuery } from '../core/tokenize/tokenizer.js';
+import { normalize, parseQuery } from '../core/tokenize/tokenizer.js';
+import { workspaceKey } from '../shared/workspace.js';
 
 export const GRADES = {
   'verified-tool': 9.0,
@@ -116,11 +117,24 @@ export function addLesson(db: Database.Database, input: AddInput): { id: number;
   return { id, reason };
 }
 
-/** 作用域可见性：project 只看自己；domain 看同领域；global 谁都看 */
+/**
+ * 作用域可见性（**唯一实现**，四个面都从这里取）：project 只看自己；domain 看同领域；global 谁都看。
+ *
+ * ⚠️ 两条实测教训，别再改回去：
+ *   ① 这段 SQL 曾经被 DSH 插件与 ZCode hook **各抄一份**，抄完就漂移（插件缺 domain、hook 缺 workspace）
+ *      —— 结果 `--scope domain` 的经验两端都看不见，且没有任何报错。
+ *   ② workspace 用**路径比较键**比，不用字符串直接相等：Windows 上 `D:\proj` 与 `d:/proj`
+ *      是同一个目录，直接相等会把同一个项目劈成两半（子目录里 add 的经验读不出来，就是这个病的轻症）。
+ *      SQL 侧用 replace(lower(...), char(92), '/') 归一（**char(92) 而不是反斜杠字面量**：
+ *      SQL 字符串里嵌反斜杠是这套代码踩过三次的坑），JS 侧用 workspaceKey，两侧口径必须一致。
+ */
 export function visibleWhere(scopeSel: { workspaceId?: string; domain?: string }): { sql: string; params: unknown[] } {
   const parts = ["(scope = 'global')"];
   const params: unknown[] = [];
-  if (scopeSel.workspaceId) { parts.push("(scope = 'project' AND workspace_id = ?)"); params.push(scopeSel.workspaceId); }
+  if (scopeSel.workspaceId) {
+    parts.push("(scope = 'project' AND rtrim(replace(lower(workspace_id), char(92), '/'), '/') = ?)");
+    params.push(workspaceKey(scopeSel.workspaceId));
+  }
   if (scopeSel.domain) { parts.push("(scope = 'domain' AND domain = ?)"); params.push(scopeSel.domain); }
   return { sql: '(' + parts.join(' OR ') + ')', params };
 }
@@ -193,6 +207,101 @@ export function exportMarkdown(db: Database.Database): string {
  */
 const COMMON_WORDS = new Set(['这个','那个','什么','怎么','为什么','可以','需要','应该','我们','你们','他们','现在','然后','没有','不是','还是','或者','因为','所以','但是','如果','已经','还有','就是','一下','东西','时候','问题','这样','那样','之外','而且']);
 
+/**
+ * 闸 2 的打分（**唯一实现** —— DSH 插件与 ZCode hook 都调它，不再各写一套关键词打分）。
+ *
+ * 三条实测教训（都对应真实病例）：
+ *   ① **大小写**：parseQuery 的词元是小写的（分词器先 normalize），而正文里常写大写的 ASCII
+ *      标识符（MAX_CHARS / FTS5 / RRF）——早先这里用大小写敏感的 includes，于是"唯一的重合词是
+ *      大写标识符"时**永远命中不了**。真实库里 8 条可注入经验有 3 条含这类标识符（红队 B 实测）。
+ *   ② **不许各自发明切词**：ZCode hook 曾用"中文 2 字滑窗 + 任一 bigram 命中即算相关"，
+ *      于是"我写""么样""个怎"这种偶然重合把无关内容判成相关（实测：写诗题注入了 2 条不相干决策）。
+ *      这里改回**核心分词器**（jieba 词元），并保留常用词黑名单。
+ *   ③ **权重**：标识符（≥3 字符或含 . _ - /）命中 ×2，普通实词 ×1；一个不沾就是 0 分 = 不相关。
+ */
+export interface Gate2Hit {
+  /** 排序用总分（只看相对大小，不是概率） */ score: number;
+  /** 命中的 ASCII 标识符个数（≥3 字符，或含 . _ - / 的词，如 pnpm / RRF / max_chars） */ idents: number;
+  /** 命中的强证据个数（共享 ≥3 字的 CJK 子串） */ strong: number;
+  /** 命中的孤立二元组个数（各自单独出现，凑不成 3 字子串） */ weak: number;
+  /** 查询里"配得上当判据"的单元总数（全是常用词时 = 0） */ usable: number;
+  /** 最终判据：**唯一一处阈值** */ pass: boolean;
+}
+
+const CJK_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
+
+/**
+ * 闸 2：相关性打分（**唯一实现** —— DSH 插件、ZCode hook、CLI 都只有这一个判据）。
+ *
+ * 三层证据，**都不需要 jieba**（纯字符串操作：hook 里不用加载词典，也不会因为分词差异而两边不一致）：
+ *   ① **ASCII 标识符命中** = 强证据。大小写先经 normalize 统一 ——
+ *      这是红队 B 报的"正文写 MAX_CHARS 就永远匹配不上"那个病历的根治处。
+ *   ② **共享 ≥3 字的 CJK 子串**（如"长度归一"）= 强证据。3 字窗口能跨过词形差异：
+ *      查询写"长度归一**化**"、正文写"长度归一"，仍算命中（词级匹配在这里会漏）。
+ *   ③ **孤立的 2 字二元组** = 弱证据，**要两个不同的一起出现才作数**。
+ *
+ * 为什么弱证据必须成对（实测两例，都是真事故）：
+ *   · 写诗题（…帮我写一首关于春天的诗）↔ 决策里的"跳下**一首**"：只共享「一首」；
+ *   · "MAX_CHARS 简报上限是多少" ↔ 决策里的"挤出**简报**"：只共享「简报」。
+ * 前者就是红队 B 7.3 报的"📌 段不静默"——只共享一个 2 字词就判相关，等于拿 2 个名额赌噪声。
+ * 反过来，**单一判据**（查询里只有一个可判据的单元，比如就问"截图"）命中即算 —— 那是用户的本意。
+ *
+ * 常用词（这个/怎么/一下…）一律不作证据；整窗都是常用词的 3 字窗口也跳过（"怎么样"不算）。
+ */
+export function gate2Score(query: string, text: string): Gate2Hit {
+  const q = normalize(query);
+  const t = normalize(text);
+
+  // ① ASCII 标识符：大小写已在 normalize 里统一（compare 两侧都是小写）
+  let idents = 0;
+  for (const w of q.split(/[^a-z0-9._\-/]+/)) {
+    if (w.length < 2) continue;
+    if (!(w.length >= 3 || /[._\-/]/.test(w))) continue;
+    if (t.includes(w)) idents++;
+  }
+
+  // ②③ CJK：3 字窗口 = 强；非停用二元组 = 弱
+  let strong = 0;
+  const weakSet = new Set<string>();
+  const usableSet = new Set<string>();
+  for (const run of q.match(CJK_RUN) ?? []) {
+    for (let i = 0; i + 3 <= run.length; i++) {
+      const win = run.slice(i, i + 3);
+      if (COMMON_WORDS.has(win.slice(0, 2)) || COMMON_WORDS.has(win.slice(1, 3))) continue;  // "怎么样"这类不算
+      if (t.includes(win)) strong++;
+    }
+    for (let i = 0; i + 2 <= run.length; i++) {
+      const bg = run.slice(i, i + 2);
+      if (COMMON_WORDS.has(bg)) continue;
+      usableSet.add(bg);
+      if (t.includes(bg)) weakSet.add(bg);
+    }
+  }
+  for (const w of q.split(/[^a-z0-9._\-/]+/)) {
+    if (w.length >= 2 && (w.length >= 3 || /[._\-/]/.test(w))) usableSet.add(w);
+  }
+
+  const weak = weakSet.size;
+  const usable = usableSet.size;
+  const score = idents * 2 + strong * 2 + weak;
+  const pass = idents > 0 || strong > 0 || weak >= 2 || (usable === 1 && weak === 1);
+  return { score, idents, strong, weak, usable, pass };
+}
+
+/** 兼容旧调用点：查询里"配得上当判据"的单元（调试/探针用） */
+export function gate2Tokens(query: string): string[] {
+  const q = normalize(query);
+  const out = new Set<string>();
+  for (const w of q.split(/[^a-z0-9._\-/]+/)) if (w.length >= 2 && (w.length >= 3 || /[._\-/]/.test(w))) out.add(w);
+  for (const run of q.match(CJK_RUN) ?? []) {
+    for (let i = 0; i + 2 <= run.length; i++) {
+      const bg = run.slice(i, i + 2);
+      if (!COMMON_WORDS.has(bg)) out.add(bg);
+    }
+  }
+  return [...out];
+}
+
 export interface PickOptions {
   workspaceId?: string; domain?: string; query?: string; top?: number; maxChars?: number;
 }
@@ -209,24 +318,17 @@ export function pickForInjection(db: Database.Database, o: PickOptions = {}): Le
     .filter((r) => r.importance >= INJECT_THRESHOLD);
   if (rows.length === 0) return [];
 
-  // 闸 2 相关性：有本轮查询时才筛；没有查询（如 ZCode 开场）就退化为「按重要度给最重要的几条」
+  // 闸 2 相关性：有本轮查询时才筛；没有查询（如 ZCode 开场 / DSH 冷路径）就退化为
+  // 「按重要度给最重要的几条」。**判据本身只有 gate2Score 一处**（红队 A-5/B-7 的收敛点）。
   let ranked = rows;
   if (o.query && o.query.trim()) {
-    const q = parseQuery(o.query).units.flat();
-    const specific = q.filter((t) => t.length >= 3 || /[._\-/]/.test(t));
-    const content = q.filter((t) => !COMMON_WORDS.has(t) && t.length >= 2);
-    if (specific.length > 0 || content.length > 0) {
-      const scored = rows.map((r) => {
-        const text = String(r.text ?? '');
-        let idHit = 0, wordHit = 0;
-        for (const t of specific) if (text.includes(t)) idHit++;
-        for (const t of content) if (text.includes(t)) wordHit++;
-        // 标识符命中权重高（与实测设计一致）；一个实词都不共享 = 不相关
-        return { r, hit: idHit * 2 + wordHit, idHit, wordHit };
-      }).filter((s) => s.hit > 0);
-      scored.sort((a, b) => b.hit - a.hit || b.r.importance - a.r.importance);
-      ranked = scored.map((s) => s.r);
-    } else ranked = [];
+    const scored = rows
+      .map((r) => ({ r, ...gate2Score(o.query!, String(r.text ?? '')) }))
+      // pass 的判据在 gate2ScoreTokens 里（一处）；全查询只有"这个/怎么/一下"这类词时
+      // usable=0 ⇒ 谁都不 pass ⇒ 宁可什么都不给（空输出优于塞噪声）
+      .filter((s) => s.pass)
+      .sort((a, b) => b.score - a.score || b.r.importance - a.r.importance);
+    ranked = scored.map((s) => s.r);
   }
 
   const out: LessonRow[] = [];

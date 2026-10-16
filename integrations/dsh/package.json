@@ -54,6 +54,7 @@
     "vendor/**",
     "src/brief-experiences.mjs",
     "src/brief-filters.mjs",
-    "src/brief-modules.mjs"
+    "src/brief-modules.mjs",
+    "src/root-rules.mjs"
   ]
 }

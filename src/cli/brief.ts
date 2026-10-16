@@ -19,6 +19,7 @@ import { listDecisions, listUnresolved, listRecentFiles } from '../store/db.js';
 import type { DB, DecisionRow, UnresolvedRow, RecentFileRow } from '../store/db.js';
 import { requireRoot, openRelayDb, pc } from './ui.js';
 import { openGlobal, pickForInjection, type LessonRow } from '../store/global.js';
+import { resolveDomain, resolveWorkspaceId } from '../shared/workspace.js';
 
 export interface BriefPayload {
   decisions: DecisionRow[];
@@ -30,7 +31,7 @@ export interface BriefPayload {
 }
 
 /** 纯取数（不碰 CLI / 不开库）——便于单测与组件复用 */
-export function collectBrief(db: DB, projectId: string, opts: { limit?: number; days?: number; top?: number } = {}): BriefPayload {
+export function collectBrief(db: DB, projectId: string, opts: { limit?: number; days?: number; top?: number } = {}, root?: string): BriefPayload {
   const limit = opts.limit ?? 200;
   const decisions = listDecisions(db, projectId, {}).slice(-limit).reverse();
   const cutoff = Date.now() - 14 * 86_400_000;
@@ -38,7 +39,7 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
     .filter((r) => new Date(r.at).getTime() >= cutoff)
     .slice(0, limit);
   const recentFiles = listRecentFiles(db, { days: opts.days ?? 7, top: opts.top ?? 3 });
-  const experiences = collectExperiences(opts) ;
+  const experiences = collectExperiences(root ?? process.cwd(), opts);
   return { experiences, decisions, unresolved, counts: { decisions: decisions.length, unresolved: unresolved.length }, recentFiles };
 }
 
@@ -47,7 +48,7 @@ export async function cmdBrief(opts: { limit?: number; days?: number; top?: numb
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
   try {
-    const pay = collectBrief(db, cfg.identity.project_id ?? root, opts);
+    const pay = collectBrief(db, cfg.identity.project_id ?? root, opts, root);
     if (opts.json) { console.log(JSON.stringify(pay)); return; }
     console.log(`决策 ${pay.counts.decisions} 条 · 未决 ${pay.counts.unresolved} 条 · 最近在动 ${pay.recentFiles.length} 个`);
     for (const r of pay.recentFiles) console.log(pc.dim(`  🗂 ${r.file}（${r.sessions} 场）`));
@@ -59,11 +60,18 @@ export async function cmdBrief(opts: { limit?: number; days?: number; top?: numb
 }
 
 /** 经验段的取数：**没命中就返回空数组**，由调用方决定整段渲不渲染 */
-function collectExperiences(opts: { top?: number; maxChars?: number }): Array<{ text: string; scope: string; grade: string }> {
+function collectExperiences(root: string, opts: { top?: number; maxChars?: number }): Array<{ text: string; scope: string; grade: string }> {
   try {
     const db = openGlobal();
     try {
-      const rows = pickForInjection(db, { workspaceId: process.cwd(), top: opts.top ?? 3, maxChars: opts.maxChars ?? 200 });
+      // [1016 收口] 工作区/领域都和别的面走同一份解析（此前写死 process.cwd() ⇒
+      // 在子目录里跑 brief 时，project 作用域的经验会静默消失；domain 更是从来没传过）。
+      const rows = pickForInjection(db, {
+        workspaceId: resolveWorkspaceId(root),
+        domain: resolveDomain(root),
+        top: opts.top ?? 3,
+        maxChars: opts.maxChars ?? 200,
+      });
       return rows.map((r: LessonRow) => ({ text: r.text, scope: r.scope, grade: r.grade }));
     } finally { db.close(); }
   } catch { return []; }   // 全局库还不存在/打不开 = 没有经验，不影响简报其他段

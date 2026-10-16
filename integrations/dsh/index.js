@@ -370,25 +370,39 @@ function renderBrief(root, dec, unr, counts, kanban = '', recent = '', experienc
   return text
 }
 
-/** 真正取数的地方：异步，跑在组装路径之外。直查 SQL 优先，CLI 子进程兜底 */
-async function buildBrief(root) {
-  const sql = sqlItems(root)
-  // 经验段：同步、只读、毫秒级；库不存在或没命中 → 空串（不渲染、不占行）
+/**
+ * 经验段（🌍）与动态锚点（🗺）：**两条取数路径共用一份**。
+ *
+ * [1016 收口] 冷路径与 CLI 兜底路此前**都漏传这两段** —— 同一个 renderBrief、各调用点各拼各的参数，
+ * 漏一个就静默少一段（与历史上"冷路径 counts 永远是 0"是同一类 bug）。现在只有这一个入口。
+ * opts.noQuery=true 给冷路径用：不解码会话、不加载分词器，只按重要度给最重要的几条（毫秒级）。
+ */
+function extraSections(root, counts, opts = {}) {
   let experiences = ''
-  try { experiences = experiencesLine(root) } catch { experiences = '' }
+  try { experiences = experiencesLine(root, opts) } catch { experiences = '' }
   // [1016 A6] 只有"还有决策没显示"时才算这一行（全显示完了就没有"其余"可言）
   let modulesLine = ''
   try {
-    const counts0 = sql?.counts ?? {}
-    const total = Number(counts0.dec ?? 0)
-    if (total > (sql?.dec?.length ?? 0)) modulesLine = decisionModulesText(root)
+    const total = Number(counts?.dec ?? 0)
+    if (total > Number(counts?.shown ?? 0)) modulesLine = decisionModulesText(root)
   } catch { modulesLine = '' }
+  return { experiences, modulesLine }
+}
+
+/** 真正取数的地方：异步，跑在组装路径之外。直查 SQL 优先，CLI 子进程兜底 */
+async function buildBrief(root) {
+  const sql = sqlItems(root)
+  const { experiences, modulesLine } = extraSections(root, { dec: sql?.counts?.dec ?? 0, shown: sql?.dec?.length ?? 0 })
   if (sql) return renderBrief(root, sql.dec, sql.unr, sql.counts, kanbanText(root), recentFilesText(root), experiences, modulesLine)
   const [decRaw, unrRaw] = await Promise.all([
     runSrelay(['decisions', '--limit', '200', '--json'], root, 4000),
     runSrelay(['unresolved', '--limit', '200', '--json'], root, 4000),
   ])
-  return renderBrief(root, parseItems(decRaw, 'decisions', DEC_SLOTS), parseItems(unrRaw, 'unresolved', UNR_SLOTS), rawCounts(decRaw, unrRaw), kanbanText(root), recentFilesText(root))
+  const dec = parseItems(decRaw, 'decisions', DEC_SLOTS)
+  const counts = rawCounts(decRaw, unrRaw)
+  // 同一条路上也要带上两段（否则"SQL 路有 🌍、CLI 路没有"——两条路正文一致性自测会抓，但先别造出来）
+  return renderBrief(root, dec, parseItems(unrRaw, 'unresolved', UNR_SLOTS), counts, kanbanText(root), recentFilesText(root),
+    experiences, modulesLine)
 }
 
 /** 从两份 --json 原始串里取条数（复用已取到的数据，不新增子进程——低延迟是硬约束） */
@@ -562,8 +576,13 @@ export function apply(ctx) {
         if (sql) {
           // [1015 修] 必须把 counts 一起传：漏传时工具提示句固定显示"0 条可查"（
           // 冷路径与异步刷新路径行为不一致，用户第一轮看到的条数永远是 0）。
-          const text = renderBrief(r.root, sql.dec, sql.unr, sql.counts, kanbanText(r.root), recentFilesText(r.root))
+          // [1016 收口] 经验段/锚点同样必须补上 —— 此前冷路径**没有 🌍 与 🗺 两段**。
+          // 冷路径用 noQuery：不在 prompt 组装里解码会话、不加载分词器（毫秒级）；
+          // 随即排一次异步刷新，下一轮就是"按你这句筛过"的版本。
+          const { experiences, modulesLine } = extraSections(r.root, { dec: sql.counts?.dec ?? 0, shown: sql.dec?.length ?? 0 }, { noQuery: true })
+          const text = renderBrief(r.root, sql.dec, sql.unr, sql.counts, kanbanText(r.root), recentFilesText(r.root), experiences, modulesLine)
           cache.set(r.root, { text, at: Date.now() })
+          refresh(r.root)
           return text
         }
         const opts = { cwd: r.root, timeout: COLD_SYNC_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }
@@ -573,15 +592,20 @@ export function apply(ctx) {
         // SQL 路显示真实条数、CLI 路固定显示 0，selftest 的"两路逐字节一致"立刻抓住。
         // 口径与 SQL 路对齐：取 CLI JSON 的 count（= 本次取回的原始条数，未过过滤链）。
         const countOf = (raw) => { try { const j = JSON.parse(raw); return Number(j?.count ?? 0) || 0 } catch { return 0 } }
+        const dec = parseItems(decRaw, 'decisions', DEC_SLOTS)
+        const { experiences, modulesLine } = extraSections(r.root, { dec: countOf(decRaw), shown: dec.length }, { noQuery: true })
         const text = renderBrief(
           r.root,
-          parseItems(decRaw, 'decisions', DEC_SLOTS),
+          dec,
           parseItems(unrRaw, 'unresolved', UNR_SLOTS),
           { dec: countOf(decRaw), unr: countOf(unrRaw) },
           kanbanText(r.root),
           recentFilesText(r.root),
+          experiences,
+          modulesLine,
         )
         cache.set(r.root, { text, at: Date.now() })
+        refresh(r.root)
         return text
       } catch {
         refresh(r.root) // 异步重试，下轮再有
