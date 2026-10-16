@@ -9,7 +9,8 @@
 //   S  子集臂  ：只取该句里 2 个普通词（模拟「记得大概、不记得原话」）
 //   M  错位臂  ：取 3 个普通词、且**不含任何低频专名**（模拟「换了说法」）
 //
-// 用法：npx tsx scripts/recall-bench.ts <库路径> [--n 150] [--limit 10] [--rewrite 0|1] [--json out.json]
+// 用法：npx tsx scripts/recall-bench.ts <库路径> [--n 150] [--limit 10] [--rewrite 0|1] [--fusion 0|1] [--lengthnorm 0|1] [--json out.json]
+//   --fusion 不给 = 产品默认（主路不硬时才融合）；1 = 强制融合；0 = 关（对照组）
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 const require2 = createRequire(import.meta.url);
@@ -23,7 +24,12 @@ const arg = (n: string, d: string) => { const i = argv.indexOf('--' + n); return
 const N = Number(arg('n', '150'));
 const LIMIT = Number(arg('limit', '10'));
 const REWRITE = arg('rewrite', '1') !== '0';
-const FUSION = arg('fusion', '0') === '1';
+// ⚠️ [1017 夜 纠正] 这里原先默认 '0' ⇒ 传下去的 fusion 是 **false**，即"逐字关掉融合"。
+// 但**产品默认是 undefined（主路不硬时才融合）**（engine.ts:253-257）——
+// 于是基准默认量的是"关掉融合"的旧行为，而不是用户在用的那套（口径 bug，与 lengthNorm 那次同型）。
+// 现在：不给 --fusion = 产品默认；--fusion 1 = 强制融合；--fusion 0 = 逐字关。
+const fusionArg = arg('fusion', '');
+const FUSION: boolean | undefined = fusionArg === '' ? undefined : fusionArg === '1';
 // ⚠️ 默认必须**等于产品默认**。产品默认 2026-10-16 起是**开**（用户拍板，见 engine.ts 的 A5 注释），
 // 所以这里默认 1；要用"关"当对照组请显式 `--lengthnorm 0`。
 const LENGTHNORM = arg('lengthnorm', '1') !== '0';
@@ -75,10 +81,25 @@ for (const s of sessions) {
   items.push({ arm: 'M', query: common.slice(0, 3).join(' '), target: s.id });
 }
 
+let probeN = 0, fuseDiff = 0, gateOpen = 0;
 const acc: Record<string, { n: number; h1: number; h3: number; h10: number }> = { K: { n: 0, h1: 0, h3: 0, h10: 0 }, S: { n: 0, h1: 0, h3: 0, h10: 0 }, M: { n: 0, h1: 0, h3: 0, h10: 0 } };
 for (const it of items) {
   let ids: string[] = [];
   try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId); } catch { continue; }
+  // [1017 夜] 默认档到底走没走融合？两个**不同的**量，别混为一谈（我第一次就混了）：
+  //   fuseDiff  : 默认 vs **强制融合** 结果不同 ⇒ 说明"融合算法本身会改排序"
+  //   gateOpen  : 默认 vs **关掉融合** 结果不同 ⇒ 说明"默认档真的走过了 fusedSearch"（这才是闸门放行）
+  // 判据：engine.ts 的闸门是"主路够硬（coverage≥1）就不融合"，而主路的 AND 分支**本身就要求
+  //       每个查询单元都被覆盖** ⇒ coverage 恒为 1 ⇒ 闸门可能恒真、融合成了死代码。
+  if (FUSION === undefined) {
+    probeN++;
+    try {
+      const forced = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: true, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId);
+      if (forced.join(',') !== ids.join(',')) fuseDiff++;
+      const off = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: false, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId);
+      if (off.join(',') !== ids.join(',')) gateOpen++;
+    } catch { /* 探测失败不计 */ }
+  }
   const i = ids.indexOf(it.target);
   const a = acc[it.arm];
   a.n++;
@@ -87,7 +108,8 @@ for (const it of items) {
   if (i >= 0) a.h10++;
 }
 
-console.log('库: ' + dbPath + '  改写: ' + (REWRITE ? 'on' : 'off') + '  融合: ' + (FUSION ? 'on' : 'off') + '  长度归一: ' + (LENGTHNORM ? 'on' : 'off'));
+const fusionLabel = FUSION === undefined ? '产品默认(条件)' : (FUSION ? '强制on' : 'off');
+console.log('库: ' + dbPath + '  改写: ' + (REWRITE ? 'on' : 'off') + '  融合: ' + fusionLabel + '  长度归一: ' + (LENGTHNORM ? 'on' : 'off'));
 console.log('臂   样本    hit@1        hit@3        hit@10');
 for (const k of ['K', 'S', 'M']) {
   const a = acc[k];
@@ -95,5 +117,11 @@ for (const k of ['K', 'S', 'M']) {
   console.log(k.padEnd(5) + String(a.n).padEnd(8) + p(a.h1).padEnd(13) + p(a.h3).padEnd(13) + p(a.h10));
 }
 console.log('阶段计数:', JSON.stringify(stats));
+if (FUSION === undefined && probeN) {
+  const pc = (x: number) => (x / probeN * 100).toFixed(1) + '%';
+  console.log('融合探针（' + probeN + ' 条查询）：');
+  console.log('  · 默认 vs 强制融合 结果不同：' + fuseDiff + '（' + pc(fuseDiff) + '）—— 融合算法本身会不会改排序');
+  console.log('  · 默认 vs 关掉融合 结果不同：' + gateOpen + '（' + pc(gateOpen) + '）—— **默认档是否真的走过了融合**（0% = 闸门恒真、条件融合是死代码）');
+}
 const jf = arg('json', '');
 if (jf) fs.writeFileSync(jf, JSON.stringify({ at: new Date().toISOString(), dbPath, rewrite: REWRITE, limit: LIMIT, acc }, null, 2));
