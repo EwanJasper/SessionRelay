@@ -120,6 +120,16 @@ import type { Msg } from '../core/extract/extract.js';
  *        新判据：必须「文件名 + 扩展名」；先剥 URL；文件名段 ≤64 字（滤句子残片）。
  *        同批还修了重算路径：`recomputeSession` 此前**不写 files_mentioned**，于是 files 规则一改，
  *        历史行永远拿不到新结果（这次实测踩到）。
+ * 18 → 1015 夜 名词化的「选择X」不算拍板（`nounChoiceFalsePositive`）：选择器 / 选择题 / 选择框
+ *        这类**界面排障里的名词**被当成决策入库（实测两库全量、文本唯一化后命中 83 条 → 收窄到 15 条）。
+ *        ⚠️ 不能一刀切 `选择(?!器|框|题)`：那会把"选择器改当前会话+…"这类**名词作主语的真决策**一起误杀；
+ *        判据是"名词开头 + 后 4 字内没有动词"，见 extract.ts 的注释。
+ * 19 → 1016 夜 topics 里的 **harness 记账 token**（`isSystemToken`，B4）：
+ *        实测三库全量 topics 词表：`tool` 128 次、`id` 38、`task-notification` 11、`task-id` 10、
+ *        `in_progress` 9、`tool-use-id` 7、`output-file` 6、`created_at` 3 —— 话题列既脏又占名额。
+ *        判据故意收窄：只有"每个分段都是记账词"才丢，所以 python-docx / yt-dlp / utf-8 /
+ *        test_book.txt / inkos_docx_build / q4_k_m 这些真名字**逐条核过，全部保留**。
+ *        （只动 topics 一列；search_text 是消息入库时写的派生列，要清得走 rebuild。）
  * 递增时在下面加一行说明，便于回溯「哪批数据是哪个规则算的」。 */
 
 import { EXTRACT_VERSION } from '../core/extract/version.js';

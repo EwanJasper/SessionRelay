@@ -69,11 +69,43 @@ const STOPWORDS = new Set([
   'this', 'that', 'you', 'i', 'we', 'it', 'be', 'as', 'at', 'by', 'from', 'not', 'will',
 ]);
 
+/**
+ * [B4 · v19] Harness 记账 token 过滤器：混进 topics 的**系统字段名**不是话题。
+ *
+ * 实测（2026-10-16 三库全量 topics 词表）：`tool` 128 次、`id` 38、`task-notification` 11、`task-id` 10、
+ * `in_progress` 9、`tool-use-id` 7、`output-file` 6、`created_at` 3 —— 它们让"话题"这一列既脏又占名额。
+ *
+ * 判据**故意收窄**：只有"每个分段都是记账词"才丢，所以真名字不会被误杀 ——
+ * 实测逐条核过：`python-docx` / `yt-dlp` / `utf-8` / `test_book.txt` / `inkos_docx_build` / `q4_k_m`
+ * 全部保留（它们的某一段不在词表里）。
+ */
+const SYSTEM_SEGMENTS = new Set([
+  'task', 'tasks', 'tool', 'tools', 'msg', 'msgs', 'message', 'messages',
+  'session', 'sessions', 'call', 'calls', 'run', 'runs', 'step', 'steps',
+  'request', 'requests', 'response', 'responses', 'function', 'functions',
+  'command', 'commands', 'local', 'system', 'user', 'assistant', 'api',
+  'id', 'ids', 'use', 'uses', 'notification', 'notifications', 'event', 'events',
+  'type', 'types', 'name', 'names', 'kind', 'kinds', 'index', 'error', 'errors',
+  'output', 'input', 'content', 'contents', 'usage', 'meta', 'data',
+  'created', 'updated', 'at', 'in', 'progress', 'status', 'result', 'results',
+  'log', 'logs', 'start', 'end', 'file', 'files',
+]);
+
+/** 这个 token 是不是"harness 记账"（口径见 SYSTEM_SEGMENTS 的注释） */
+export function isSystemToken(t: string): boolean {
+  const s = t.toLowerCase().replace(/^[._\-/]+|[._\-/]+$/g, '');
+  if (s.length < 2) return true;                         // 光一个字母或只剩标点
+  if (/^\d/.test(s) && /[.\-]/.test(s)) return true;      // 版本号形态：0.1.2-rc.1
+  const segs = s.split(/[._\-/]+/).filter(Boolean);
+  if (segs.length === 0) return true;
+  return segs.every((x) => SYSTEM_SEGMENTS.has(x) || /^\d+$/.test(x));
+}
+
 export function extractTopics(msgs: Msg[]): string[] {
   const freq = new Map<string, number>();
   for (const m of msgs) {
     for (const t of segment(m.content, { keepSingles: false })) {
-      if (t.length < 2 || STOPWORDS.has(t) || /^\d+$/.test(t)) continue;
+      if (t.length < 2 || STOPWORDS.has(t) || /^\d+$/.test(t) || isSystemToken(t)) continue;
       freq.set(t, (freq.get(t) ?? 0) + (m.role === 'user' ? 2 : 1));
     }
   }
