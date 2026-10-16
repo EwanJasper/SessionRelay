@@ -8,13 +8,16 @@ import path from 'node:path';
 import fs from 'node:fs';
 import net from 'node:net';
 import crypto from 'node:crypto';
-import { openExisting } from '../store/db.js';
+import { openExisting, createDb } from '../store/db.js';
+import { openGlobal } from '../store/global.js';
+import { ensureLifecycleTables, setHeartbeat } from '../core/lifecycle/stages.js';
 import type { RelayConfig } from '../shared/config.js';
 import { loadConfig } from '../shared/config.js';
 import { projectIdOf, dbFile, statsFile, watchLogPath } from '../shared/paths.js';
 import { rotateLogFile } from '../shared/logrotate.js';
 import { StatsCounter } from '../core/stats/counter.js';
 import { acquireLock, touchLock, releaseLock, isDaemonAlive } from '../shared/lock.js';
+import { runLifecycle } from '../core/lifecycle/runner.js';
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
 import { autoArchiveProject, autoArchivePolicyOf } from './archive.js';
@@ -328,10 +331,44 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
   };
 
   await adopt('initial');
+
+  // ── 心跳（ADR-002 / 1017 夜）：把"采集守护在线"写进**库**，而不是再让别的脚本去查进程表 ──
+  // 用途：生命周期运行器据此让出采集阶段（两个写入方同写一个库 = SQLITE_BUSY，实测过）。
+  // 数据在库里 ⇒ 跨进程可读、不依赖 powershell、不依赖进程名匹配（那玩意已经被引号坑过一次）。
+  {
+    const hb = () => {
+      try {
+        const g = openGlobal();
+        ensureLifecycleTables(g);
+        setHeartbeat(g, 'watch', 'pid ' + process.pid);
+        g.close();
+      } catch { /* 心跳失败不影响采集 */ }
+    };
+    hb();
+    setInterval(hb, 60_000);
+  }
+
   // [fork 1011] 启动即轮转一次：双写让每个收编项目的 watch.log 都会增长，
   // 原轮转只覆盖 cwd 根，其余项目日志无限堆积（实测 D 33.7MB / E 7.4MB）。
   for (const w of workers.values()) rotateLogFile(watchLogPath(w.root));
   const adoptTimer = setInterval(() => { void adopt('sweep'); }, 10 * 60_000);
+
+  // ── 生命周期定时器（ADR-002）：守护**就是**生命周期的宿主 ──────────────────
+  // 为什么放在这里而不是再起一个进程：框架本该只有**一个写入方**。守护已经在采集，
+  // 生命周期剩下的阶段（体检/自愈/重算/经验/去重/清洗/老化）由它顺手按各自节奏跑，
+  // 采集阶段会因为守护自己的心跳而让位（见 runner 的 capture 段）——不会两个写入方撞库。
+  // 节奏由 stages.ts 的 everySec 决定（guard 15min / extract 30min / compact 1h / aging 1d…）。
+  {
+    const tick = async () => {
+      try {
+        const r = await runLifecycle({ log: (m: string) => log(m.replace(/^\s+/, '')) });
+        const bad = r.stages.filter((s) => !s.ok);
+        if (bad.length) log('生命周期：' + bad.length + ' 个阶段失败（' + bad.map((s) => s.id).join(',') + '）');
+      } catch (e) { log('生命周期失败（不退出）: ' + (e as Error).message); }
+    };
+    setTimeout(() => { void tick(); }, 20_000);            // 启动 20 秒后先跑一轮
+    setInterval(() => { void tick(); }, 5 * 60_000);       // 之后每 5 分钟看一次"哪些阶段到期"
+  }
   // [fork 1011] 逐小时轮转全部收编项目的日志（含 sweep 新收编的）
   const logRotator = setInterval(() => {
     for (const w of workers.values()) rotateLogFile(watchLogPath(w.root));

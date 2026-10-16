@@ -247,6 +247,46 @@ program
   });
 
 program
+  .command('lifecycle')
+  .description('记忆生命周期（内核原生）：体检→自愈→采集→重算→经验→去重→清洗→老化→分发')
+  .option('--status', '只看各阶段状态（不跑）')
+  .option('--once', '只跑一轮（默认行为，写出来是为了可读）')
+  .option('--loop <sec>', '常驻：每 N 秒一轮（0 = 只跑一轮）')
+  .option('--only <ids>', '只跑这些阶段（逗号分隔：guard,repair,capture,extract,consolidate,compact,cleanup,aging,distribute）')
+  .option('--light', '只跑轻阶段（宿主内 worker 用，不阻塞 UI）')
+  .option('--force', '无视各阶段节奏，强制全跑')
+  .option('--json', '机器格式')
+  .action(async (opts) => {
+    const { runLifecycle, lifecycleStatus } = await import('../core/lifecycle/runner.js');
+    const only = typeof opts.only === 'string' && opts.only
+      ? String(opts.only).split(',').map((s: string) => s.trim()).filter(Boolean) as never[]
+      : undefined;
+    if (opts.status) {
+      const st = lifecycleStatus();
+      if (opts.json) { console.log(JSON.stringify(st, null, 2)); return; }
+      console.log('生命周期状态：已跑 ' + st.rounds + ' 轮' + (st.lastAt ? ' · 最近 ' + st.lastAt : ''));
+      for (const [id, s] of Object.entries(st.stages)) {
+        const v = s as { ok: boolean; note: string; at: string } | undefined;
+        if (!v) continue;
+        console.log('  ' + (v.ok ? '✅' : '🔴') + ' ' + id + '：' + String(v.note).slice(0, 90) + '（' + v.at.slice(11, 19) + '）');
+      }
+      return;
+    }
+    const loop = opts.loop != null ? Math.max(0, Number(opts.loop)) : 0;
+    const once = async () => {
+      const r = await runLifecycle({ only, force: !!opts.force, lightOnly: !!opts.light, log: opts.json ? () => {} : (l: string) => console.log(l) });
+      if (opts.json) console.log(JSON.stringify(r, null, 2));
+      // 有阶段失败时用退出码表达（守护/CI 能抓到），但**不中断**下一轮
+      return r.stages.some((s) => !s.ok && !s.skipped);
+    };
+    if (!loop) { if (await once()) process.exitCode = 1; return; }
+    for (;;) {
+      await once();
+      await new Promise((r) => setTimeout(r, loop * 1000));
+    }
+  });
+
+program
   .command('recompute')
   .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
   .option('--batch <n>', '每批会话数，默认 50')

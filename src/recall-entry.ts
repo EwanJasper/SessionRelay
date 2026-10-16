@@ -32,6 +32,13 @@ export { compactItems, isNearDuplicate } from './core/compact/dedup.js';
 export { foldNearDuplicates, lengthRatioGate } from './core/compact/fold.js';
 // 老化压缩计划（只做计划；执行复用 capture/archive.ts 的 runArchive）
 export { planAging } from './core/compact/aging.js';
+
+// ── 生命周期内核 API（ADR-002：宿主 hooks/workers 与 CLI 读同一份实现）──
+export { runLifecycle, lifecycleStatus } from './core/lifecycle/runner.js';
+export { integrityOf, repairProject } from './core/lifecycle/repair.js';
+export { STAGES, lightStages, ensureLifecycleTables, loadLifecycle, saveLifecycle, dueStages, setHeartbeat, heartbeatAgeMs } from './core/lifecycle/stages.js';
+export { compactExactSessions } from './core/compact/exact.js';
+export { cleanDerivedColumns } from './core/extract/derived-cleanup.js';
 // [B4] 清 topics 时 meta_text 必须**按原规重算**（title+topics 的索引文本）；
 // 导出核心库这两个函数，工具才不会自己拼一份（拼错=把搜索面写坏）。
 export { metaTextOf, searchTextOf } from './store/db.js';
