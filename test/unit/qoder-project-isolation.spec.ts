@@ -63,4 +63,17 @@ describe('Qoder 项目隔离', () => {
     const { qoderDir } = mkCache(['app-' + md5Short(proj)], 1);
     expect(discover(proj, qoderDir)).toEqual([]);
   });
+
+
+  it('★ 单候选但摘要对不上 ⇒ 也拒绝（红队实测的洞：对方是唯一候选时会被当成自己的）', () => {
+    const proj = path.join(os.tmpdir(), 'solo', 'app');
+    const { qoderDir } = mkCache(['app-deadbeef']);   // 别人的目录，hash 不是本项目
+    const errs = [];
+    const orig = console.error;
+    console.error = (...a) => { errs.push(a.map(String).join(' ')); };
+    try {
+      expect(discover(proj, qoderDir)).toEqual([]);
+    } finally { console.error = orig; }
+    expect(errs.join(' ')).toContain('拒绝自动认领');
+  });
 });

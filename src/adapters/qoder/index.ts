@@ -61,10 +61,20 @@ function cacheDirsFor(cacheDir: string, projectRoot: string): CacheGuess {
     if (m[1].toLowerCase() !== base) continue;
     sameName.push({ dir: p, hash: m[2].toLowerCase() });
   }
-  if (sameName.length <= 1) return { dirs: sameName.map((x) => x.dir), ambiguous: [] };
+  if (sameName.length === 0) return { dirs: [], ambiguous: [] };
   const forms = hashForms(abs);
   const exact = sameName.filter((x) => forms.has(x.hash));
   if (exact.length === 1) return { dirs: [exact[0].dir], ambiguous: [] };
+  // ── 单候选也要验（2026-10-18 红队实测打回来的）──
+  //   上一版「候选只有 1 个就照用」留了个真洞：触发条件是「basename 相同 + 对方有缓存 + 本方从没打开过」，
+  //   此时对方那个缓存目录是**唯一候选**，会被当成自己的 ⇒ 别人的整库会话连同决策进你的简报与检索，
+  //   而且**零告警**。串数据是不可逆的（你没法知道哪些条目不是你的），漏收是可发现的（用户会报「没收到」）。
+  //   所以单候选且摘要对不上 ⇒ 同样拒绝 + 报出来。
+  //   逃生口：摘要算法我们只是猜的，真有人的目录命名规则不同，设 SRELAY_QODER_TRUST_NAME=1 退回按名字认领
+  //   （这是显式选择，不是默认行为 —— 默认必须是安全的那一侧）。
+  if (process.env.SRELAY_QODER_TRUST_NAME === '1') {
+    return { dirs: sameName.map((x) => x.dir), ambiguous: [] };
+  }
   return { dirs: [], ambiguous: sameName.map((x) => x.dir) };
 }
 
