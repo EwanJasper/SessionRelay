@@ -736,8 +736,21 @@ export function unresolvedFragmentReason(q: string): string | null {
   const stripped = raw.replace(LIST_MARKER_PLAIN, '').trim();
   if (!stripped) return 'head-list-marker';
   const t = stripped;
-  // 行首小写英文散文残片（"later with frustration: …"）；大写开头（"Why …"）是真问句，不拦
-  if (/^[a-z]{2,}[\s\u0060]/.test(t)) return 'head-ascii-prose';
+  // 行首小写英文**散文**残片（"later with frustration: …"）——不是"以小写标识符开头的问句"。
+  // [1021 R1 红队终审] 原判据 `/^[a-z]{2,}[\s\u0060]/` 只要求"小写字母开头 + 空格"，
+  //   于是 **任何以小写标识符开头的真问题全被拦**：redis/api/token/sqlite vacuum 开头 4/4 中招
+  //   （加个"那"字或把 API 写大写才放行——这不是判据，是巧合）。
+  //   真实库（agent1super 185 条候选）里以"小写字母+空格"开头的有 **4 条**，旧判据杀了 **3 条**
+  //   （其中 llama.cpp 那条因为紧跟的是"."没被杀——说明旧判据连"杀谁"都是随机的）。
+  //   开发者问技术问题天然以小写标识符开头，这不是残片特征。
+  // 改成两个必要条件（缺一不可，字面意义都能解释）：
+  //   ① **不含问号**：含 ?/？ 就是问句形状，散文残片是陈述形状（transcript 残渣没有问号）
+  //   ② **行首连续英文词 ≥ 3**：散文是 "later with frustration" 这种多词短语；
+  //      技术问题开头只有 1~2 个标识符（redis / sqlite vacuum / api 429）
+  // ⚠️ 为什么不用"英文词 ≥4（全文）"：`should I use redis for the cache?` 这类英文问句会被误杀；
+  //   而"行首连续词"这个量词恰好落在两类之间（散文 3+，标识符 ≤2）。
+  const asciiLead = /^[a-z][A-Za-z0-9_.-]*(?:\s+[a-z][A-Za-z0-9_.-]*){2,}/;
+  if (asciiLead.test(t) && !/[?？]/.test(t)) return 'head-ascii-prose';
   // 行首是闭引号/闭括号/句读 = 从句子中段截出来的
   if (/^[”’"'）。，、；：!?…》」』]/.test(t)) return 'head-closing-punct';
   // 行首开括号 = 括号里的补注被单独切出来

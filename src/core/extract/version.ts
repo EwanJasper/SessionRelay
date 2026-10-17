@@ -53,4 +53,10 @@
 //   ⚠️ 版本号从 25 直接到 26 —— 不是从 24。三个真库实测 extracted_version 已全是 v25
 //   （215e61f 回填 msgId 那批跑过），若写成 25 就是**空操作**：判据是 session.extracted_version
 //   小于 EXTRACT_VERSION，存量库永远不满足 ⇒ 这批改动对已有数据等于没上，而且不报错。
-export const EXTRACT_VERSION = 26;
+// ⚠️⚠️ 2026-10-18 冻结在 25：红队 R2 认定 v26 的 recompute 会**不可回滚地删除**归档会话的决策
+//   （cleanArchivedDecisions 在早退前无条件执行、无 quarantine、无 dry-run；归档会话正文已删，
+//    decisions 是唯一记录）。而 daemon 已在跑 v26（实测 agent1super 610/633、music 339/719 已重算），
+//   实测当时数据尚未丢失（决策 729/243 场未变），但**继续跑就有风险**，故先冻回 25 止血。
+//   修复顺序：① 加 quarantine 落盘 + --dry-run → ② 修 R3（失败行不许打版本戳）→ ③ 修 R1（英文标识符误杀）
+//   → ④ 副本上验一次 → ⑤ 才允许解冻到 26。解冻前不许改这个数字。
+export const EXTRACT_VERSION = 25;

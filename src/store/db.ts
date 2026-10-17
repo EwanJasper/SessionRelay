@@ -5,13 +5,16 @@ import Database from 'better-sqlite3';
 import { toSearchText } from '../core/tokenize/tokenizer.js';
 import { stripInjected } from '../core/extract/extract.js';
 import { EXTRACT_VERSION } from '../core/extract/version.js';
+import { decisionKey } from './decision-validity.js';
 
 // 便捷再导出：dbFile 常被误从本模块导入（实测已误 4 次），统一出口消灭此类错误
 export { dbFile } from '../shared/paths.js';
 
 export type DB = Database.Database;
 
-const SCHEMA_VERSION = 5;
+// v6: 决策有效性旁表（内容与有效性分离；decisions JSON 仍是唯一内容来源）。
+// 版本号只用于"旧库打开时执行 DDL 补表"，CREATE TABLE IF NOT EXISTS 保证幂等。
+const SCHEMA_VERSION = 6;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -261,6 +264,21 @@ CREATE TABLE IF NOT EXISTS session_vectors (
   embedded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_session_vectors_model ON session_vectors(model);
+
+-- ═══════════ v6：决策有效性旁表（内容与有效性分离） ═══════════
+-- decisions 是 sessions.decisions 的 JSON 文本列，不是表 —— 内容唯一来源仍是 JSON；
+-- 本表只记"这条决策还有效吗"。无记录的决策视为 active（兼容存量，不能因没回填就消失）。
+CREATE TABLE IF NOT EXISTS decision_validity (
+  session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  decision_key  TEXT NOT NULL,
+  active        INTEGER NOT NULL DEFAULT 1,
+  superseded_by TEXT,
+  superseded_at TEXT,
+  valid_from    TEXT,
+  created_at    TEXT NOT NULL,
+  UNIQUE(session_id, decision_key)
+);
+CREATE INDEX IF NOT EXISTS idx_decision_validity_active ON decision_validity(session_id, active);
 `;
 
 export function createDb(file: string = ':memory:'): DB {
@@ -858,12 +876,29 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
   // 最新出现的那次——保留新、丢弃旧，语义正确。
   // key → { idx: 已入队条目下标（-1 = 被 --kind 过滤掉了）, atMs, pinned }
   const seen = new Map<string, { idx: number; atMs: number; pinned: boolean }>();
+  // [1021 决策有效性] 旁表过滤：active=0 的不返回；**无记录的老决策保持 active**（兼容铁律）。
+  // 一眼一次批量读（避免每会话一条查询）；SRELAY_SHOW_EXPIRED=1 看全史，默认只看有效结论。
+  // 旧库缺旁表时按"无记录=active"处理 —— 绝不能因为读不到表就让所有决策消失。
+  const showExpired = process.env.SRELAY_SHOW_EXPIRED === '1';
+  let validityBySession: Map<string, Map<string, number>> | null = null;
+  if (!showExpired) {
+    validityBySession = new Map();
+    try {
+      const vs = db.prepare('SELECT session_id, decision_key, active FROM decision_validity WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)').all(projectId) as Array<{ session_id: string; decision_key: string; active: number }>;
+      for (const v of vs) {
+        let m = validityBySession.get(v.session_id);
+        if (!m) { m = new Map(); validityBySession.set(v.session_id, m); }
+        m.set(v.decision_key, Number(v.active));
+      }
+    } catch { validityBySession = null; }
+  }
   for (const r of rows) {
     let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative'; msgId?: string | number }> = [];
     let topics: string[] = [];
     try { decs = JSON.parse(r.decisions); topics = JSON.parse(r.topics ?? '[]'); } catch { continue; }
     if (filter?.topic && !topics.includes(filter.topic) && !r.title?.includes(filter.topic)) continue;
     for (const d of decs) {
+      if (validityBySession && validityBySession.get(r.id)?.get(decisionKey(d.text)) === 0) continue;
       const key = dedupKey(d.text);
       if (!key) continue;
       const at = d.at ?? r.created_at;

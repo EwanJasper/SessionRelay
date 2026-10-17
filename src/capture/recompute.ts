@@ -181,6 +181,28 @@ function ensureTable(db: DB): void {
   }
   // 复合索引：重算查询的判据+过滤列，避免全表扫（581 会话时无所谓，10 万时有关）。
   db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_extractver ON sessions(extracted_version, state)');
+
+  // [1021 R3] 失败行必须留痕：失败计数 + 最后错误（否则"系统性 bug 伪装成重算成功"）。
+  if (!scols.some((c) => c.name === 'extract_retry_count')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN extract_retry_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!scols.some((c) => c.name === 'extract_last_error')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN extract_last_error TEXT');
+  }
+
+  // [1021 R2] 决策删除前的隔离区：每条被删/被改的决策**原文整条**落在这里。
+  //   归档会话正文已删，decisions 是唯一记录 —— 删之前必须先能原样找回。
+  //   写入失败时 cleanArchivedDecisions 会跳过该会话（不删），宁可不清也不可无备份删。
+  db.exec(`CREATE TABLE IF NOT EXISTS recompute_quarantine (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    old_value TEXT NOT NULL,
+    new_value TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_recompute_quarantine_session ON recompute_quarantine(session_id)');
 }
 
 /** 本库记录的重算版本（无记录 = 0，视为全新库/未初始化） */
@@ -287,8 +309,9 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   }, { messageCount: msgs.length, source: 'recompute', firstAt: new Date(0).toISOString(), lastAt: null });
   // [v14] 打版本戳：这一行从此**自报**"我的派生列是哪个规则版本算的"。
   // 判据、进度、doctor 的逐会话检查全部读它，不再依赖任何库级游标。
+  // [1021 R3] 成功路径同时清失败标记（retry_count/last_error），否则失败过一次就永久带污点。
   db.prepare(
-    'UPDATE sessions SET decisions = ?, key_questions = ?, topics = ?, files_mentioned = ?, summary_rule = ?, extracted_version = ? WHERE id = ?',
+    'UPDATE sessions SET decisions = ?, key_questions = ?, topics = ?, files_mentioned = ?, summary_rule = ?, extracted_version = ?, extract_retry_count = 0, extract_last_error = NULL WHERE id = ?',
   ).run(
     JSON.stringify(decisions),
     JSON.stringify(questions),
@@ -300,12 +323,31 @@ function recomputeSession(db: DB, s: { id: string; title: string | null }): void
   );
 }
 
-/** [v14] 提取失败时也打版本戳：与旧实现"游标越过即永久放弃"同语义（避免每个周期
- *  对同一个坏会话无限重试），但这次至少留下可观测的计数（RecomputeResult.failed）。 */
+/** 成功路径：打版本戳（只许在**派生列真的写成功**之后调用）。 */
 function markAttempted(db: DB, id: string): void {
   try {
-    db.prepare('UPDATE sessions SET extracted_version = ? WHERE id = ?').run(EXTRACT_VERSION, id);
+    db.prepare('UPDATE sessions SET extracted_version = ?, extract_retry_count = 0, extract_last_error = NULL WHERE id = ?').run(EXTRACT_VERSION, id);
   } catch { /* 打戳失败不阻塞整批 */ }
+}
+
+/** [1021 R3] 失败路径：**不许**打当前版本戳（否则以后永不再处理，doctor 还显示全绿）。
+ *  · 前 MAX_EXTRACT_RETRIES 次：extracted_version 置 0（下轮会重试）+ retry_count/last_error 留痕；
+ *  · 到上限：park 成当前版本（不再每轮空转）但 last_error 写明"已放弃"，doctor/CLI 能看见。
+ *    这不是静默：CLI 每轮打印 failed 数，表中 last_error 可查。 */
+const MAX_EXTRACT_RETRIES = 3;
+function markFailed(db: DB, id: string, e: unknown): void {
+  try {
+    const row = db.prepare('SELECT extract_retry_count FROM sessions WHERE id = ?').get(id) as { extract_retry_count?: number } | undefined;
+    const n = (row?.extract_retry_count ?? 0) + 1;
+    const msg = String((e as Error)?.message ?? e).slice(0, 500);
+    if (n >= MAX_EXTRACT_RETRIES) {
+      db.prepare('UPDATE sessions SET extracted_version = ?, extract_retry_count = ?, extract_last_error = ? WHERE id = ?')
+        .run(EXTRACT_VERSION, n, '已放弃（重试 ' + n + ' 次仍失败）：' + msg, id);
+    } else {
+      db.prepare('UPDATE sessions SET extracted_version = 0, extract_retry_count = ?, extract_last_error = ? WHERE id = ?')
+        .run(n, msg, id);
+    }
+  } catch { /* 留痕失败不阻塞整批；CLI 计数仍会显示 */ }
 }
 
 /** 剩余待重算会话数（版本已跟上时为 0）。 */
@@ -355,48 +397,65 @@ function remainingCount(db: DB): number {
  *   · 只处理 `extracted_version < 当前版本` 的行，跑过一次就打戳，不会每轮重扫；
  *   · 返回清理条数，调用方负责打日志（**不许静默**）。
  */
-export function cleanArchivedDecisions(db: DB): number {
-  // ⚠️ [1021 红队 T6 补充] 原来 WHERE 里还有 `AND decisions IS NOT NULL AND decisions != '[]'` ——
-  //   于是**决策为空的归档会话永远选不中，也就永远打不上版本戳** ⇒ 每轮都被重扫一遍，
-  //   实测 502 场归档会话里 310 场卡在 <25 就是这个原因。
-  //   现在把所有版本落后的归档会话都选出来：有决策的重筛，没决策的**只打戳**（不做事、不重扫）。
-  const rows = db.prepare(
-    `SELECT id, decisions FROM sessions
-     WHERE extracted_version < ? AND (cleanup_at IS NOT NULL OR message_count = 0)`,
-  ).all(EXTRACT_VERSION) as Array<{ id: string; decisions: string | null }>;
-  if (rows.length === 0) return 0;
-  let removed = 0;
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    for (const r of rows) {
-      // 决策为空/NULL：没什么可清的，**只打戳**就走（否则会每轮被重扫）。
-      if (r.decisions === null || r.decisions === undefined || r.decisions === '' || r.decisions === '[]') { markAttempted(db, r.id); continue; }
-      // 需要 pinned 字段（见下方 T8 豁免），所以类型要带它，否则读不到。
-      let arr: Array<{ text?: string; pinned?: boolean }> = [];
-      try { arr = JSON.parse(r.decisions); } catch { markAttempted(db, r.id); continue; }  // 坏 JSON 不阻塞，但要打戳防重试每轮重试
-      if (!Array.isArray(arr)) { markAttempted(db, r.id); continue; }
-      // ── [1021 红队 T8 修复] **pinned 决策豁免** ──
-      //   红队合成复现：一条 pinned 的垃圾决策同样被删掉（removed=1）。
-      //   而 pinned 是**用户亲手置顶**的东西 —— 判断「它不是决策」的权力不该高于用户的手动选择。
-      //   本库当前 0 条 pinned（无现存受害），但这属于「一旦发生就找不回来」的删数据路径，必须提前堵上。
-      //   简报过滤器那边早就有 pin 豁免，这里漏了 —— 判据只许有一份，现在补齐。
-      const kept = arr.filter((d) => d?.pinned === true || passesDecisionTextGuards(String(d?.text ?? '')));
-      if (kept.length !== arr.length) {
-        removed += arr.length - kept.length;
-        db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?').run(JSON.stringify(kept), r.id);
-      }
-      markAttempted(db, r.id);
-    }
-    db.exec('COMMIT');
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch { /* 回滚失败也不掩盖原始错误 */ }
-    throw e;
-  }
-  return removed;
+export interface ArchivedCleanupResult {
+  dryRun: boolean;
+  /** 本轮检查的归档会话数 */
+  sessions: number;
+  /** 实际删除条数（dryRun 时恒为 0） */
+  removed: number;
+  /** 将要删除条数（dryRun 时是预演数） */
+  wouldRemove: number;
+  /** 前 10 条样例（给人眼看删的是什么） */
+  samples: Array<{ sessionId: string; text: string }>;
+  /** 隔离写入失败而被跳过的会话（这些会话**一条都没删**，下轮会重试） */
+  skipped: Array<{ sessionId: string; reason: string }>;
 }
 
-export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResult {
+export function cleanArchivedDecisions(db: DB, opts: { dryRun?: boolean } = {}): ArchivedCleanupResult {
+  const dryRun = opts.dryRun === true;
+  const rows = db.prepare(
+    'SELECT id, decisions FROM sessions WHERE extracted_version < ? AND (cleanup_at IS NOT NULL OR message_count = 0)',
+  ).all(EXTRACT_VERSION) as Array<{ id: string; decisions: string | null }>;
+  const res: ArchivedCleanupResult = { dryRun, sessions: rows.length, removed: 0, wouldRemove: 0, samples: [], skipped: [] };
+  if (rows.length === 0) return res;
+  for (const r of rows) {
+    // 决策为空/NULL：没什么可清的；非 dryRun 才打戳（否则会每轮被重扫）。
+    if (r.decisions === null || r.decisions === undefined || r.decisions === '' || r.decisions === '[]') { if (!dryRun) markAttempted(db, r.id); continue; }
+    let arr: Array<{ text?: string; pinned?: boolean }> = [];
+    try { arr = JSON.parse(r.decisions); } catch { if (!dryRun) markAttempted(db, r.id); continue; }
+    if (!Array.isArray(arr)) { if (!dryRun) markAttempted(db, r.id); continue; }
+    // [1021 红队 T8] pinned 决策豁免：用户亲手置顶 > 自动判据。
+    const isKept = (d: { text?: string; pinned?: boolean }) => d?.pinned === true || passesDecisionTextGuards(String(d?.text ?? ''));
+    const kept = arr.filter(isKept);
+    const dropped = arr.filter((d) => !isKept(d));
+    if (dropped.length === 0) { if (!dryRun) markAttempted(db, r.id); continue; }
+    res.wouldRemove += dropped.length;
+    for (const d of dropped) {
+      if (res.samples.length >= 10) break;
+      res.samples.push({ sessionId: r.id, text: String(d?.text ?? '') });
+    }
+    if (dryRun) continue;
+    // [1021 R2] **先落 quarantine 再删**；隔离写入失败 = 这个会话跳过（一条都不删），
+    //   下轮会重试。归档会话正文已删，decisions 是唯一记录 —— 没有备份就不许删。
+    try {
+      db.transaction(() => {
+        const ins = db.prepare('INSERT INTO recompute_quarantine (session_id, field, old_value, new_value, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+        const at = new Date().toISOString();
+        for (const d of dropped) ins.run(r.id, 'decisions', JSON.stringify(d), JSON.stringify(kept), 'archived-cleanup', at);
+        db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?').run(JSON.stringify(kept), r.id);
+        markAttempted(db, r.id);
+      })();
+      res.removed += dropped.length;
+    } catch (e) {
+      res.skipped.push({ sessionId: r.id, reason: '隔离写入失败，已跳过（未删）: ' + String((e as Error)?.message ?? e).slice(0, 200) });
+    }
+  }
+  return res;
+}
+
+export function recomputeExtractions(db: DB, batch = BATCH_SIZE, opts: { apply?: boolean } = {}): RecomputeResult {
   ensureTable(db);
+  const apply = opts.apply !== false;
   const cur = extractVersionOf(db);
   // [1021] 归档会话的存量决策清理必须在**早退之前**跑 —— 否则版本一旦追平就永远轮不到它。
   //   这也是 226 行那段清理一直够不着归档会话的根本原因（它排在早退之后）。
@@ -406,8 +465,14 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
   //   而归档会话的**逐行**版本可能仍然落后 —— 实测库版本 25 时仍有 310 场归档会话 < 25。
   //   现在无条件跑：`cleanArchivedDecisions` 自己按逐行版本筛、跑过打戳，天然幂等，
   //   所以每轮多付的代价只是「一条走索引的空查询」。
+  // [1021 R2] apply=false 时**一步都不写**（只读预演，供 --dry-run 用）：
+  //   归档清理也走 dryRun，不会打版本戳、不会删决策、不会动 quarantine。
+  if (!apply) {
+    const dry = cleanArchivedDecisions(db, { dryRun: true });
+    return { recomputed: 0, remaining: remainingCount(db), failed: 0, archivedCleaned: dry.wouldRemove };
+  }
   let archivedCleaned = 0;
-  try { archivedCleaned = cleanArchivedDecisions(db); }
+  try { archivedCleaned = cleanArchivedDecisions(db).removed; }
   catch { archivedCleaned = -1; }   // -1 = 清理失败（调用方据此告警）；0 = 没有要清的
 
   const total = remainingCount(db);
@@ -436,7 +501,8 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
   let failed = 0;
   for (const s of todo) {
     try { recomputeSession(db, s); done++; }
-    catch { failed++; markAttempted(db, s.id); }
+    // [1021 R3] 失败**不许**打当前版本戳：置回 0 + retry/last_error，下轮会重试、且看得见。
+    catch (e) { failed++; markFailed(db, s.id, e); }
   }
 
   const left = remainingCount(db);
@@ -457,6 +523,67 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
        progress_version = excluded.progress_version`,
   ).run(cur, new Date().toISOString(), done, left, prev + done, EXTRACT_VERSION);
   return { recomputed: done, remaining: left, failed, archivedCleaned };
+}
+
+/** [1021 R2] 只读预演：给 CLI --dry-run / 首次 v26 升级前的人工检查用。**不写任何东西**。
+ *  不调用 ensureTable（那是 CREATE/ALTER）——只读连接也能跑。 */
+export interface RecomputeDryRunSummary {
+  version: number;
+  /** 会重算的会话数（extracted_version < 当前版本，且是目标集：confirmed/pending 有正文） */
+  sessions: number;
+  archived: ArchivedCleanupResult;
+}
+
+export function recomputeDryRun(db: DB): RecomputeDryRunSummary {
+  let sessions = 0;
+  try { sessions = remainingCount(db); } catch { sessions = 0; }
+  let archived: ArchivedCleanupResult = { dryRun: true, sessions: 0, removed: 0, wouldRemove: 0, samples: [], skipped: [] };
+  try { archived = cleanArchivedDecisions(db, { dryRun: true }); } catch { /* 旧库缺列：按 0 报，不阻塞预演 */ }
+  return { version: EXTRACT_VERSION, sessions, archived };
+}
+
+/** [1021] 只读审计：哪些行被打上了**高于当前 EXTRACT_VERSION** 的版本戳（例如 v26 回滚到 v25 后）。
+ *  用途：把"用带 bug 的代码算过的行"精确圈出来，并把重置 SQL 打印给人执行（本函数绝不写库）。
+ *  返回按项目聚合的行数与涉及决策数（逐条 JSON.parse 计数，避免依赖 JSON1 编译开关）。 */
+export interface ExtractVersionAuditRow { projectId: string; sessions: number; decisions: number }
+export interface ExtractVersionAudit {
+  currentVersion: number;
+  /** 被审计到的"超前版本" */
+  aheadVersion: number;
+  totalSessions: number;
+  totalDecisions: number;
+  byProject: ExtractVersionAuditRow[];
+  /** 给人执行的重置语句（只打印，不执行） */
+  resetSql: string;
+}
+
+export function auditAheadExtractVersions(db: DB): ExtractVersionAudit {
+  const rows = db.prepare(
+    'SELECT id, project_id, extracted_version, decisions FROM sessions WHERE extracted_version > ?',
+  ).all(EXTRACT_VERSION) as Array<{ id: string; project_id: string; extracted_version: number; decisions: string | null }>;
+  const byProject = new Map<string, ExtractVersionAuditRow>();
+  let totalDecisions = 0;
+  let aheadVersion = 0;
+  for (const r of rows) {
+    aheadVersion = Math.max(aheadVersion, Number(r.extracted_version) || 0);
+    let n = 0;
+    try { const a = JSON.parse(r.decisions ?? '[]'); n = Array.isArray(a) ? a.length : 0; } catch { n = 0; }
+    totalDecisions += n;
+    const cur = byProject.get(r.project_id) ?? { projectId: r.project_id, sessions: 0, decisions: 0 };
+    cur.sessions++;
+    cur.decisions += n;
+    byProject.set(r.project_id, cur);
+  }
+  return {
+    currentVersion: EXTRACT_VERSION,
+    aheadVersion,
+    totalSessions: rows.length,
+    totalDecisions,
+    byProject: [...byProject.values()].sort((a, b) => b.sessions - a.sessions),
+    resetSql: aheadVersion > EXTRACT_VERSION
+      ? 'UPDATE sessions SET extracted_version = ' + EXTRACT_VERSION + ' WHERE extracted_version > ' + EXTRACT_VERSION + ';'
+      : '-- 没有超前版本行，无需重置',
+  };
 }
 
 function finishVersion(db: DB, done: number): void {

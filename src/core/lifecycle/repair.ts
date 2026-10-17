@@ -17,11 +17,37 @@ import { createDb } from '../../store/db.js';
 import { loadConfig } from '../../shared/config.js';
 import { runSync } from '../../capture/sync.js';
 
-export interface IntegrityVerdict { ok: boolean; detail: string; sessions?: number; messages?: number; sizeMb?: number }
+/**
+ * 体检结论。**必须区分"读不了"和"坏了"** —— 这是 2026-10-18 事故的根因：
+ *
+ * 病历：那天为了重置版本戳手写了一条 UPDATE，撞上别的进程持锁（SQLITE_BUSY）。
+ *   integrityOf() 用 createDb() 打开库，锁冲突时抛错 → catch 统一返回 ok:false
+ *   → repairProject 把**两个完好无损的库**（agent1super 57MB / dsh插件记忆 2.3MB）
+ *   改名成 .damaged-* 并另建空库。数据没丢（留在 .damaged 里），但采集停了、
+ *   面板显示 0 场、还差点被当成"库损坏"去重建。
+ *
+ * 判据覆盖不到的地方就在这：ok 是一个布尔位，而实际情况有三类——
+ *   · 真损坏（能打开，但 integrity_check != ok）     → 该隔离重建
+ *   · 被别的进程锁着（SQLITE_BUSY / database is locked）→ **绝不该隔离**，等下轮重试
+ *   · 文件不存在                                     → 该建库
+ * 用一个布尔位表达三件事，就是把"暂时读不到"当成"永久坏了"。
+ */
+export type IntegrityKind = 'ok' | 'corrupt' | 'busy' | 'missing' | 'error';
 
-/** 体检一个库：读失败/完整性异常都返回 ok:false，并给出人话原因（不抛） */
+export interface IntegrityVerdict {
+  ok: boolean;
+  /** 细分结论：只有 'corrupt' 才允许隔离重建 */
+  kind: IntegrityKind;
+  detail: string; sessions?: number; messages?: number; sizeMb?: number;
+}
+
+/** 锁冲突的识别（不同平台/驱动措辞不同，宁可多认几个） */
+export function isBusyMessage(msg: string): boolean {
+  return /database is locked|SQLITE_BUSY|SQLITE_LOCKED|EBUSY|database table is locked/i.test(msg);
+}
+
 export function integrityOf(file: string): IntegrityVerdict {
-  if (!fs.existsSync(file)) return { ok: false, detail: '库不存在' };
+  if (!fs.existsSync(file)) return { ok: false, kind: 'missing', detail: '库不存在' };
   const sizeMb = Number((fs.statSync(file).size / 1048576).toFixed(1));
   try {
     const d = createDb(file);
@@ -29,9 +55,14 @@ export function integrityOf(file: string): IntegrityVerdict {
       const v = String(Object.values(d.prepare('PRAGMA integrity_check').get() as Record<string, unknown>)[0]).slice(0, 80);
       const sessions = Number((d.prepare('SELECT count(*) c FROM sessions').get() as { c: number }).c);
       const messages = Number((d.prepare('SELECT count(*) c FROM messages').get() as { c: number }).c);
-      return { ok: v === 'ok', detail: v, sessions, messages, sizeMb };
+      return { ok: v === 'ok', kind: v === 'ok' ? 'ok' : 'corrupt', detail: v, sessions, messages, sizeMb };
     } finally { try { d.close(); } catch { /* 已关 */ } }
-  } catch (e) { return { ok: false, detail: '读取失败：' + String((e as Error).message).slice(0, 60), sizeMb }; }
+  } catch (e) {
+    const msg = String((e as Error).message).slice(0, 80);
+    // ★ 关键分叉：锁冲突不是损坏。绝不能让"现在读不到"变成"隔离 + 另建空库"。
+    if (isBusyMessage(msg)) return { ok: false, kind: 'busy', detail: '被占用（不是损坏）：' + msg, sizeMb };
+    return { ok: false, kind: 'error', detail: '读取失败：' + msg, sizeMb };
+  }
 }
 
 export interface RepairOutcome extends IntegrityVerdict { repaired: boolean; mode?: 'rename' | 'in-place'; note: string }
@@ -42,6 +73,28 @@ export async function repairProject(root: string): Promise<RepairOutcome> {
   const db = path.join(dir, 'relay.sqlite');
   const before = integrityOf(db);
   if (before.ok) return { ...before, repaired: false, note: '完整，无需重建' };
+
+  // ★★ 只有"真损坏"才允许改名隔离 + 另建空库。
+  //   2026-10-18 事故：库被别的进程锁着 → createDb 抛 SQLITE_BUSY → 旧代码只有 ok:false 一个信号
+  //   → 把两个完好的库（57MB / 2.3MB）改名成 .damaged-* 并建了空库。
+  //   现在锁冲突/读取失败一律**不动文件**，只说清楚、下轮再来。
+  if (before.kind === 'busy') {
+    return { ...before, repaired: false, note: '库被其他进程占用，本轮跳过（**不是损坏，未做任何改动**）。守护/DSH 关闭后会自动重试。' };
+  }
+  if (before.kind === 'error') {
+    return { ...before, repaired: false, note: '读取失败但不是完整性错误，本轮跳过（未做任何改动）：' + before.detail };
+  }
+  // kind === 'missing'：文件本来就不在，直接 sync 建库，不需要"隔离"（没有东西可隔离）
+  if (before.kind === 'missing') {
+    try {
+      const cfg = loadConfig(root);
+      const r = await runSync({ projectRoot: root, config: cfg });
+      const after = integrityOf(db);
+      return { ...after, repaired: after.ok, mode: 'rename', note: '库不存在，已新建：+' + r.newSessions + ' 场 / +' + r.newMessages + ' 条' };
+    } catch (e) {
+      return { ...before, repaired: false, note: '新建失败：' + String((e as Error).message).slice(0, 80) };
+    }
+  }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
   const aside = db + '.damaged-' + stamp;

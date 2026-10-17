@@ -241,7 +241,8 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     const res = eachProject((root, db) => {
       let total = 0, failed = 0, guard = 0, archivedCleaned = 0, archivedFailed = 0;
       for (;;) {
-        const r = recomputeExtractions(db, 300);
+        // [1021 R2] 生命周期是守护的常规路径：显式 apply（隔离区保证删前有备份）。
+        const r = recomputeExtractions(db, 300, { apply: true });
         total += r.recomputed; failed += r.failed;
         // [1021 红队 T7 修复] `archivedCleaned` 原来**没有任何调用方读** ——
         //   `-1` 那个「清理失败」哨兵永远没人看，注释写的「调用方负责打日志，不许静默」没兑现。

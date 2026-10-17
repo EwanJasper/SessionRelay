@@ -331,7 +331,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
   const runRecompute = () => {
     chain = chain.then(() => {
       try {
-        const r = recomputeExtractions(db);
+        const r = recomputeExtractions(db, undefined, { apply: true });
         if (r.recomputed > 0) {
           log(`提取规则重算：${r.recomputed} 个会话${r.remaining > 0 ? `（剩 ${r.remaining} 待下批）` : '（已跟上版本）'}`);
         }

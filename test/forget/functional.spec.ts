@@ -346,7 +346,10 @@ describe('forget · G 兼容性', () => {
     db.exec('DROP TABLE forget_tombstones; DROP TABLE forget_log; DROP TABLE forget_detail; DROP TABLE IF EXISTS session_vectors;');
     db.close();
     const db2 = openExisting(old);
-    expect(db2.pragma('user_version', { simple: true })).toBe(5);
+    // [1021] 这里原写死 5，SCHEMA_VERSION 到 6（决策有效性旁表）后就红了。
+    //   ⚠️ 欠账：理想做法是从 src/store/db.ts 导出 SCHEMA_VERSION 再引用（判据只许一份），
+    //   但该文件当时正被别人改，避免抢写，先用字面值并在此登记。改 schema 时**必须同步改这三处**。
+    expect(db2.pragma('user_version', { simple: true })).toBe(6);
     for (const t of ['forget_tombstones', 'forget_log', 'forget_detail', 'session_vectors']) {
       expect(db2.prepare(`SELECT COUNT(*) n FROM ${t}`).get()).toBeTruthy();
     }
@@ -357,7 +360,7 @@ describe('forget · G 兼容性', () => {
     const fut = path.join(TMP, 'v5db', 'relay.sqlite');
     fs.mkdirSync(path.dirname(fut), { recursive: true });
     const db = createDb(fut);
-    db.pragma('user_version = 6'); // 模拟未来版本创建的库
+    db.pragma('user_version = 7'); // 模拟未来版本创建的库（必须比当前 SCHEMA_VERSION=6 大）
     db.close();
     expect(() => openExisting(fut)).toThrow(/更新版本的 srelay/);
   });

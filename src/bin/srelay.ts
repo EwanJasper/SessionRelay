@@ -59,9 +59,10 @@ program
   .description('维护（默认只读、默认不删文件）：FTS 空间回收 / 孤儿备份清理 / 守护断线核算')
   .option('--fts', '按阈值回收 FTS 索引垃圾（文件/内容 > 2 倍才动手）')
   .option('--force', '配 --fts：无视阈值强制回收')
-  .option('--dry-run', '配 --fts：只测量不回收；配 --reap：只列候选')
+  .option('--apply', '真正写入（默认强制干跑；没有 --apply 绝不写库、绝不删文件）')
+  .option('--dry-run', '保险起见再声一次干跑（与默认行为相同）')
   .option('--reap', '列出孤儿备份/临时文件候选（默认只列不删）')
-  .option('--reap-apply', '配 --reap：真的删除（需主库健康；每删一个写 reap.log 审计）')
+  .option('--reap-apply', '旧别名（等价于 --reap --apply；保留兼容）')
   .option('--age-days <n>', '配 --reap：超过多少天才清（默认 30 天）', '30')
   .option('--guard', '核算 guard.log 里 instances=0 的持续时长 + 补采判定')
   .option('--alarm-min <n>', '配 --guard：超过多少分钟算断线（默认 5）', '5')
@@ -83,19 +84,21 @@ program
     if (opts.fts) {
       const { maintainFts, measureFtsSpace, wasteRatio, shouldReclaim } = await import('../core/maintain/fts.js');
       const Database = (await import('better-sqlite3')).default;
+      // [安全闸门] 没显式 --apply 一律当干跑：即使将来手滑，也不会再"以为在副本上、实际动了真库"。
+      const applyFts = opts.apply === true && opts.dryRun !== true;
       const rows: unknown[] = [];
       for (const root of roots) {
         const f = dbFile(root);
         try {
-          const db = new Database(f, opts.dryRun ? { readonly: true, fileMustExist: true } : { fileMustExist: true });
+          const db = new Database(f, !applyFts ? { readonly: true, fileMustExist: true } : { fileMustExist: true });
           try {
             db.pragma('busy_timeout = 5000');
             const st = measureFtsSpace(db as never, f);
             const withForce = { force: opts.force === true };
-            if (opts.dryRun) {
+            if (!applyFts) {
               const would = shouldReclaim(st, withForce);
               rows.push({ root, beforeBytes: st.fileBytes, contentBytes: st.contentBytes, ratio: Number(wasteRatio(st).toFixed(2)), wouldReclaim: would });
-              if (!opts.json) console.log((would ? pc.yellow('●') : pc.dim('○')) + ' ' + root + '  ' + mb(st.fileBytes) + '（内容 ' + mb(st.contentBytes) + '，' + wasteRatio(st).toFixed(2) + ' 倍）' + (would ? ' ⇒ 会回收（干跑，未写库）' : ' ⇒ 体积正常，不动'));
+              if (!opts.json) console.log((would ? pc.yellow('●') : pc.dim('○')) + ' ' + root + '  ' + mb(st.fileBytes) + '（内容 ' + mb(st.contentBytes) + '，' + wasteRatio(st).toFixed(2) + ' 倍）' + (would ? ' ⇒ 会回收（干跑；要真写库加 --apply）' : ' ⇒ 体积正常，不动'));
             } else {
               const r = maintainFts(db as never, f, withForce);
               rows.push({ root, beforeBytes: r.beforeBytes, afterBytes: r.afterBytes, reclaimed: r.reclaimed, rebuilt: r.rebuilt, skipped: r.skippedReason ?? null });
@@ -116,7 +119,8 @@ program
     if (opts.reap || opts.reapApply) {
       const { reapProjectTmpFiles } = await import('../core/maintain/reap.js');
       const minAgeDays = Number(opts.ageDays ?? 30);
-      const apply = opts.reapApply === true && opts.dryRun !== true;
+      // 同一条闸门：只有 --apply（或旧别名 --reap-apply）才真删。
+      const apply = (opts.apply === true || opts.reapApply === true) && opts.dryRun !== true;
       const rows: unknown[] = [];
       for (const root of roots) {
         const r = reapProjectTmpFiles(root, { enabled: apply, dryRun: !apply, minAgeDays });
@@ -129,7 +133,7 @@ program
           const done = r.deleted.some((d) => d.file === c.file);
           console.log('    ' + (done ? '已删 ' : '保留 ') + c.name + '  ' + mb(c.bytes) + ' · ' + c.ageDays + ' 天 · 规则 ' + c.rule);
         }
-        if (!apply && r.candidates.length) console.log(pc.dim('    （默认不删：加 --reap-apply 才真删；删前再验主库健康并写 reap.log）'));
+        if (!apply && r.candidates.length) console.log(pc.dim('    （默认不删：加 --apply 才真删；删前再验主库健康并写 reap.log）'));
         if (apply && r.journalFile) console.log(pc.dim('    审计日志：' + r.journalFile));
       }
       out.reap = rows;
@@ -157,7 +161,7 @@ program
     }
 
     if (!opts.fts && !opts.reap && !opts.reapApply && !opts.guard) {
-      console.log(pc.yellow('未指定动作') + '：用 --fts / --reap / --guard 之一。例：srelay maintain --fts --dry-run');
+      console.log(pc.yellow('未指定动作') + '：用 --fts / --reap / --guard 之一。例：srelay maintain --fts（干跑）/ srelay maintain --fts --apply（真写库）');
       process.exit(2);
     }
     if (opts.json) console.log(JSON.stringify(out, null, 2));
@@ -413,6 +417,9 @@ program
   .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
   .option('--batch <n>', '每批会话数，默认 50')
   .option('--search-text', '同时按当前清洗规则刷新消息的 search_text（派生列，规则变了会陈旧）')
+  .option('--apply', '真正写库（默认强制干跑；没有 --apply 一律不写）')
+  .option('--dry-run', '保险起见再声一次干跑（与默认行为相同）')
+  .option('--audit', '只读审计：列出提取版本高于当前版本的行（回滚/重算前评估用），不写库')
   .option('--json', '机器格式')
   .action(async (opts) => {
     const { requireRoot, openRelayDb, pc } = await import('../cli/ui.js');
@@ -425,6 +432,40 @@ program
     const { loadConfig } = await import('../shared/config.js');
     const root = requireRoot();
     loadConfig(root);
+    // [1021 R2] --audit：只读打开（不跑 createDb 迁移，不写任何东西），
+    //   列出 extracted_version > 当前版本的行 + 重置 SQL（只打印，由人执行）。
+    if (opts.audit) {
+      const { dbFile } = await import('../shared/paths.js');
+      const Database = (await import('better-sqlite3')).default;
+      const { auditAheadExtractVersions } = await import('../capture/recompute.js');
+      const adb = new Database(dbFile(root), { readonly: true, fileMustExist: true });
+      try {
+        const a = auditAheadExtractVersions(adb as never);
+        if (opts.json) { console.log(JSON.stringify(a, null, 2)); return; }
+        console.log('当前提取规则版本 v' + a.currentVersion + '；超前版本 v' + a.aheadVersion);
+        console.log('超前行：' + a.totalSessions + ' 场会话 · 涉及决策 ' + a.totalDecisions + ' 条');
+        for (const p of a.byProject) console.log('  ' + p.projectId + '  ' + p.sessions + ' 场 / ' + p.decisions + ' 条决策');
+        console.log(pc.yellow('重置语句（只打印，不执行；确认后手工跑）：'));
+        console.log('  ' + a.resetSql);
+        return;
+      } finally { adb.close(); }
+    }
+    // [1021 R2] 与 maintain 同一纪律：**默认干跑**，只有显式 --apply 才写。
+    const apply = opts.apply === true && opts.dryRun !== true;
+    if (!apply) {
+      const { dbFile } = await import('../shared/paths.js');
+      const Database = (await import('better-sqlite3')).default;
+      const { recomputeDryRun } = await import('../capture/recompute.js');
+      const ddb = new Database(dbFile(root), { readonly: true, fileMustExist: true });
+      try {
+        const s = recomputeDryRun(ddb as never);
+        if (opts.json) { console.log(JSON.stringify(s, null, 2)); return; }
+        console.log(pc.yellow('干跑（默认；要真跑加 --apply）') + '：会重算 ' + s.sessions + ' 场会话；归档存量决策会删 ' + s.archived.wouldRemove + ' 条');
+        for (const x of s.archived.samples.slice(0, 10)) console.log('  - [' + x.sessionId + '] ' + x.text);
+        if (s.archived.skipped.length) console.log(pc.yellow('  隔离写入失败被跳过（未删、下轮重试）：' + s.archived.skipped.length + ' 场'));
+        return;
+      } finally { ddb.close(); }
+    }
     const db = openRelayDb(root);
     try {
       const batch = opts.batch ? Math.max(1, Number(opts.batch)) : 50;
@@ -432,7 +473,7 @@ program
       // recomputeExtractions 幂等，连续调用只是把同一个调用重复跑完。
       let total = 0, guard = 0, failed = 0;
       for (;;) {
-        const r = recomputeExtractions(db, batch);
+        const r = recomputeExtractions(db, batch, { apply: true });
         total += r.recomputed;
         failed += r.failed;
         if (r.recomputed === 0 && r.remaining === 0) break;

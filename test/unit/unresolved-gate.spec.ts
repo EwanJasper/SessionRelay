@@ -21,9 +21,13 @@ describe('① 残片守卫 · 每条判据一个用例（理由字符串逐条�
     // 反引号包着的编号仍是残片（剥完没有任何判据能抓住它 —— 实测见下方 kept 列表的注释）。
     ['markdown 转义编号（反引号包着）仍拦', BT + '12. ' + BT + '之前他妈上下我不就叫你提PR吗？', 'head-list-marker-escaped'],
     ['整条只有编号/数字 → 仍拦（落到 too-short）', '12. ', 'too-short'],
-    ['剥掉编号后仍是英文散文垃圾', '4. later with frustration: "之前他妈上下我不就叫你提PR吗？', 'head-ascii-prose'],
+    // [R1] 带问号的散文残片不再由 ascii-prose 拦（含问号 = 问句形状），但引号不配对仍兜住
+    ['剥掉编号后仍是英文散文垃圾（引号不配对兜住）', '4. later with frustration: "之前他妈上下我不就叫你提PR吗？', 'unbalanced-quote'],
     ['剥掉编号后仍是 ASR 机械重复', '2) 你说呃审体机代价是调召回召回，这什么意思？', 'asr-repeat'],
-    ['行首英文散文残片（ASR 转写）', 'later with frustration: "之前他妈上下我不就叫你提PR吗？', 'head-ascii-prose'],
+    ['行首英文散文残片（ASR 转写，带问号 → 落到引号不配对）', 'later with frustration: "之前他妈上下我不就叫你提PR吗？', 'unbalanced-quote'],
+    // [R1] 英文散文**陈述**（无问号 + 行首连续 3 个英文词）才是这条判据的本命
+    ['英文散文残片（无问号，3 词）', 'later he said the config was wrong', 'head-ascii-prose'],
+    ['英文散文残片（无问号，截断的 what about）', 'what about the token', 'head-ascii-prose'],
     ['行首闭引号 = 从句子中段切出', '” - “再查查思考可以怎么配置？', 'head-closing-punct'],
     ['行首开括号 = 括号补注被单独切出', '（顺序不同是否算漂移？', 'head-open-bracket'],
     ['字面反斜杠n 的多行残片（markdown 转义）', '[推断]\\n\\n---\\n\\n## 关键证据\\n\\n### Q1：训练数据里回复长度应该怎么分布？', 'escaped-newline'],
@@ -57,6 +61,14 @@ describe('① 残片守卫 · 每条判据一个用例（理由字符串逐条�
     '2. 后面最终形态怎么说？',
     '2) 找出只增不减的东西：messages 是否永久保留？',
     '12.5 秒够吗？',                              // 小数点不是列表编号，不许剥
+    // [R1 红队终审] 以小写英文标识符开头的**真问题**，一条都不许拦（真实库候选池里这类有 10 条）
+    'redis 挂了怎么办？',
+    'api 429 怎么绕？',
+    'token 什么时候过期？',
+    'sqlite vacuum 会锁库吗？',
+    'llama.cpp 还是别的？',                        // 真实库样本；碎片由 session-cap 处理，不由本判据
+    'should I use redis for the cache?',           // 英文问句：含问号 ⇒ 不是散文残片
+    'redis 挂了怎么处理',                          // 无问号但只有 1 个英文词 ⇒ 不是散文
   ];
   for (const text of kept) {
     it('不误伤真问题：' + text.slice(0, 18), () => {
