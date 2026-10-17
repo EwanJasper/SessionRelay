@@ -61,6 +61,24 @@
 
 GIF 无声音——完整配音版（中文/英文 + 手机竖版）在 [Releases · v0.2.2](https://github.com/rui08984-dot/SessionRelay/releases) 页面内可直接播放。
 
+## 看得见的部分（本仓库实拍）
+
+上游只有命令行。我们把它做成了**能看见的东西**——下面两张都是本项目真实数据，不是设计稿：
+
+### 项目看板 · `progress.md`
+
+每轮采集自动刷新 `auto:todos` 行（人工行一个字节不动），并发写入有原子锁保护。
+
+![项目看板](assets/kanban.png)
+
+### 标签图谱 · 力导向
+
+100 节点 / 1200 条共现边。斥力散开、弹簧聚簇、向心不飘——**纯 Canvas 手写，零第三方依赖**，15 秒轮询自动刷新。
+
+![标签图谱](assets/tag-graph.png)
+
+> 这两张图都能在 DSH 面板里实时交互（拖拽、悬停高亮邻居、缩放）。README 里是静态快照。
+
 ## 它解决什么
 
 | 痛点 | 会话接力的答案 |
@@ -321,8 +339,9 @@ git clone https://github.com/rui08984-dot/SessionRelay.git
 cd SessionRelay
 
 # 装到全局技能目录（路径按你的 agent 而定，下面是常见约定）
-cp -r skills/handoff-atlas ~/.agents/skills/        # 通用
+cp -r skills/handoff-atlas ~/.agents/skills/        # 通用（Claude Code / Codex）
 cp -r skills/handoff-atlas ~/.zcode/skills/         # ZCode
+cp -r skills/handoff-atlas ~/.dsh/skills/           # DSH（本仓库面板宿主）
 ```
 
 Windows PowerShell：

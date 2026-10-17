@@ -52,6 +52,24 @@ The fixes follow three rules: **errors must be visible** (`withDb` gained `onErr
 
 The GIF is silent — full narrated versions (English / 中文, plus a 9:16 vertical cut) are playable directly on the [Releases · v0.2.2](https://github.com/rui08984-dot/SessionRelay/releases/tag/v0.2.2) page.
 
+## What you actually see (real screenshots)
+
+Upstream ships a CLI only. We made it **visible** — both images below are real data from this project, not mockups:
+
+### Project board · `progress.md`
+
+The `auto:todos` rows refresh on every capture cycle (human-written rows are never touched), and concurrent writes are protected by an atomic file lock.
+
+![Project board](assets/kanban.png)
+
+### Tag graph · force-directed
+
+100 nodes / 1,200 co-occurrence edges. Repulsion spreads, springs cluster, centering keeps it on screen — **hand-written Canvas, zero third-party deps**, auto-refreshes every 15s.
+
+![Tag graph](assets/tag-graph.png)
+
+> Both views are fully interactive inside the DSH panel (drag, hover-to-highlight neighbours, zoom). What you see here is a static snapshot.
+
 ## What it solves
 
 | Pain point | SessionRelay's answer |
@@ -250,8 +268,9 @@ The skill's own rule:
 ```bash
 git clone https://github.com/rui08984-dot/SessionRelay.git
 cd SessionRelay
-cp -r skills/handoff-atlas ~/.agents/skills/     # generic agents
+cp -r skills/handoff-atlas ~/.agents/skills/     # generic agents (Claude Code / Codex)
 cp -r skills/handoff-atlas ~/.zcode/skills/      # ZCode
+cp -r skills/handoff-atlas ~/.dsh/skills/        # DSH (panel host of this repo)
 ```
 
 PowerShell:
