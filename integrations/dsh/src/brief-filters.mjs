@@ -126,7 +126,16 @@ export const UNRESOLVED_CONTENT_MIN = 4
 //   并把「实际走的是哪一份」暴露成 __unresolvedFromRecall，给守门与 selftest 断言。
 
 let _recall = null;
-try { _recall = await import('../vendor/dist/recall.js'); } catch { _recall = null; }
+// ⚠️ [复审 S3] 降级必须**可见**（纪律 2「容错不许静默」）。
+//   原来这里是 `catch { _recall = null }` 且整个文件零 console.* ⇒ 内核拿不到时**一点输出都没有**，
+//   用户只会看到「简报和以前不太一样」，查不出是走了兜底。降级本身是对的（插件是自包含发布件），
+//   错的是它不可观测。判定用环境变量开关，避免污染正常宿主 stderr。
+try { _recall = await import('../vendor/dist/recall.js'); } catch (e) {
+  _recall = null
+  if (process.env.SRELAY_DEBUG || process.env.SRELAY_BRIEF_DEBUG) {
+    console.error('[brief-filters] 内核 recall.js 取不到，未决段判据降级为本地兜底：' + (e?.message ?? e))
+  }
+}
 
 /** 未决段判据实际来自内核（true）还是本地兜底（false）。守门/selftest 断言它为 true。 */
 export const __unresolvedFromRecall = !!(
