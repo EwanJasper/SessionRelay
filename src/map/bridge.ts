@@ -14,6 +14,7 @@
 // 为什么 maxRows 连"下一步行"和"…还有 N 项"一起算：上限的意义是"这一屏放得下"，
 //   若只卡内容行，行数会随 context.next 的有无而多一行——上限就成了看情况的东西。
 
+import fs from 'node:fs';
 import {
   MAP_MODULE,
   err,
@@ -228,7 +229,7 @@ export function mapKanbanRows(root: string, opts: { page?: string; maxRows?: num
  *
  * 返回空串 = 没有地图 / 地图坏了 ⇒ 适配器整行不渲染（与看板同样的"绝不因为附属信息让简报消失"纪律）。
  */
-export function mapBriefLine(root: string, opts: { page?: string; maxChars?: number } = {}): string {
+export function mapBriefLine(root: string, opts: { page?: string; maxChars?: number; staleDays?: number } = {}): string {
   try {
     if (typeof root !== 'string' || root === '') return '';
     const read = readPageIfExists(root, opts.page);
@@ -241,6 +242,16 @@ export function mapBriefLine(root: string, opts: { page?: string; maxChars?: num
     const parts: string[] = ['🗺 地图：' + nodes.length + ' 节点 / ' + edges.length + ' 边'];
     if (next !== '') parts.push('下一步：' + next);
     if (stale.size > 0) parts.push('⚠ 待复验 ' + stale.size);
+    // [第2档 · 过时提醒] 地图自己多久没被写过。
+    //   为什么要它：2026-10-18 的真实例子 —— 简报写着「待拍板 P3b」，而 P3b 当天就做完了。
+    //   机制**没法判断**「next 里那件事完成没」（那是语义，得人来判），但能如实说「这张图多久没动」。
+    //   **只报可观测量，不猜内容** —— 猜错会让人怀疑整套提醒。
+    try {
+      const mapFile = pagePathOf(root, pageIdOf(opts.page));
+      const days = Math.floor((Date.now() - fs.statSync(mapFile).mtimeMs) / 86400000);
+      const limit = opts.staleDays ?? 7;
+      if (Number.isFinite(days) && days >= limit) parts.push('（地图 ' + days + ' 天未更新，可能与现实脱节）');
+    } catch { /* 取不到 mtime 就不显示，不编造 */ }
     let line = parts.join(' · ');
     const cap = opts.maxChars ?? 200;
     if (line.length > cap) line = line.slice(0, Math.max(0, cap - 1)) + '…';
