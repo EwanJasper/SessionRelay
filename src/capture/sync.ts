@@ -186,6 +186,18 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   // 契约不变：只重写模块列 = auto:todos 的行 + 只刷新本工具生成的图；人写的行一个字节不动。
   // 动态 import 避免 capture→cli 的静态分层倒挂；失败不连坐捕获。
   try {
+    // [第1档 · 自动孵化] 有 progress.md 但**还没有地图** ⇒ 自动落一张单层骨架。
+    //   为什么挂在这里：与上面那条注释同一个道理 —— 挂在手动命令上的功能等于从来没自动过。
+    //   用户原话：「不要 skill、不要 AGENTS.md、不要被动调用工具，这样给人很多麻烦」。
+    //   边界：expectedRevision='absent' 已存在就拒（绝不覆盖）；只搬人写行；不生成任何边。
+    //   留痕：'无需孵化' 是每轮的常态，静默；真失败要说出来（容错不许静默）。
+    try {
+      const { hatchMapFromKanban } = await import('../cli/map.js');
+      const hatched = hatchMapFromKanban(opts.projectRoot);
+      if (!hatched.ok && !/无需孵化|已有地图|没有可解析/.test(hatched.note)) {
+        console.error('[srelay] 地图孵化未成功：' + hatched.note);
+      }
+    } catch (e) { console.error('[srelay] 地图孵化异常（已兜住）：' + String((e as Error).message).slice(0, 60)); }
     const { syncKanbanAuto } = await import('../cli/kanban.js');
     syncKanbanAuto(opts.projectRoot, opts.config);
   } catch { /* 看板刷不新不影响捕获 */ }

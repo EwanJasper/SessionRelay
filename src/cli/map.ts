@@ -1130,6 +1130,78 @@ async function actImport(root: string, flags: MapCliFlags): Promise<void> {
   return importFromSnapshot(root, pageId, json, fromAbs);
 }
 
+/**
+ * 从看板行构造地图节点（**唯一实现**）。`map import` 与守护的自动孵化共用它 ——
+ * 两处各写一份的话，改一处漏一处，孵出来的图和手导出来的图会长得不一样。
+ */
+type BuiltNodes =
+  | { ok: true; value: { nodes: Array<Record<string, unknown>>; skipped: number; truncated: number } }
+  | { ok: false; code: 'REFUSED'; msg: string; hint: string };
+
+function buildImportNodes(rows: string[][], file: string): BuiltNodes {
+  const nodes: Array<Record<string, unknown>> = [];
+  let truncated = 0;
+  let skipped = 0;
+  for (const c of rows) {
+    if (isMachineRow(str(c[3]).trim())) { skipped++; continue; }
+    const labelRaw = str(c[1]).trim();
+    const detailRaw = str(c[4]).trim();
+    let cut = false;
+    let label = labelRaw;
+    let detail = detailRaw;
+    if (label.length > LABEL_MAX) { label = label.slice(0, LABEL_MAX); cut = true; }
+    if (detail.length > BODY_MAX) { detail = detail.slice(0, BODY_MAX); cut = true; }
+    if (cut) truncated++;
+    nodes.push({
+      id: 'n' + String(nodes.length + 1),
+      label,
+      layer: PLAN_LAYER_ID,
+      status: importStatus(str(c[2]).trim()),
+      ...(detail !== '' ? { detail } : {}),
+    });
+  }
+  if (nodes.length === 0) {
+    return {
+      ok: false, code: 'REFUSED',
+      msg: 'progress.md 里只有机器行（auto:map / auto:todos），没有可导入的人写行：' + file,
+      hint: '迁移要的是人写过的计划；机器行由看板自己维护，不属于地图（把真正的计划写成模块列非 auto:* 的行）',
+    };
+  }
+  return { ok: true, value: { nodes, skipped, truncated } };
+}
+
+/**
+ * 【第 1 档 · 自动孵化】项目有 progress.md 但**还没有地图** ⇒ 自动落一张单层骨架。
+ *
+ * 为什么要有它（用户 2026-10-18）：skill 和 AGENTS.md 都是"说明书"，靠 AI 记得读；
+ *   真正该做到的是——**没人开口、没人敲命令，新项目一接进来自己就有图**。
+ *   所以这一步挂在守护的 runSync 上，不挂在任何手动命令上。
+ *
+ * 三条安全边界（都是硬约束）：
+ *   ① `expectedRevision: 'absent'` —— 文件已存在就拒绝，**绝不覆盖**已有地图；
+ *   ② 只搬人写行（机器行由看板自己维护，搬进来会"自己吃自己"）；
+ *   ③ 不生成任何边 —— 依赖列是人话，猜边 = 造数据，比没有边更糟。
+ */
+export function hatchMapFromKanban(root: string): { ok: boolean; imported: number; skipped: number; note: string } {
+  try {
+    const file = path.join(root, 'progress.md');
+    if (!fs.existsSync(file)) return { ok: false, imported: 0, skipped: 0, note: '没有 progress.md，无需孵化' };
+    const existing = readPageIfExists(root);
+    if (!existing.ok) return { ok: false, imported: 0, skipped: 0, note: '地图读不了：' + errorLine(existing.error) };
+    if (existing.value !== undefined) return { ok: false, imported: 0, skipped: 0, note: '已有地图，不动（孵化只在空白项目上发生）' };
+    const rows = readKanbanRows(root);
+    if (rows.length === 0) return { ok: false, imported: 0, skipped: 0, note: 'progress.md 里没有可解析的看板行' };
+    const built = buildImportNodes(rows, file);
+    if (!built.ok) return { ok: false, imported: 0, skipped: 0, note: built.msg };
+    const applied = applyPatch(root, {
+      expectedRevision: 'absent',
+      operations: [{ op: 'declare', data: { layers: [PLAN_LAYER], nodes: built.value.nodes } }],
+    });
+    if (!applied.ok) return { ok: false, imported: 0, skipped: 0, note: '落盘失败：' + errorLine(applied.error) };
+    return { ok: true, imported: built.value.nodes.length, skipped: built.value.skipped, note: '已自动孵化 ' + built.value.nodes.length + ' 个节点（单层，无依赖边）' };
+  } catch (e) { return { ok: false, imported: 0, skipped: 0, note: '孵化失败（已兜住）：' + String((e as Error).message).slice(0, 60) }; }
+}
+
 async function importFromKanban(root: string, pageId: string, json: boolean): Promise<void> {
   const file = path.join(root, 'progress.md');
   if (!fs.existsSync(file)) {
@@ -1145,51 +1217,9 @@ async function importFromKanban(root: string, pageId: string, json: boolean): Pr
       json,
     );
   }
-  const nodes: Array<Record<string, unknown>> = [];
-  let truncated = 0;
-  let skipped = 0;
-  for (const c of rows) {
-    // 只搬**人写的行**：auto:map 是地图自己的投影、auto:todos 是 ZCode 待办派生，
-    // 把它们搬进地图就是"自己吃自己"——下一次 sync 又会从那批节点生成 auto:map 行，地图越迁越长。
-    if (isMachineRow(str(c[3]).trim())) {
-      skipped++;
-      continue;
-    }
-    const labelRaw = str(c[1]).trim();
-    const detailRaw = str(c[4]).trim();
-    let cut = false;
-    let label = labelRaw;
-    let detail = detailRaw;
-    // §2 不变式 6 的长度上限：看板行可以很长，地图字段不许超长；截断要报数，不静默
-    if (label.length > LABEL_MAX) {
-      label = label.slice(0, LABEL_MAX);
-      cut = true;
-    }
-    if (detail.length > BODY_MAX) {
-      detail = detail.slice(0, BODY_MAX);
-      cut = true;
-    }
-    if (cut) truncated++;
-    nodes.push({
-      // 行序 1 基，且**只数被搬进来的行**：机器行每次 sync 都在变，若把它们算进行序，
-      // 人写节点的 id 会随机器行漂移——id 要跟着人写的内容走，才叫稳定。
-      id: 'n' + String(nodes.length + 1),
-      label,
-      layer: PLAN_LAYER_ID,
-      status: importStatus(str(c[2]).trim()),
-      ...(detail !== '' ? { detail } : {}),
-    });
-  }
-  if (nodes.length === 0) {
-    return fail(
-      err(
-        'REFUSED',
-        'progress.md 里只有机器行（auto:map / auto:todos），没有可导入的人写行：' + file,
-        '迁移要的是人写过的计划；机器行由看板自己维护，不属于地图（把真正的计划写成模块列非 auto:* 的行）',
-      ),
-      json,
-    );
-  }
+  const built = buildImportNodes(rows, file);
+  if (!built.ok) return fail(err(built.code, built.msg, built.hint), json);
+  const { nodes, skipped, truncated } = built.value;
 
   const patch: MapPatch = {
     page: pageId,
