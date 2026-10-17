@@ -55,6 +55,11 @@ export const BRIEF_CANONICAL_FILTERS = [
   /^[\s\p{P}\d]{0,6}$/u,
   // 7. 先闭后开的撕裂直引号（`决定用 X"，但…往往是"试过 X` 的引号极性特征）
   /^[^"]*"[，,。；;]/,
+  // 8. 待决问句冒充决策（1018 实测：864 条里命中 20 条 = 2.31%，逐条看过全是真问句）
+  //    形状：`决定要不要 X` / `决定能不能 X` / `决定是否 X` —— 它们是在提出选择，不是拍板。
+  //    排除含箭头的：那是**在描述程序逻辑**（如「决定是否调用工具 → 条件边」），
+  //    实测那 2 条是唯一假阳性，加箭头排除后归零。
+  /^\s*决定\s*(?:要不要|能不能|是否|该不该|如何|怎么)(?![\s\S]*[→⇒])/,
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,8 +169,27 @@ export function passesUnresolvedFilters(q) {
 export const BRIEF_TEXT_MIN = 5
 export const BRIEF_TEXT_MAX = 220
 
-/** 单条文本是否够格进简报。false = 该拦。 */
+// ─────────────────────────────────────────────────────────────────────────────
+// [1018 · 七条**收进内核**] 与上面未决段同一条路：判据权威源在内核，本文件的实现降级为兜底。
+//
+// 为什么要做这一步：此前七条只存在于两份客户端副本里，内核那份是「只参照」的抄本 ⇒
+//   守门只能证「两侧一致」，**证不了「两侧都对」** —— 两边一起改错时它照样绿。
+//   这不是外观补丁，是把权威源真的挪到内核：recall.js 是唯一说了算的那一份。
+//
+// 为什么保留本地兜底：插件是自包含发布件（用户可能只装 dsh-plugin 没配内核），
+//   删了就整段静默消失。**拿不到就降级 ≠ 判据有两份** —— recall 在场时永远是它说了算。
+//   和未决段一样，降级必须**可见**：__briefFromRecall 暴露实际走的是哪一份。
+
+/** 七条判据实际来自内核（true）还是本地兜底（false）。守门/selftest 断言它为 true。 */
+export const __briefFromRecall = !!(
+  _recall &&
+  typeof _recall.passesBriefFilters === 'function' &&
+  Array.isArray(_recall.BRIEF_CANONICAL_FILTERS)
+)
+
+/** 单条文本是否够格进简报。false = 该拦。**优先调内核权威判据**，缺席才用本地兜底。 */
 export function passesBriefFilters(text) {
+  if (__briefFromRecall) return _recall.passesBriefFilters(text)
   const t = String(text ?? '').trim()
   if (t.length < BRIEF_TEXT_MIN || t.length > BRIEF_TEXT_MAX) return false
   for (const re of BRIEF_CANONICAL_FILTERS) {

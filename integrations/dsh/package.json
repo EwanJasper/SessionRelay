@@ -55,6 +55,8 @@
     "src/brief-experiences.mjs",
     "src/brief-filters.mjs",
     "src/brief-modules.mjs",
-    "src/root-rules.mjs"
+    "src/root-rules.mjs",
+    "src/hooks.mjs",
+    "src/selftest.mjs"
   ]
 }
