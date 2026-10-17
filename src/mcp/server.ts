@@ -213,7 +213,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
 
     // ── kind=files：某文件路径被哪些会话讨论过（跨 agent）──
     if (kind === 'files') {
-      const hits = searchSessions(cur.db, { project: cur.project, query: `"${args.query.replace(/\\/g, '/')}"`, limit: args.limit ?? 20, extraWhere: asm.where });
+      const hits = searchSessions(cur.db, { project: cur.project, query: `"${args.query.replace(/\\/g, '/')}"`, limit: args.limit ?? 20, extraWhere: asm.where, decay: cur.cfg.decay });
       return toolOut({
         kind: 'files', file: args.query,
         count: hits.length,

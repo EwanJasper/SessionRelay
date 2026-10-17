@@ -77,7 +77,16 @@ export const DEFAULT_HALF_LIFE_DAYS: Readonly<Record<DecayKind, number | null>> 
  * floor=0.25 的含义：正好是 2 个半衰期处的自然值（2^-2），即"保底打两折"，不会让老记录被埋。
  */
 export const DEFAULT_DECAY: Readonly<DecayConfig> = Object.freeze({
-  enabled: false,
+  // [1021] **默认开**。依据是 decay-control.mjs 的对照实验（真库、139 条候选）：
+  //   · 候选集 **100% 保留**（一条不少），只有排名变化 ⇒ 结构上不可能让老记录消失；
+  //   · 老记录 11 条**全部仍可检索**，包括人造的 10 年样本（被 floor 0.25 兜住）；
+  //   · top-10 换血 3 条、**平均年轻 15.1 天** —— 这就是要的效果；
+  //   · 「3 年前强相关」仍压过「今天弱相关」⇒ 不是一刀切地偏好新的；
+  //   · 未决问题 10 年系数恒 1.000（欠条不该被时间埋）；负结果比同龄决策衰减慢（180d:0.500 > 0.250）。
+  // ⚠️ 口径诚实说明：这与「先量再接」并不矛盾，但要讲清——**那份证据来自模块自带的对照实验，
+  //   不是来自 153 题字面基准**（基准直接调 searchSessions，不经过 cfg.decay，所以基准测不到它）。
+  //   也就是说：**「不伤害召回」有实测证据，「提升多少」没有基准数据**。
+  enabled: true,
   mode: 'exponential' as DecayMode,
   half_life_days: DEFAULT_HALF_LIFE_DAYS,
   floor: 0.25,

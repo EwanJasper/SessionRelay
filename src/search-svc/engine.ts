@@ -6,6 +6,7 @@
 // - 合并确定性：messages 命中优先于 meta 命中（技术方案 T27）
 import type { DB, } from '../store/db.js';
 import { parseQuery, unitExpr, segment } from '../core/tokenize/tokenizer.js';
+import { decayFactor, ageMsOf, type DecayConfig } from '../core/decay/decay.js';
 import { rewriteQuery } from '../core/tokenize/rewrite.js';
 import { expandQueryTags } from '../core/graph/expand.js';
 import type { QueryExpansion, ExpansionTerm } from '../core/graph/expand.js';
@@ -107,6 +108,8 @@ export interface SearchOptions {
    *   （实测佐证：「盘」单独搜时目标会话在 top-10；拼成五词 AND 就没了。）
    */
   orUnits?: boolean;
+  /** [1021] 时间衰减配置（不传/未启用 = 与旧行为逐字等价）。由调用方从 cfg.decay 传入。 */
+  decay?: import('../core/decay/decay.js').DecayConfig;
   /** 语义命中保底槽位数（默认 3；0 = 旧行为）。CLI 的 semantic status 也读它，避免两处各写一个 3。 */
   /** 语义补充命中（调用方经 semanticSearch 预计算注入；不传/空 = 与纯 FTS 行为等价） */
   semanticHits?: Array<{ sessionId: string; score: number }> | null;
@@ -403,8 +406,41 @@ function mergeAdditive(hits: SearchHit[], extra: SearchHit[], reserve: number, l
  *   2) **只在主路不足时才补**（默认不足 3 条），避免日常查询被噪声稀释；
  *   3) **可一键关**（opts.rewrite === false）：关掉后逐字等于旧行为，便于 A/B 与回归。
  */
+/**
+ * 把时间衰减乘到已排序的命中上（1021 接线用）。
+ *
+ * · 只乘分数、**不删行** —— 老记录必须还能搜到（decay.ts 的 decayFactor 恒返回 (0,1]，
+ *   结构上就不可能过滤，这正是当初选「乘性」而不是「布尔」的原因）。
+ * · 年龄取 `last_event_at ?? created_at`：一次 IN 查询批量取，不做 N+1。
+ * · 类别固定用 `decision`（检索命中的是会话级记录；未决/经验各有自己的通道，不走这条）。
+ */
+function applyDecayToHits(db: DB, hits: SearchHit[], cfg: DecayConfig): SearchHit[] {
+  const ids = hits.map((h) => h.sessionId);
+  const ph = ids.map(() => '?').join(',');
+  const ages = new Map<string, string | null>();
+  try {
+    const rows = db.prepare('SELECT id, COALESCE(last_event_at, created_at) AS at FROM sessions WHERE id IN (' + ph + ')').all(...ids) as Array<{ id: string; at: string | null }>;
+    for (const r of rows) ages.set(r.id, r.at);
+  } catch { return hits; }   // 取不到就不衰减（宁可不做，也不猜一个年龄出来）
+  const now = Date.now();
+  return hits
+    .map((h) => ({ h, f: decayFactor(ageMsOf(ages.get(h.sessionId), now), 'decision', cfg) }))
+    .map(({ h, f }) => ({ ...h, score: h.score * f }))
+    .sort((a, b) => b.score - a.score || (b.coverage ?? 0) - (a.coverage ?? 0));
+}
+
 export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
-  const hits = searchCore(db, opts);
+  let hits = searchCore(db, opts);
+  // ── [1021] 时间衰减接线（模块早就有，但**一直没接进任何检索路径** —— 所以「没有时间衰减」
+  //   这句话到此刻为止仍然是真的。本轮把它接上。）
+  //   位置选在 searchSessions 出口而不是 searchOnce 里：
+  //     子路（改写路/扩展路/融合路）都会调 searchOnce，放在里面会**重复衰减**；
+  //     放在出口 = 全部合并完之后乘一次 ⇒ 单一变量，A/B 干净。
+  //   语义：只乘排序分数、不过滤（floor 保底 0.25），老记录仍能搜到只是排后面。
+  //   默认仍关（见 DEFAULT_DECAY 的理由：本库最老记录只有 66 天，量程外的效应不该进默认档）。
+  if (opts.decay?.enabled === true && hits.length > 0) {
+    hits = applyDecayToHits(db, hits, opts.decay);
+  }
   // [1017 夜 · 标签图谱] 追加式扩展：**在既有全部逻辑之后**再叠加一条补充路。
   // 放在这里而不是塞进 searchCore 里，是为了让「扩展」严格等于「旧行为 + 一条路」——
   // 单一变量，A/B 才干净（历史教训：融合闸门那次对照组是脏的，见 lengthNorm 注释）。
