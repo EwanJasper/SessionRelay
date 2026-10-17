@@ -86,12 +86,33 @@ const isIdent = (s: string) => /^[A-Za-z][A-Za-z0-9_.\-]{2,}$/.test(s);
 const COMMON = new Set(['这个','那个','我们','你们','他们','可以','需要','应该','问题','东西','时候','因为','所以','但是','如果','已经','还有','就是','什么','怎么','现在','一下','然后','没有','不是','还是','或者','这样','那样']);
 
 const dfCache = new Map<string, number>();
+/**
+ * 文档频率 = 「含该词的不同会话数」。
+ *
+ * ── [1021 修一个仪器 bug：它让全部 A/B 结论都不可信] ──
+ *   原实现：`SELECT COUNT(*) FROM (SELECT 1 FROM messages WHERE content LIKE ? LIMIT 4)`
+ *   内层 `LIMIT 4` 把行数封在 4 ⇒ **df() 最大只能返回 4** ⇒ 调用方那句 `df(t) <= 8`
+ *   （「只取低频专名当 K 臂题面」）**恒真**，等于从来没过滤过。
+ *   实测后果：K 臂 326 题里只有 16.3% 真是 df≤8，**83.7% 的词命中 14~79 个会话**；
+ *   而检索只返回 top-10 ⇒ **86% 的题在结构上就不可能被排进前 10**。
+ *   也就是说「基线 56.44%」量的不是检索质量，是运气 —— 所有「改进没效果」的 A/B
+ *   都是拿这把坏尺子量出来的（语义臂 / 标签扩展 / 长度归一的结论都受它污染）。
+ *
+ *   修法两处：① 去掉内层 LIMIT，直接数不同会话；
+ *              ② 统计口径从 `content` 改成 `search_text` —— FTS 索引的是 search_text，
+ *                拿 content 数会与实际可检索性不符。
+ *   加 `LIMIT 200` 只是防止极端常见词全表扫，不影响判别（阈值远小于 200）。
+ */
 function df(tok: string): number {
   const hit = dfCache.get(tok);
   if (hit !== undefined) return hit;
-  const r = db.prepare('SELECT COUNT(*) AS c FROM (SELECT 1 FROM messages WHERE content LIKE ? LIMIT 4)').get('%' + tok + '%') as { c: number };
-  dfCache.set(tok, r.c);
-  return r.c;
+  let n = 0;
+  try {
+    const r = db.prepare('SELECT COUNT(DISTINCT session_id) AS c FROM messages WHERE search_text LIKE ? LIMIT 200').get('%' + tok + '%') as { c: number };
+    n = Number(r?.c ?? 0);
+  } catch { n = 0; }
+  dfCache.set(tok, n);
+  return n;
 }
 
 // [1016 · 红队B 纠正] 原先写的是 BETWEEN 4 AND 600 —— 于是**巨无霸永远不是答案**，

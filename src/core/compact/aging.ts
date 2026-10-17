@@ -73,7 +73,16 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
   const minAge = o.minAgeDays ?? 90;
   const minDec = o.minDecisions ?? 1;
   const cap = o.cap ?? 100;
-  const maxStrength = o.maxStrength ?? 0.25;        // 默认：已经很老且几乎没产出（强度 ≤0.25）才归档
+  // ── [1021 红队 R15 修复] 默认值**跟着 minAgeDays 走**，不再硬编码 0.25 ──
+  //   原来：`?? 0.25`。而默认 minAgeDays=90 对应 strengthGateOf(90)=0，
+  //   0.25 对应的是 90*(1-0.25)=67.5 天 ⇒ **两个默认值在不同界**。
+  //   注释却写「窗与强度门在数学上边界重合」—— 那句话**只在调用方显式传参时成立**
+  //   （目前唯一生产调用方 archive.ts 确实传了 strengthGateOf(minAgeDays)，所以线上没炸）。
+  //   但 planAging 是**导出的纯函数**：任何新调用方漏传 maxStrength，
+  //   就会得到 67.5 天 vs 90 天两套边界，而且**没有任何断言会红** —— 这正是 1017 前
+  //   「两套判据各说各话」的完整复现条件（红队实测：planAging([60天前], {minAgeDays:60}) 返回 archive=0）。
+  //   修法：默认值由 minAgeDays 现算 ⇒ **在数学上真的重合**，注释才配得上。
+  const maxStrength = o.maxStrength ?? strengthGateOf(minAge);
   const plan: AgingPlan = { archive: [], kept: [], reasons: {} };
   const cand: AgingRow[] = [];
   for (const r of rows) {
