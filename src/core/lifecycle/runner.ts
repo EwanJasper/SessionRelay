@@ -28,6 +28,7 @@ import { compactNearDuplicates } from '../compact/near-dup.js';
 import { harvestLessons } from '../extract/lesson-harvest.js';
 import { resolveWorkspaceId, resolveDomain } from '../../shared/workspace.js';
 import { cleanDerivedColumns } from '../extract/derived-cleanup.js';
+import { measureFtsSpace, shouldReclaim, maintainFts } from '../maintain/fts.js';
 import { buildTagGraph } from '../graph/tags.js';
 import { autoArchiveProject, autoArchivePolicyOf } from '../../capture/archive.js';
 import { integrityOf, repairProject } from './repair.js';
@@ -330,7 +331,28 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   if (todue.some((s) => s.id === 'cleanup')) await runOne(specOf('cleanup'), () => {
       const res = eachProject((_root, db) => cleanDerivedColumns(db, { apply: true }));
       const changed = res.reduce((a, x) => a + (x.r?.changed ?? 0), 0);
-      return changed ? changed + ' 场会话的派生列已清洗（共丢 ' + res.reduce((a, x) => a + (x.r?.droppedKinds ?? 0), 0) + ' 种噪声）' : '0 场（本来就是干净的）';
+      const parts: string[] = [changed
+        ? changed + ' 场会话的派生列已清洗（共丢 ' + res.reduce((a, x) => a + (x.r?.droppedKinds ?? 0), 0) + ' 种噪声）'
+        : '0 场（本来就是干净的）'];
+
+      // ── 顺带：FTS 索引垃圾回收（实测病历见 core/maintain/fts.ts 顶部）──
+      // 删消息**不会让 FTS 缩小**，墓碑会一直堆着 —— 用户看到的就是"库一直涨"。
+      // 实测六库 195 MB 里有 59 MB 是垃圾（work 一个库就 29 MB）。
+      // 判据保守（文件 > 内容 2 倍才动手）：rebuild 要独占写锁、VACUUM 重写整个文件，
+      // 正常的库为省几 MB 冒这个风险不值得。
+      const ftsRes = eachProject((root, db) => {
+        const f = dbFileOf(root);
+        const st = measureFtsSpace(db as never, f);
+        if (!shouldReclaim(st)) return 0;
+        return maintainFts(db as never, f).reclaimed;
+      });
+      const reclaimed = ftsRes.reduce((a, x) => a + (x.r ?? 0), 0);
+      const reclaimedN = ftsRes.filter((x) => (x.r ?? 0) > 0).length;
+      const ftsFail = ftsRes.filter((x) => x.err).length;
+      if (reclaimed > 0) parts.push('回收空间 ' + (reclaimed / 1048576).toFixed(1) + ' MB（' + reclaimedN + ' 个库的 FTS 索引垃圾）');
+      // 容错不许静默：回收失败必须说出来，不能当没发生
+      if (ftsFail) parts.push('空间回收失败 ' + ftsFail + ' 个库：' + ftsRes.filter((x) => x.err).map((x) => base(x.root) + '=' + x.err).join('; '));
+      return parts.join(' · ');
   });
 
   // ── [1021] 标签图谱重建（light）──
