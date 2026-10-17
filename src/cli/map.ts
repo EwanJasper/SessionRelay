@@ -58,7 +58,9 @@ import {
 // 静态 import 能让 tsc 在**这里**就把签名对错抓出来（转出口只是转手，抓不住漂移）。
 import { checkSources, type ChangesReport } from '../map/stale.js';
 import { renderMapMermaid } from '../map/bridge.js';
-import { readKanbanRows } from './kanban.js';
+import { readDepColumn, readKanbanRows } from './kanban.js';
+// 依赖列 → 分层 + 真边（纯函数，test/unit/plan-graph.spec.ts 穷举过）。
+import { buildPlanLayout, type PlanDep, type PlanEdge, type PlanLayer, type PlanNode } from '../map/plan-graph.js';
 
 /** 九个动作（注册处照这个顺序写 description；也用于拒"未知动作"）。 */
 export const MAP_ACTIONS = [
@@ -1131,15 +1133,28 @@ async function actImport(root: string, flags: MapCliFlags): Promise<void> {
 }
 
 /**
- * 从看板行构造地图节点（**唯一实现**）。`map import` 与守护的自动孵化共用它 ——
+ * 从看板行构造地图内容（**唯一实现**）。`map import` 与守护的自动孵化共用它 ——
  * 两处各写一份的话，改一处漏一处，孵出来的图和手导出来的图会长得不一样。
+ *
+ * 产出**层 + 节点 + 边**三件套，不再是单层。原因（2026-10-18）：地图不变式要求边
+ *   **严格跨层向下**，单层图上一条边都加不了 ⇒ 「建边」的前提是先分层，而层只能从
+ *   依赖关系里推（无依赖的沉底，依赖别人的往上抬）。没有依赖列 / 解析不出边时，
+ *   退化成原来的单层 0 边，行为不变。
  */
 type BuiltNodes =
-  | { ok: true; value: { nodes: Array<Record<string, unknown>>; skipped: number; truncated: number } }
+  | {
+      ok: true;
+      value: {
+        layers: PlanLayer[]; nodes: PlanNode[]; edges: PlanEdge[];
+        skipped: number; truncated: number; unresolved: string[]; ambiguous: string[];
+      };
+    }
   | { ok: false; code: 'REFUSED'; msg: string; hint: string };
 
 function buildImportNodes(rows: string[][], file: string): BuiltNodes {
-  const nodes: Array<Record<string, unknown>> = [];
+  const depCol = readDepColumn(path.dirname(file)); // 表头说哪格是依赖；没有依赖列返回 null
+  const deps: PlanDep[] = [];
+  const meta = new Map<string, { status: string; detail?: string }>();
   let truncated = 0;
   let skipped = 0;
   for (const c of rows) {
@@ -1152,22 +1167,86 @@ function buildImportNodes(rows: string[][], file: string): BuiltNodes {
     if (label.length > LABEL_MAX) { label = label.slice(0, LABEL_MAX); cut = true; }
     if (detail.length > BODY_MAX) { detail = detail.slice(0, BODY_MAX); cut = true; }
     if (cut) truncated++;
-    nodes.push({
-      id: 'n' + String(nodes.length + 1),
-      label,
-      layer: PLAN_LAYER_ID,
-      status: importStatus(str(c[2]).trim()),
-      ...(detail !== '' ? { detail } : {}),
-    });
+    const id = 'n' + String(deps.length + 1);
+    deps.push({ id, label, dep: depCol === null ? '' : str(c[depCol] ?? '').trim() });
+    meta.set(id, { status: importStatus(str(c[2]).trim()), ...(detail !== '' ? { detail } : {}) });
   }
-  if (nodes.length === 0) {
+  if (deps.length === 0) {
     return {
       ok: false, code: 'REFUSED',
       msg: 'progress.md 里只有机器行（auto:map / auto:todos），没有可导入的人写行：' + file,
       hint: '迁移要的是人写过的计划；机器行由看板自己维护，不属于地图（把真正的计划写成模块列非 auto:* 的行）',
     };
   }
-  return { ok: true, value: { nodes, skipped, truncated } };
+  const built = buildPlanLayout(deps, meta);
+  if (!built.ok) {
+    return {
+      ok: false, code: 'REFUSED', msg: built.msg,
+      hint: '地图不变式要求边严格跨层向下，依赖成环就永远排不出层；去掉一条依赖或改指向后重试',
+    };
+  }
+  const { layers, nodes, edges, unresolved, ambiguous } = built.layout;
+  return { ok: true, value: { layers, nodes, edges, skipped, truncated, unresolved, ambiguous } };
+}
+
+/**
+ * 孵化/升级共用的一句话总结（**文案只有一份**）：把「几个节点 / 几层 / 几条边」说清楚，
+ * 再把解析不上的依赖原样报出来 —— 静默丢掉未解析的片段，等于让人以为依赖都建好了。
+ */
+function hatchNote(nodes: number, layers: number, edges: number, unresolved: string[], ambiguous: string[]): string {
+  const parts = [
+    '已自动孵化 ' + String(nodes) + ' 个节点 / ' + String(layers) + ' 层 / ' + String(edges) + ' 条边',
+    edges === 0 ? '（依赖列解析不出可用的边，保持单层 0 边）' : '（边取自依赖列，方向：用者 → 被用者）',
+  ];
+  if (unresolved.length > 0) parts.push('；' + String(unresolved.length) + ' 个依赖片段指不到任何任务，未建边：' + unresolved.slice(0, 3).join('、'));
+  if (ambiguous.length > 0) parts.push('；' + String(ambiguous.length) + ' 个依赖片段命中多个任务，未建边：' + ambiguous.slice(0, 3).join('、'));
+  return parts.join('');
+}
+
+/**
+ * 【第 1 档 · 补齐】已孵化的单层图 → 补上分层与依赖边。
+ *
+ * 为什么需要它：早期孵出来的图是单层的（那时还没有依赖列解析），而边只能从层带里长出来。
+ *   不补的话，那批项目的图永远停在「N 节点 / 0 边」。
+ *
+ * 六道前置（全部通过才动，任何一条不满足就原样留着）—— 这条路的危险在于「覆盖」，
+ *   所以判据必须证明「这张图就是孵化器刚生成的那张、并且和看板一字不差」，
+ *   证明不了就当它是人写的，一个字都不碰：
+ *   ① 没有任何边（有边说明已经补过或人写过）；
+ *   ② 只有一层、且是 PLAN_LAYER_ID；
+ *   ③ 没有分组/泳道；
+ *   ④ 所有节点 id 形如 n1..nN 且都在这层（孵化器的写法）；
+ *   ⑤ 节点数与看板可导入行数相同；
+ *   ⑥ 每个节点的 id 与 label 都和重新解析出来的一致。
+ */
+function upgradeHatchedMap(root: string, existing: { page: MapPage; revision: string }): { ok: boolean; imported: number; skipped: number; note: string } {
+  const keep = (why: string) => ({ ok: false, imported: 0, skipped: 0, note: why });
+  const page = existing.page;
+  if (page.edges.length > 0) return keep('已有地图（带边），不动');
+  if (page.layers.length !== 1 || page.layers[0]?.id !== PLAN_LAYER_ID) return keep('已有地图（不是单层孵化图），不动（孵化只在空白项目上发生）');
+  if ((page.groups?.length ?? 0) > 0 || (page.lanes?.length ?? 0) > 0) return keep('已有地图（带分组/泳道），不动');
+  if (!page.nodes.every((n) => /^n\d+$/.test(n.id) && n.layer === PLAN_LAYER_ID)) return keep('已有地图（节点不像孵化产物），不动');
+  const rows = readKanbanRows(root);
+  if (rows.length === 0) return keep('progress.md 里没有可解析的看板行');
+  const built = buildImportNodes(rows, path.join(root, 'progress.md'));
+  if (!built.ok) return keep(built.msg);
+  const { layers, nodes, edges, unresolved, ambiguous } = built.value;
+  if (nodes.length !== page.nodes.length) return keep('图（' + String(page.nodes.length) + ' 节点）与看板（' + String(nodes.length) + ' 行）不一致，像是手改过，不动');
+  const fresh = new Map(nodes.map((n) => [n.id, n.label]));
+  for (const n of page.nodes) {
+    if (fresh.get(n.id) !== n.label) return keep('图上的 "' + n.label + '" 与看板对不上，像是手改过，不动');
+  }
+  if (edges.length === 0) return keep('依赖列解析不出任何边，保持单层（没有可补的东西）');
+  // 重建，而不是逐节点改层：一次性 remove + declare，中途任何一条被拒 → 整页不落盘（文件一个字节都不动）
+  const operations = [
+    // remove 的 data 是「片段」而不是单个 id：{nodes:[{id}]} / {layers:[{id}]}（实测踩到过）
+    { op: 'remove' as const, data: { nodes: page.nodes.map((n) => ({ id: n.id })) } },
+    { op: 'remove' as const, data: { layers: [{ id: PLAN_LAYER_ID }] } },
+    { op: 'declare' as const, data: { layers, nodes, edges } },
+  ];
+  const applied = applyPatch(root, { expectedRevision: existing.revision, operations });
+  if (!applied.ok) return keep('补齐时落盘失败（地图原样保留）：' + errorLine(applied.error));
+  return { ok: true, imported: nodes.length, skipped: built.value.skipped, note: '已补齐分层与依赖边：' + hatchNote(nodes.length, layers.length, edges.length, unresolved, ambiguous).replace('已自动孵化 ', '') };
 }
 
 /**
@@ -1178,9 +1257,10 @@ function buildImportNodes(rows: string[][], file: string): BuiltNodes {
  *   所以这一步挂在守护的 runSync 上，不挂在任何手动命令上。
  *
  * 三条安全边界（都是硬约束）：
- *   ① `expectedRevision: 'absent'` —— 文件已存在就拒绝，**绝不覆盖**已有地图；
+ *   ① `expectedRevision: 'absent'` —— 文件已存在就**不重建**（升级走下面的 upgradeHatchedMap，
+ *      那条路带 revision 校验、且只在能证明「图和看板一致」时才动，手改过的图一个字都不碰）；
  *   ② 只搬人写行（机器行由看板自己维护，搬进来会"自己吃自己"）；
- *   ③ 不生成任何边 —— 依赖列是人话，猜边 = 造数据，比没有边更糟。
+ *   ③ 边只从**依赖列**推，匹配不上/认不准一律不建（硬猜的假边比没有边更糟）。
  */
 export function hatchMapFromKanban(root: string): { ok: boolean; imported: number; skipped: number; note: string } {
   try {
@@ -1188,17 +1268,18 @@ export function hatchMapFromKanban(root: string): { ok: boolean; imported: numbe
     if (!fs.existsSync(file)) return { ok: false, imported: 0, skipped: 0, note: '没有 progress.md，无需孵化' };
     const existing = readPageIfExists(root);
     if (!existing.ok) return { ok: false, imported: 0, skipped: 0, note: '地图读不了：' + errorLine(existing.error) };
-    if (existing.value !== undefined) return { ok: false, imported: 0, skipped: 0, note: '已有地图，不动（孵化只在空白项目上发生）' };
+    if (existing.value !== undefined) return upgradeHatchedMap(root, existing.value);
     const rows = readKanbanRows(root);
     if (rows.length === 0) return { ok: false, imported: 0, skipped: 0, note: 'progress.md 里没有可解析的看板行' };
     const built = buildImportNodes(rows, file);
     if (!built.ok) return { ok: false, imported: 0, skipped: 0, note: built.msg };
+    const { layers, nodes, edges } = built.value;
     const applied = applyPatch(root, {
       expectedRevision: 'absent',
-      operations: [{ op: 'declare', data: { layers: [PLAN_LAYER], nodes: built.value.nodes } }],
+      operations: [{ op: 'declare', data: { layers, nodes, ...(edges.length > 0 ? { edges } : {}) } }],
     });
     if (!applied.ok) return { ok: false, imported: 0, skipped: 0, note: '落盘失败：' + errorLine(applied.error) };
-    return { ok: true, imported: built.value.nodes.length, skipped: built.value.skipped, note: '已自动孵化 ' + built.value.nodes.length + ' 个节点（单层，无依赖边）' };
+    return { ok: true, imported: nodes.length, skipped: built.value.skipped, note: hatchNote(nodes.length, layers.length, edges.length, built.value.unresolved, built.value.ambiguous) };
   } catch (e) { return { ok: false, imported: 0, skipped: 0, note: '孵化失败（已兜住）：' + String((e as Error).message).slice(0, 60) }; }
 }
 
@@ -1219,19 +1300,19 @@ async function importFromKanban(root: string, pageId: string, json: boolean): Pr
   }
   const built = buildImportNodes(rows, file);
   if (!built.ok) return fail(err(built.code, built.msg, built.hint), json);
-  const { nodes, skipped, truncated } = built.value;
+  const { layers, nodes, edges, skipped, truncated, unresolved, ambiguous } = built.value;
 
   const patch: MapPatch = {
     page: pageId,
     expectedRevision: 'absent',
-    // 单层 + 节点；不生成任何边（依赖列是人话，猜边 = 造数据，§4.1）
-    operations: [{ op: 'declare', data: { layers: [PLAN_LAYER], nodes } }],
+    // 层从依赖列推（无依赖的沉底）；边只从依赖列建，匹配不上/认不准一律不建（§4.1）
+    operations: [{ op: 'declare', data: { layers, nodes, ...(edges.length > 0 ? { edges } : {}) } }],
   };
   const applied = applyPatch(root, patch);
   if (!applied.ok) return fail(applied.error, json);
   return succeed(
     json,
-    { page: pageId, revision: applied.value.revision, imported: nodes.length, skipped, truncated, from: 'progress.md', edges: 0 },
+    { page: pageId, revision: applied.value.revision, imported: nodes.length, skipped, truncated, from: 'progress.md', layers: layers.length, edges: edges.length, ...(unresolved.length > 0 ? { unresolved } : {}), ...(ambiguous.length > 0 ? { ambiguous } : {}) },
     '✅ 已从 progress.md 导入 ' +
       String(nodes.length) +
       ' 行 → 页 ' +

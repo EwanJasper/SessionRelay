@@ -362,6 +362,39 @@ export function renderGraphHtml(mermaidSrc: string, title: string): string {
 }
 
 /** 读 progress.md 里的看板行（与简报插件同口径：状态列第 3 格、以 ✅🔄⛔⬜ 开头）。 */
+/**
+ * 依赖列的列名（唯一一份）。实测两种 progress.md 并存，第三列含义不同：
+ *   标准看板 `| 任务 | 状态 | 模块 | 明细 |` 的第三列是**模块**；
+ *   人工表 `| 模块 | 状态 | 依赖 | 现状与出处 |` 的第三列是**依赖**。
+ * 靠位置猜会把模块名当依赖，只能问表头。
+ */
+const DEP_HEADER_RE = /^(依赖|前置|依赖项|前置条件|depends|requires)/i;
+
+/**
+ * 从表头定位「依赖」列的下标；没有依赖列就返回 null。
+ * 返回的 index 与 `readKanbanRows` 的 cell 下标**同一套口径**（都是 split('|').map(trim)）。
+ * 下标 < 3 一律不认：前三格是任务/状态/模块，依赖不可能坐在那儿。
+ */
+export function readDepColumn(root: string): number | null {
+  const file = path.join(root, 'progress.md');
+  if (!fs.existsSync(file)) return null;
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const lines = text.split(/\r?\n/);
+  for (let n = 1; n < lines.length; n++) {
+    // 只认**表头**：即 `|---|---|` 分隔行的上一行。
+    // 为什么不能全文件扫：任务名里出现「依赖」太正常了（实测 `D:/dsh插件  记忆` 就有一行
+    //   以「依赖」开头，被当成了列名，于是把明细列当依赖列读）。表头是唯一可信的位置。
+    if (!/^[\s|:-]+$/.test(lines[n]) || !lines[n].includes('-')) continue;
+    const head = lines[n - 1];
+    if (!head.includes('|')) continue;
+    const cells = head.split('|').map((s) => s.trim());
+    const i = cells.findIndex((c) => DEP_HEADER_RE.test(c));
+    if (i >= 3) return i;
+  }
+  return null;
+}
+
 export function readKanbanRows(root: string): string[][] {
   const file = path.join(root, 'progress.md')
   if (!fs.existsSync(file)) return []
