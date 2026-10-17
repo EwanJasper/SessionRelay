@@ -192,12 +192,21 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
     //   边界：expectedRevision='absent' 已存在就拒（绝不覆盖）；只搬人写行；不生成任何边。
     //   留痕：'无需孵化' 是每轮的常态，静默；真失败要说出来（容错不许静默）。
     try {
-      const { hatchMapFromKanban } = await import('../cli/map.js');
+      const { hatchMapFromKanban, syncMapFromKanban } = await import('../cli/map.js');
+      // ① 还没有地图 ⇒ 孵一张骨架
       const hatched = hatchMapFromKanban(opts.projectRoot);
       if (!hatched.ok && !/无需孵化|已有地图|没有可解析/.test(hatched.note)) {
         console.error('[srelay] 地图孵化未成功：' + hatched.note);
       }
-    } catch (e) { console.error('[srelay] 地图孵化异常（已兜住）：' + String((e as Error).message).slice(0, 60)); }
+      // ② 已有地图 ⇒ 增量同步（用户 2026-10-18：「标签和节点一直那样」）
+      //    必须挂在**守护这条路径**上，与孵化同一个道理：挂在手动命令上的功能等于从来没自动过。
+      //    顺序要紧：先「看板 → 地图」，再由下面的 syncKanbanAuto 做「地图 → 看板」，
+      //    反过来的话这一轮的投影会落后一拍。
+      const synced = syncMapFromKanban(opts.projectRoot);
+      if (!synced.ok && !/还没有地图|没有 progress|没有可解析|与看板一致/.test(synced.note)) {
+        console.error('[srelay] 地图增量同步未成功：' + synced.note);
+      }
+    } catch (e) { console.error('[srelay] 地图孵化/同步异常（已兜住）：' + String((e as Error).message).slice(0, 60)); }
     const { syncKanbanAuto } = await import('../cli/kanban.js');
     syncKanbanAuto(opts.projectRoot, opts.config);
   } catch { /* 看板刷不新不影响捕获 */ }

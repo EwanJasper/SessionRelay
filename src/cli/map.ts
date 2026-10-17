@@ -1270,6 +1270,78 @@ function upgradeHatchedMap(root: string, existing: { page: MapPage; revision: st
   return { ok: true, imported: nodes.length, skipped: built.value.skipped, note: '已补齐分层与依赖边：' + hatchNote(nodes.length, layers.length, edges.length, unresolved, ambiguous).replace('已自动孵化 ', '') };
 }
 
+/** 收件箱层：progress.md 新增行落在这里，**不改动任何已有层的结构**。 */
+const INBOX_LAYER_ID = 'inbox';
+const INBOX_LAYER_NAME = '收件箱（progress.md 新增，未分层）';
+/** 单轮最多新增几个节点：防一次脏看板把图冲垮（多出来的下一轮继续）。 */
+const MAX_ADD_PER_ROUND = 20;
+
+/**
+ * 【第 1 档 · 增量同步】看板变了 → 地图跟着变（用户 2026-10-18：「标签和节点一直那样」）。
+ *
+ * 病根（实测，不是猜）：地图建好之后**没有任何路径能让它变** ——
+ *   hatch 只管「还没有地图」，upgrade 只管「单层孵化图」，两者对「已有地图 + 看板新增了行」都返回不动。
+ *   于是 progress.md 里新写的事永远进不了图，图看起来「一直那样」。
+ *
+ * 五条边界（都是「宁可不同步，也不破坏人的结构」）：
+ *   ① **只增不删**：看板行消失不删节点（删是人的决定，机器不该替人丢信息）；
+ *   ② **只同步状态**：已有节点只改 status，层/边/evidence/detail 一个字不动；
+ *   ③ 新节点一律落进 `inbox` 层（最高 rank），**不猜测它属于哪一层** —— 猜层等于替人做结构决策；
+ *   ④ 单轮最多新增 MAX_ADD_PER_ROUND 个（脏看板不至于把图冲垮）；
+ *   ⑤ 带 revision 校验落盘（applyPatch 被拒 ⇒ 文件一个字节都不动）。
+ */
+export function syncMapFromKanban(root: string): { ok: boolean; added: number; statusFixed: number; note: string } {
+  const none = { ok: false, added: 0, statusFixed: 0 };
+  try {
+    const file = path.join(root, 'progress.md');
+    if (!fs.existsSync(file)) return { ...none, note: '没有 progress.md' };
+    const existing = readPageIfExists(root);
+    if (!existing.ok) return { ...none, note: '地图读不了：' + errorLine(existing.error) };
+    if (existing.value === undefined) return { ...none, note: '还没有地图（首次建图由孵化器负责）' };
+    const page = existing.value.page;
+    const rows = readKanbanRows(root).filter((r) => !isMachineRow(str(r[3]).trim()));
+    if (rows.length === 0) return { ...none, note: 'progress.md 里没有可解析的人写行' };
+
+    const byLabel = new Map(page.nodes.map((n) => [n.label.trim(), n]));
+    const usedIds = new Set(page.nodes.map((n) => n.id));
+    const statusOps: Array<{ id: string; status: MapStatus }> = [];
+    const fresh: Array<{ id: string; label: string; layer: string; status: MapStatus }> = [];
+    for (const c of rows) {
+      const label = str(c[1]).trim().slice(0, LABEL_MAX);
+      if (!label) continue;
+      const want = importStatus(str(c[2]).trim());
+      const have = byLabel.get(label);
+      if (have) {
+        if (have.status !== want) statusOps.push({ id: have.id, status: want });
+        continue;
+      }
+      if (fresh.length >= MAX_ADD_PER_ROUND) continue;
+      let id = 'kb' + String(fresh.length + 1);
+      while (usedIds.has(id)) id = id + '_x';
+      usedIds.add(id);
+      fresh.push({ id, label, layer: INBOX_LAYER_ID, status: want });
+    }
+    if (statusOps.length === 0 && fresh.length === 0) return { ok: true, added: 0, statusFixed: 0, note: '与看板一致' };
+
+    // 一个 patch 落完：中途任何一条被拒 ⇒ 整页不写（文件一个字节都不动）
+    const operations: Array<{ op: 'declare' | 'update' | 'remove'; data: unknown }> = [];
+    if (fresh.length > 0 && !page.layers.some((l) => l.id === INBOX_LAYER_ID)) {
+      const maxRank = page.layers.reduce((m, l) => Math.max(m, l.rank), -1);
+      operations.push({ op: 'declare', data: { layers: [{ id: INBOX_LAYER_ID, name: INBOX_LAYER_NAME, rank: maxRank + 1 }] } });
+    }
+    if (statusOps.length > 0) operations.push({ op: 'update', data: { nodes: statusOps } });
+    if (fresh.length > 0) operations.push({ op: 'declare', data: { nodes: fresh } });
+    const applied = applyPatch(root, { expectedRevision: existing.value.revision, operations });
+    if (!applied.ok) return { ...none, note: '落盘失败（地图原样保留）：' + errorLine(applied.error) };
+    const bits: string[] = [];
+    if (fresh.length > 0) bits.push('新增 ' + String(fresh.length) + ' 个节点到收件箱');
+    if (statusOps.length > 0) bits.push('同步 ' + String(statusOps.length) + ' 个节点状态');
+    return { ok: true, added: fresh.length, statusFixed: statusOps.length, note: bits.join('；') };
+  } catch (e) {
+    return { ...none, note: '增量同步失败（已兜住）：' + String((e as Error).message).slice(0, 60) };
+  }
+}
+
 /**
  * 【第 1 档 · 自动孵化】项目有 progress.md 但**还没有地图** ⇒ 自动落一张单层骨架。
  *
