@@ -307,7 +307,84 @@ function plausibleDecision(text: string): boolean {
   //   实测 agent1super 库 864 条里命中 **19 条，逐条看过 19/19 全是垃圾**（零误伤）。
   //   注意这条是**抽取端**判据（不进库），与简报端第 9~11 条互补：那条管已入库的，这条不产生。
   if (/^(决定|改用|换成|采用|选择|调整为|修改为)[，,]/.test(t)) return false;
+  // [v24 · 1021] 「决策动词 + 明确对象」，且必须是**陈述**——见 decisionShapeVeto 上方长注释。
+  if (decisionShapeVeto(t) !== null) return false;
   return true;
+}
+
+// ── [v24 · 1021] 决策的「形状」判据：v23 之后仍在库里的垃圾，一半是同一种病 ──
+//
+// 病历（agent1super 库 863 条决策逐条读）：v23 修掉「动词后紧跟逗号」之后，剩下的垃圾里
+// **最多的一类是「决定」被当成谓语动词「取决于」用**，它的宾语是一个**开放议题**——
+// 整句没有拍下任何结论，只说了"取决于什么"：
+//   · 决定方案走向的问题            ← 名词短语，连谓语都没有（原本就是简报里的垃圾样本）
+//   · 决定本地链的最终命运 / 决定后面所有优化的方向 / 决定整个电台的音质标准
+//   · 决定能不能静默安装 / 决定值不值得引入 / 决定重试还是换 npm 装 / 决定装不装
+//   · 决定从哪条续起 / 决定子代理的模型/工具配置 / 决定已归档记忆（碎片）
+// 这类句子的主语是**别的东西**（某个因素），不是做决定的人。它回答的是"取决于什么"，
+// 不是"定了什么"。所以判据不该问"有没有决策动词"，要问**「有没有明确对象 + 是不是陈述」**。
+//
+// 七条判据。每一条都在 agent1super 全部决策上量过、命中的**逐条人工判读过**（数字见 version.ts）：
+//   ① 决定 + 疑问/取舍谓语 → 议题（"取决于"），不是结论。
+//   ② 决定 + 抽象话题名词结尾 → 议题。⚠️ 必须放过「决定采用 X 方案」这类**有变更动词**的
+//      真决策，故加负向预查。
+//   ③ 决定 + 裸名词短语（≤10 字且无谓语标记）→ 碎片（"决定已归档记忆""决定的甜点值"）。
+//      ⚠️ 刻意放过含谓语标记的短句（"决定还是等你""决定烙进权重""决定：不再干等"都是真决策）。
+//   ④ 报告残渣：[completed] / [pending] 勾选框；或"上一条3. 下一条"粘连（前一条决策被
+//      TodoWrite 列表行粘上来，整条已不是决策）。粘连判据要求**数字前是非空白**，
+//      这样句首的 "1. xxx" 不误杀。
+//   ⑤ 问句结尾（吗 / ？）——用户问的"要不要…吗"是提问，不是拍板。
+//   ⑥ 自引用回显：含 ← / 旧: / 整行剥掉。病历是**简报被粘回消息**，于是"判据说明"
+//      连同被举反例的垃圾一起入库（"决定要不要另下 Launcher ← 问句，不是决策"）。
+//   ⑦ 名词短语化结尾（的问题 / 时很关键 / 的答案）；"决定权"是名词（同 v18 的"选择器"族）。
+//
+// 为什么不用模型：卖点是零模型。为什么不用分词：中文无词边界，分词器换一版判据就漂一版，
+// 而这里要的只是**形状**——闭集关键词 + 长度 + 结尾形态，已经能把这七类全分开。
+/** ① 决定 + 疑问/取舍谓语 = 「取决于」，宾语是待定议题。取模态词表而不是开放疑问词：
+ *  「哪/谁/怎么」会把真决策「决定"写哪个库"——绑定必须两段式」误杀（test/unit/extract.spec.ts:290 夹具）。 */
+const DECISION_OPEN_TOPIC = /^决定了?[^。！？!?\n]{0,10}(?:能不能|能不能够|能否|是否|要不要|是不是|会不会|该不该|值不值得|灵不灵|通不通|有没有|多深|多久|多少|什么|何时|哪些|为什么)/;
+/** ① 附：A不A 式正反问（决定装不装 / 决定改没改）。限定在动词后 6 字内——句尾出现的
+ *  "够不够用"是陈述的一部分（"顺便看看本地模型的水平够不够用"是真决策），不能连带杀掉。 */
+const DECISION_A_NOT_A = /^决定了?[^。！？!?\n]{0,6}(.)[不没]\1/;
+/** ② 决定 + …还是… = 把选项摆出来给人挑，没有拍板。⚠️ 排除"还是"紧跟动词的副词用法
+ *  （"决定还是等你"是拍板，不是选择题）。 */
+const DECISION_CHOICE_OPEN = /^决定了?.{1,20}还是[^？?]/;
+/** ③ 抽象话题名词结尾。负向预查放行带变更动词的（"决定采用 Vite 方案"是真决策）。 */
+const DECISION_TOPIC_TAIL = /^决定了?(?![^。！？!?\n]*(?:改用|换成|采用|选择|迁移|切换到|升级到|接入|放弃|弃用|保留|沿用))[^。！？!?\n]{1,14}(?:方向|策略|方式|方案|问题|清单|概率|命运|因素|标准|可行性|流畅度|走向|设计|架构|配置|形态)$/;
+/** ④ 报告残渣：TodoWrite / markdown 勾选框被一起截进来了 */
+const DECISION_REPORT_RESIDUE = /\[\s*(?:completed|pending|in_progress|done|todo)\s*\]|\[\s*[ x]\s*\]/i;
+/** ④ 附：粘在中文/标点后面的列表序号（"挂载3. 你机器上…"）。行首 "1. " 不在此列。 */
+const DECISION_GLUED_LIST = /[^\s][0-9]+\.\s/;
+/** ④ 附：UI 表格/代码围栏残片（决策里不会出现制表符线和三反引号） */
+const DECISION_UI_DUMP = /│|\u0060{3}/;
+/** ⑤ 问句结尾 */
+const DECISION_QUESTION_END = /(?:吗|[？?])\s*$/;
+/** ⑥ 简报/判据说明被粘回消息 */
+const DECISION_SELF_ECHO = /←|旧[:：]|整行剥掉/;
+/** ⑦ 名词短语化结尾 */
+const DECISION_NOMINAL_TAIL = /的问题$|时很关键$|的答案$/;
+/** ⑦ 附："决定权"是名词（"决定权在你/留给他"），与 v18 的"选择器"同族 */
+const DECISION_NOUN_HEAD = /^决定权/;
+/** ③ 裸名词短语判据：≤10 字 + 无谓语标记。标记集宁可放宽（放过的垃圾只是留在库里，
+ *  误杀的真决策就再也回不来了）。 */
+const DECISION_BARE_FRAGMENT = /^决定了?(?:的)?[^。！？!?\n]{0,8}$/;
+const DECISION_PREDICATE_HINT = /(?:用|走|上|接|改|选|烙|等|留|不再|要|是|会|能|该|把|将|就|仍|先|只|换|加|删|开|关|跑|试|定|让|放|弃|停|推|做|写|发|装|拆|测|查)/;
+
+/**
+ * 返回命中的判据名；null = 形状合格。
+ * 返回名字而不是布尔，是为了守门/探针能报出"被哪条杀的"——静默拒收等于把 bug 藏起来。
+ */
+function decisionShapeVeto(text: string): string | null {
+  const t = text.trim();
+  if (DECISION_OPEN_TOPIC.test(t) || DECISION_A_NOT_A.test(t)) return 'open-topic';
+  if (DECISION_CHOICE_OPEN.test(t)) return 'choice-open';
+  if (DECISION_TOPIC_TAIL.test(t)) return 'topic-tail';
+  if (DECISION_REPORT_RESIDUE.test(t) || DECISION_GLUED_LIST.test(t) || DECISION_UI_DUMP.test(t)) return 'report-residue';
+  if (DECISION_QUESTION_END.test(t)) return 'question-end';
+  if (DECISION_SELF_ECHO.test(t)) return 'self-echo';
+  if (DECISION_NOMINAL_TAIL.test(t) || DECISION_NOUN_HEAD.test(t)) return 'nominal-tail';
+  if (DECISION_BARE_FRAGMENT.test(t) && !DECISION_PREDICATE_HINT.test(t.slice(2))) return 'bare-fragment';
+  return null;
 }
 
 // [fork 1015] Phase 3 修复B：引号不配对=腰斩碎片。
@@ -566,8 +643,14 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
   // 又不会把两个不同的短问题合并（短问题 28 字已覆盖全文）。
   const seenQ = new Set<string>();
   const qKey = (s: string): string => s.replace(/[\s，。！？、,.!?;；:：]/g, '').slice(0, 28);
-  msgs.forEach((m, idx) => {
-    if (m.role !== 'user') return;
+  // [1021 红队 R2 修复] 原来是 `msgs.forEach(...)` + 循环内 `if (out.length >= 10) return;`。
+  //   **`forEach` 回调里的 `return` 只退出这一条消息的回调，不退出循环** ⇒ 10 条上限形同虚设。
+  //   实测（红队探针）：30 条用户提问 → 返回 30 条。库里已有 11/620 场超过 10 条，最高 35 条。
+  //   同文件其余三个抽取器（决策/文件/话题）都用 `for...of` + `return out`，只有这里写成 forEach。
+  //   改成 for 循环后 `return out` 才真的结束整个函数。
+  for (let idx = 0; idx < msgs.length; idx++) {
+    const m = msgs[idx];
+    if (m.role !== 'user') continue;
     for (const s of sentences(m.content)) {
       if (!Q_MARK.test(s) || s.length < 8 || !Q_HINT.test(s)) continue;
       // [fork 0924] 问题也要过碎片守卫：列表项/表格行/粗体残片不是真问题（mc 整合包反馈同族）
@@ -591,9 +674,9 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
         // 现在：位置/关键词只决定「候选」，是否真未决由 wasAnswered 复核。
         unresolved: (tailAsked || UNRESOLVED_HINT.test(s)) && !wasAnswered(msgs, idx, s),
       });
-      if (out.length >= 10) return;
+      if (out.length >= 10) return out;   // 现在真的结束整个函数（见上方 R2 修复注释）
     }
-  });
+  }
   return out;
 }
 

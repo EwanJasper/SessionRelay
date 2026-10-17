@@ -57,6 +57,9 @@ export interface RelayConfig {
     workflow_days?: number;
     check_every_min?: number;
   };
+  /** 时间衰减（1021；模块见 core/decay/）。**默认关**，只乘排序分数不过滤。
+   *  ⚠️ 经验（lesson）线别用它：store/lesson-gate.ts 已有线性年龄扣分，两套一起用 = 衰减两次。 */
+  decay?: import('../core/decay/decay.js').DecayConfig;
   /** ═══ L3 模型压缩（docs/1018-夜-模型压缩与语义档-建设方案.md §2）═══
    *  用**生成模型**把旧条目合成上级条目。与 semantic 块**刻意分开**：
    *  嵌入模型管「找得到」，生成模型管「存得省」—— 共用一套配置会让换嵌入模型意外改掉压缩行为。
@@ -86,6 +89,8 @@ export interface RelayConfig {
   };
 }
 
+import { defaultDecayConfig, resolveDecayConfig } from '../core/decay/decay.js';
+
 export function defaultConfig(): RelayConfig {
   return {
     version: '1.0',
@@ -103,6 +108,14 @@ export function defaultConfig(): RelayConfig {
     // 缩短热窗可省 agent1super 36.9% / music 69.3%；结论与经验全保留，正文仍可从客户端会话文件重放。
     archive: { enabled: true, hot_days: 30, workflow_days: 7, check_every_min: 60 },
     recompute: { check_every_min: 360 },
+    // ── 时间衰减（1021 新增，模块见 core/decay/）──
+    //   **默认关**：先量再接。实测当前库最老的决策只有 66 天，而「三个月前」这个场景还没出现，
+    //   所以线上开了差异也很小 —— 这不代表它没用，只代表现在还用不上。
+    //   开关打开后只乘**排序分数**，不过滤：老记录仍能搜到，只是排得靠后。
+    // ⚠️ 经验（lesson）这条线**不要用这里的衰减**：store/lesson-gate.ts 已有
+    //   `DECAY_PER_DAY = 0.0083` 的线性年龄扣分（用于注入阈值判决，会真的过滤）。
+    //   两处一起用 = 衰减两次。要么用 lesson-gate 那套，要么把它换成这里的指数项，二选一。
+    decay: defaultDecayConfig(),
   };
 }
 
@@ -120,6 +133,7 @@ export function mergeConfig(raw: Record<string, unknown> | null): RelayConfig {
     semantic: { ...((raw.semantic ?? {}) as object) },
     compress: { ...((raw.compress ?? {}) as object) },
     archive: { ...def.archive, ...((raw.archive ?? {}) as object) },
+    decay: resolveDecayConfig(raw.decay),
     recompute: { ...def.recompute, ...((raw.recompute ?? {}) as object) },
   } as RelayConfig;
 }

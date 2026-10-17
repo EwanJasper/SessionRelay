@@ -7,6 +7,8 @@
 import type { DB, } from '../store/db.js';
 import { parseQuery, unitExpr, segment } from '../core/tokenize/tokenizer.js';
 import { rewriteQuery } from '../core/tokenize/rewrite.js';
+import { expandQueryTags } from '../core/graph/expand.js';
+import type { QueryExpansion, ExpansionTerm } from '../core/graph/expand.js';
 
 export interface ExtraWhere {
   sql: string;
@@ -27,6 +29,8 @@ export interface SearchHit {
   viaLike?: boolean;
   /** [1016] 多路融合后**多路互证**的命中 */
   viaRRF?: boolean;
+  /** [1017 夜 · 标签图谱] 由**标签共现扩展**补进来的命中（与语义路同构：只做加法，可标记可统计） */
+  viaTag?: boolean;
 }
 
 interface UnitHits {
@@ -131,6 +135,39 @@ export interface SearchOptions {
    * 但如果以后发现某些问法变差，第一个该动的是**衰减曲线的常数 300**（改大 = 更温和），不是这条开关。
    */
   lengthNorm?: boolean;
+  /**
+   * [1017 夜 · 标签图谱] 查询扩展开关（**默认关**；实测数字与结论见 DEFAULT_TAG_EXPAND 注释）。
+   *
+   * 它做什么：查询词 → 命中标签 → 沿共现边扩 1~2 跳 → 扩展词构成**一条补充路**。
+   * 只做加法：主路结果一条不删、分数一分不动（与 rewrite / semantic 两条补充路同一纪律）。
+   */
+  tagExpand?: boolean;
+  /** 扩展路的保底槽位：0 = 只追加在尾部（主路不满 10 条时才有位置）；N = 从主路尾部腾 N 个 */
+  tagReserve?: number;
+  /** 扩展跳数（默认 1；2 跳实测变成噪声放大器） */
+  tagHops?: number;
+  /** 扩展词上限（默认 4） */
+  tagMaxTerms?: number;
+  /**
+   * 扩展路走**加权融合**（进 fusedSearch 当一条权重 0.5 的路目）而不是追加。
+   * 为什么需要这个选项：追加模式下主路满 10 条就结构性拿不到位置（与语义路同病），
+   * 只有并进融合才可能靠分数挤进前列 —— A/B 要能把这两件事分开量。
+   */
+  tagInFusion?: boolean;
+  /** 扩展明细（可解释）：传一个空对象进来，本次检索把它填满 —— 调用方「打印这个词扩成了哪些词」靠它 */
+  tagTrace?: TagTrace | null;
+}
+
+/** 一次查询扩展的溯源信息（**排查「为什么扩成这些词」的唯一入口**） */
+export interface TagTrace {
+  query: string;
+  tokens: string[];
+  seeds: Array<{ token: string; tag: string; kind: string; how: string; score: number }>;
+  terms: Array<{ name: string; kind: string; score: number; path: string[] }>;
+  /** 扩展路自己召回了多少会话 */
+  pathHits: number;
+  /** 没扩出东西的原因（空串 = 正常扩展） */
+  why: string;
 }
 
 /**
@@ -223,21 +260,41 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   // 修法：语义命中保底占 min(reserve, floor(limit/3)) 个槽位，从 **FTS 尾部** 腾，头部一条不动；
   // reserve=0 逐字回到旧行为（config: semantic.reserve_slots）。
   if (opts.semanticHits && opts.semanticHits.length > 0) {
-    const existing = new Set(hits.map((h) => h.sessionId));
     const extra: SearchHit[] = [];
+    const existing = new Set(hits.map((h) => h.sessionId));
     for (const sh of opts.semanticHits) {
       if (existing.has(sh.sessionId)) continue;
+      existing.add(sh.sessionId);
       const title = (db.prepare('SELECT title FROM sessions WHERE id = ?').get(sh.sessionId) as { title: string | null } | undefined)?.title;
       extra.push({ sessionId: sh.sessionId, score: sh.score, snippet: title ?? '', viaMeta: false, coverage: 0, seq: 0, viaSemantic: true });
     }
     const reserve = Math.min(opts.semanticReserve ?? DEFAULT_RESERVE_SLOTS, Math.floor(limit / 3));
-    if (extra.length > 0 && reserve > 0) {
-      const take = Math.min(extra.length, reserve);
-      return [...hits.slice(0, Math.max(0, limit - take)), ...extra.slice(0, take)].slice(0, limit);
-    }
-    if (extra.length > 0) hits.push(...extra);
+    return mergeAdditive(hits, extra, reserve, limit);
   }
   return hits.slice(0, limit);
+}
+
+/**
+ * 补充路的**唯一**合并判据（语义路、标签图谱路都走这里；不许谁再抄一份）。
+ *
+ * 三条都由病历逼出来：
+ *   ① 主路结果**一条不删、顺序不动** —— 补充路的判断力一定不如主路，它只许「填空」；
+ *   ② reserve = 保底槽位：主路已满 limit 时补充路结构性进不来（语义那次实测过），所以从**尾部**腾位；
+ *      取 0 = 只追加，等于「主路不满时才有位置」，是 A/B 的对照组口径；
+ *   ③ 去重要连**补充路内部**也去（原先只跟主路比，同一条补充命中出现两次会占两个槽位）。
+ */
+function mergeAdditive(hits: SearchHit[], extra: SearchHit[], reserve: number, limit: number): SearchHit[] {
+  const seen = new Set(hits.map((h) => h.sessionId));
+  const fresh: SearchHit[] = [];
+  for (const h of extra) {
+    if (seen.has(h.sessionId)) continue;
+    seen.add(h.sessionId);
+    fresh.push(h);
+  }
+  if (fresh.length === 0) return hits.slice(0, limit);
+  const take = Math.min(fresh.length, Math.max(0, reserve));
+  if (take > 0) return [...hits.slice(0, Math.max(0, limit - take)), ...fresh.slice(0, take)].slice(0, limit);
+  return [...hits, ...fresh].slice(0, limit);
 }
 
 /**
@@ -253,6 +310,18 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
  *   3) **可一键关**（opts.rewrite === false）：关掉后逐字等于旧行为，便于 A/B 与回归。
  */
 export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
+  const hits = searchCore(db, opts);
+  // [1017 夜 · 标签图谱] 追加式扩展：**在既有全部逻辑之后**再叠加一条补充路。
+  // 放在这里而不是塞进 searchCore 里，是为了让「扩展」严格等于「旧行为 + 一条路」——
+  // 单一变量，A/B 才干净（历史教训：融合闸门那次对照组是脏的，见 lengthNorm 注释）。
+  // 默认值只认 DEFAULT_TAG_EXPAND 这一处（别在调用点再写一个 false —— 那会让「默认是什么」散成 N 份）
+  if ((opts.tagExpand ?? DEFAULT_TAG_EXPAND) !== true) return hits;
+  if (opts.tagInFusion === true) return hits;   // 融合模式已在 fusedSearch 内部并过路了
+  return tagExpandPath(db, opts, hits);
+}
+
+/** 原 searchSessions 主体，逐字未改（仅改名）—— 对外行为经 searchSessions 包装后保持不变 */
+function searchCore(db: DB, opts: SearchOptions): SearchHit[] {
   const hits = searchOnce(db, opts);
   if (opts.rewrite === false) return hits;
 
@@ -294,6 +363,9 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
   //   fusion 默认（未指定）→ 主路不硬时融合；主路够硬（coverage≥1）时逐字不动 ⇒ 关键词查询零回归
   //   fusion === false  → 逐字回旧行为（改写补充那版），供 A/B 与回归
   if (opts.fusion === true) return fusedSearch(db, opts, hits);
+  // [1017 夜 · 标签图谱] 扩展路要「并进融合」时才强制走融合：闸门在 main 够硬时不放行，
+  // 不强制的话 tag 路在绝大多数查询上根本跑不到（等于开关开着却没生效——最坏的一种失败）。
+  if (opts.tagExpand === true && opts.tagInFusion === true) return fusedSearch(db, opts, hits);
 
   const strong = hits.length > 0 && hits.length >= Math.min(limit, below) && hits[0].coverage >= 1;
   if (strong) return hits;
@@ -320,6 +392,32 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
   return merged.slice(0, limit);
 }
 
+/**
+ * [1017 夜 · 标签图谱] 查询扩展的**默认值：关**。这不是保守，是量出来的（978 题配对 A/B，同一库快照、同一批题面、limit=10）：
+ *
+ *   · 基线（产品默认档）      hit@10 = 552/978 = **56.44%**，单次 12.8ms
+ *   · 扩展·追加（reserve 0） hit@10 = 552/978 = **56.44%**（**978/978 题名次完全相同**），14.9ms（1.16x）
+ *   · 扩展·保底 3 槽          hit@10 = 540/978 = **55.01%**（逐题 +14 / −26，McNemar p=0.081），14.0ms
+ *   · 强制融合 + 扩展路并进融合  hit@10 = 552/978，相对「只强制融合」的 553/978 **−0.1pt**（+16/−17，p=1.000）
+ *   · hit@1 在**所有**扩展臂上都一动不动（+0/−0，p=1.000）
+ *
+ * 机制（两条，都是结构性的，不是「参数再调调」能救的）：
+ *   ① **追加式在主路满 10 条时结构性拿不到位置** —— 主路只要凑满 limit，后来者一律被 slice 掉，于是 978 题名次
+ *      一模一样。这与语义路当初的病历同型（见 DEFAULT_RESERVE_SLOTS 注释），当时也是靠「保底槽位」才让它可见。
+ *   ② **保底槽位是把好结果换下去**：从主路尾部腾 3 个槽，换进来 14 条、挤掉 26 条 —— 因为 FTS 的尾部队列
+ *      依然比「共现邻居」更准。同一现象在语义路上也出现过（保底 3 槽 → 40.0%，关掉 → 45.0%）。
+ *
+ * 更根本的一条：**共现边编码的是「同一份文档/同一个项目」，不是「同义/上位」**。实测证据（同一库）：
+ *   · 归档 的邻居是 pipeline.py / ai_judge.py / render_queue.json / 队列 —— 同项目文件，不是「省空间」这类同义说法；
+ *   · 空间 只出现在 1 个会话（df=1）⇒ 没有边；而「空间 + 归档」**同会话出现 0 次** ⇒
+ *     用户搜「怎么省空间」想找「归档机制」这个 motivating example，**在本库数据上结构性无解**，不是实现不够好。
+ *
+ * 所以：**保留实现 + 开关默认关**（成本只有一张可重建的表，不影响任何现有路径），不硬上。
+ * 要重开只需传 tagExpand: true；若将来要再试，先用 scripts/recall-bench.ts --expand 1 复量，别凭直觉。
+ * 唯一的正收益在**可解释的线索发现**上（graph-explain 能打印「这个词扩成了哪些词、怎么来的」），
+ * 那是给人看的探索工具，不是召回手段。
+ */
+export const DEFAULT_TAG_EXPAND = false;
 /** 会话长度惩罚：把「两三千条消息的巨无霸」压下去（它什么词都碰得到，是所有路的天然第一名） */
 function lengthPenalty(db: DB, sids: string[]): Map<string, number> {
   const out = new Map<string, number>();
@@ -357,6 +455,70 @@ function likeHits(db: DB, tokens: string[], project: string, extra: ExtraWhere |
     .map(([sid, v]) => ({ sessionId: sid, score: v.n, snippet: excerpt(db, v.rid, toks[0]), viaMeta: false, coverage: 0, seq: 0, viaLike: true }));
 }
 
+
+/**
+ * [1017 夜 · 标签图谱] 查询扩展路：把扩展词各自搜一遍，按「命中几个扩展词」聚合。
+ *
+ * 为什么不做成一条多词 AND/OR 查询：扩展词之间是**并列**关系（cpu 的邻居 bm25 / gguf 任一个
+ * 命中都算线索），AND 会把它们卡死；OR 又会把「碰巧含一个词」的会话全拉进来。所以按单元分别检索、
+ * 再用「互证数」排序 —— 与 fusedSearch 的互证加分同一个思路，但这里只需要名次。
+ */
+function tagTermHits(db: DB, terms: ExpansionTerm[], opts: SearchOptions): SearchHit[] {
+  const limit = opts.limit ?? 20;
+  const acc = new Map<string, { n: number; sc: number; rid: number }>();
+  for (const t of terms) {
+    let uh: UnitHits;
+    try {
+      uh = queryUnit(db, unitExpr([t.name]), opts.project, opts.extraWhere);
+    } catch (e) {
+      // 容错不许静默：单个扩展词搜不动只跳过它，但必须说出来
+      console.warn('[tag-expand] 扩展词检索失败，已跳过：' + t.name + ' —— ' + String((e as Error)?.message ?? e).slice(0, 120));
+      continue;
+    }
+    for (const [sid, v] of uh.map) {
+      const prev = acc.get(sid) ?? { n: 0, sc: 0, rid: v.rid };
+      prev.n += 1;
+      prev.sc += v.score;
+      acc.set(sid, prev);
+    }
+  }
+  const pen = opts.lengthNorm !== false ? lengthPenalty(db, [...acc.keys()]) : new Map<string, number>();
+  const ranked = [...acc.entries()].sort((a, b) => {
+    if (b[1].n !== a[1].n) return b[1].n - a[1].n;
+    return b[1].sc * (pen.get(b[0]) ?? 1) - a[1].sc * (pen.get(a[0]) ?? 1);
+  }).slice(0, limit);
+  const titleOf = db.prepare('SELECT title FROM sessions WHERE id = ?');
+  return ranked.map(([sid, v]) => ({
+    sessionId: sid,
+    score: v.n + Math.min(1, v.sc * (pen.get(sid) ?? 1) / 10),
+    snippet: (titleOf.get(sid) as { title: string | null } | undefined)?.title ?? '',
+    viaMeta: false,
+    coverage: 0,
+    seq: 0,
+    viaTag: true,
+  }));
+}
+
+/** 把一次扩展的溯源信息写进调用方给的 trace 对象（可解释性出口） */
+function fillTrace(trace: TagTrace, query: string, tokens: string[], exp: QueryExpansion, pathHits: number): void {
+  trace.query = query;
+  trace.tokens = tokens;
+  trace.seeds = exp.seeds.map((s) => ({ token: s.token, tag: s.tag, kind: s.kind, how: s.how, score: s.score }));
+  trace.terms = exp.terms.map((t) => ({ name: t.name, kind: t.kind, score: t.score, path: t.path }));
+  trace.pathHits = pathHits;
+  trace.why = exp.why;
+}
+
+/** 追加式扩展：主路结果原样在前，扩展路命中追加（或按 reserve 从尾部腾位） */
+function tagExpandPath(db: DB, opts: SearchOptions, hits: SearchHit[]): SearchHit[] {
+  const limit = opts.limit ?? 20;
+  const tokens = parseQuery(opts.query).units.flat();
+  const exp = expandQueryTags(db, tokens, { hops: opts.tagHops ?? 1, maxTerms: opts.tagMaxTerms ?? 4 });
+  const pathHits = exp.terms.length > 0 ? tagTermHits(db, exp.terms, opts) : [];
+  if (opts.tagTrace) fillTrace(opts.tagTrace, opts.query, tokens, exp, pathHits.length);
+  if (pathHits.length === 0) return hits;
+  return mergeAdditive(hits, pathHits, Math.min(opts.tagReserve ?? 0, Math.floor(limit / 3)), limit);
+}
 /**
  * 多路加权融合（第二版；第一版纯 RRF 实测**负结果**已回滚）。
  *
@@ -386,6 +548,14 @@ function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[
       const lk = likeHits(db, tokens, opts.project, opts.extraWhere, limit);
       if (lk.length > 0) paths.push({ w: 0.4, hits: lk });
     } catch { /* LIKE 路失败不影响主路 */ }
+  }
+  // [1017 夜 · 标签图谱] 扩展路并进融合：权重 0.5（主路 1.0、改写路 0.6、子串路 0.4 之间）。
+  // 并进融合而不是追加，是因为追加在主路满 10 条时结构性拿不到位置（语义那次的老病历）。
+  if (opts.tagExpand === true) {
+    const exp = expandQueryTags(db, tokens, { hops: opts.tagHops ?? 1, maxTerms: opts.tagMaxTerms ?? 4 });
+    const tp = exp.terms.length > 0 ? tagTermHits(db, exp.terms, opts) : [];
+    if (opts.tagTrace) fillTrace(opts.tagTrace, opts.query, tokens, exp, tp.length);
+    if (tp.length > 0) paths.push({ w: 0.5, hits: tp });
   }
   const all: string[] = [];
   const seenSid = new Set<string>();

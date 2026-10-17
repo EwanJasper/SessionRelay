@@ -123,7 +123,14 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   const stages: StageReport[] = [];
   const runOne = async (spec: { id: StageId; title: string }, fn: () => Promise<string> | string) => {
     const skip = shouldSkip(state, spec.id);
-    if (skip.skip && !opts.force) { stages.push({ id: spec.id, title: spec.title, ok: true, note: '', ms: 0, skipped: skip.reason }); return; }
+    if (skip.skip && !opts.force) {
+      // [1021 红队 R3] 原来这里 `ok: true` + 不打印 —— 用户看到「一切正常」，实际该阶段早已不干活，
+      //   是本项目最嫌恶的「静默半失效」。改成 ok:false（它确实没成功）、把原因写进 note、并打一行日志。
+      //   注意 `skipped` 字段保留：调用方靠它区分「跳过」与「真失败」。
+      stages.push({ id: spec.id, title: spec.title, ok: false, note: skip.reason ?? '跳过', ms: 0, skipped: skip.reason });
+      log('  ⏭  ' + spec.title + '：' + (skip.reason ?? '跳过'));
+      return;
+    }
     const t0 = Date.now();
     try {
       const note = await fn();

@@ -144,9 +144,26 @@ export function dueStages(st: LifecycleState, nowMs: number, opts: { only?: Stag
   });
 }
 
-/** 连续失败降级：同一阶段连续失败 ≥3 次时，本轮跳过（避免坏阶段拖垮整条链路） */
-export function shouldSkip(st: LifecycleState, id: StageId): { skip: boolean; reason?: string } {
+/**
+ * 连续失败降级：同一阶段连续失败 ≥3 次时本轮跳过（避免坏阶段拖垮整条链路）。
+ *
+ * ── [1021 红队 R3 修复] 原来的实现是**永久停用**，不是「降级」 ──
+ *   死循环：失败 3 次 → 跳过 → **永远不跑** → 永远不可能成功 → `fails` 永不为 0 → 永远跳过。
+ *   实测（红队探针）：`fails=3` 后连跑 100 轮仍然 skip，日志一行不打，报告还写 `ok:true`。
+ *   用户看到的是「一切正常」，实际那条阶段早就不干活了 —— 这正是本项目最嫌恶的静默半失效。
+ *
+ * 修法：**熔断器的半开状态** —— 跳过不等于永久放弃。超过 `RETRY_AFTER_MS` 就放**一次**探测：
+ *   · 探测成功 ⇒ recordStage 把 fails 归 0，阶段自动恢复（自愈）
+ *   · 探测再失败 ⇒ fails 继续累加，再等一个冷却期
+ *   这样最坏情况只是「每冷却期试一次」，不会把链路拖垮，也不会永久装死。
+ */
+export const RETRY_AFTER_MS = 30 * 60_000;  // 30 分钟放一次探测
+
+export function shouldSkip(st: LifecycleState, id: StageId, nowMs = Date.now()): { skip: boolean; reason?: string } {
   const prev = st.stages[id];
-  if (prev && !prev.ok && (prev.fails ?? 0) >= 3) return { skip: true, reason: '连续失败 ' + prev.fails + ' 次，先跳过（原因：' + prev.note + '）' };
-  return { skip: false };
+  if (!prev || prev.ok || (prev.fails ?? 0) < 3) return { skip: false };
+  // 到了冷却期 ⇒ 放行一次探测（注意：这里**不清零 fails**，探测成功才由 recordStage 归零）
+  const lastAt = Date.parse(prev.at);
+  if (Number.isFinite(lastAt) && nowMs - lastAt >= RETRY_AFTER_MS) return { skip: false };
+  return { skip: true, reason: '连续失败 ' + prev.fails + ' 次，冷却中（每 30 分钟放一次探测；原因：' + prev.note + '）' };
 }

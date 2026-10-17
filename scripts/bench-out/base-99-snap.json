@@ -1,0 +1,62 @@
+{
+  "at": "2026-10-17T12:16:47.944Z",
+  "dbPath": "D:/dsh插件  记忆/tmp/graph-bench-snapshot.sqlite",
+  "rewrite": true,
+  "limit": 10,
+  "acc": {
+    "K": {
+      "n": 33,
+      "h1": 5,
+      "h3": 6,
+      "h10": 17,
+      "satTop1": 0
+    },
+    "S": {
+      "n": 33,
+      "h1": 7,
+      "h3": 11,
+      "h10": 20,
+      "satTop1": 0
+    },
+    "M": {
+      "n": 33,
+      "h1": 10,
+      "h3": 13,
+      "h10": 22,
+      "satTop1": 0
+    },
+    "Ks": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ss": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ms": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    }
+  },
+  "knobs": {
+    "semantic": false,
+    "threshold": 0.4,
+    "reserve": 3,
+    "topk": 5,
+    "dtype": null,
+    "fusion": "default",
+    "lengthnorm": true
+  },
+  "semReady": false,
+  "semWhy": "",
+  "rows": []
+}

@@ -53,6 +53,14 @@ const THRESHOLD = Number(arg('threshold', '0.4'));
 const RESERVE = Number(arg('reserve', '3'));
 const TOPK = Number(arg('topk', '5'));
 const DTYPE = arg('dtype', '');
+// [1017 夜 · 标签图谱] 查询扩展臂。和语义臂同一套做法：**同一批题面、同一个目标会话**，
+// 扩展开/关两条臂**配对**跑 —— 配对 McNemar 比独立两组比例灵敏得多（噪声小一个量级）。
+// 旋钮全部是基准自己的，不写进 config.json（扫描要求每轮只改一个变量）。
+const EXPAND = arg('expand', '0') === '1';
+const TAG_RESERVE = Number(arg('tagreserve', '0'));
+const TAG_HOPS = Number(arg('taghops', '1'));
+const TAG_TERMS = Number(arg('tagterms', '4'));
+const TAG_FUSION = arg('tagfusion', '0') === '1';
 /** 语义臂用的配置：以 --config 指向的项目配置为底，再套上基准旋钮（不给就用当前库自己的配置） */
 const CFG_ROOT = arg('config', '');
 const ROWS_OUT = arg('rows', '');
@@ -197,11 +205,52 @@ if (SEMANTIC) {
   if (!semReady) console.log('⚠️ 语义臂不可用：' + semWhy + ' —— 本轮只出词法三臂（**不要**把它当成"语义无效"的证据）');
 }
 
+/** 双侧精确二项（McNemar 用；n 很小也准）。**只此一份**：语义臂与扩展臂共用 —— 判据不许各写一遍。 */
+function binom2(k: number, n: number): number {
+  if (n === 0) return 1;
+  let s2 = 0;
+  for (let i = 0; i <= n; i++) {
+    let c2 = 1;
+    for (let j = 0; j < i; j++) c2 = c2 * (n - j) / (j + 1);
+    const p = c2 * Math.pow(0.5, n);
+    if (i <= k || i >= n - k) s2 += p;
+  }
+  return Math.min(1, s2);
+}
+
+/** 配对 McNemar：以 lex（词法基线）为基准，统计新臂「救回 / 打掉」各有几条（只看 hit@1） */
+function mcnemarByArm(rows: Array<{ arm: string; lex: number } & Record<string, number>>, key: string): Map<string, { b: number; c: number }> {
+  const out = new Map<string, { b: number; c: number }>();
+  for (const r of rows) {
+    const e = out.get(r.arm) ?? { b: 0, c: 0 };
+    const baseHit = r.lex === 0;
+    const newHit = r[key] === 0;
+    if (baseHit && !newHit) e.c++;   // 基线中、新臂不中 —— 退步
+    if (!baseHit && newHit) e.b++;   // 基线不中、新臂中 —— 改善
+    out.set(r.arm, e);
+  }
+  return out;
+}
+
+/** 打印一张配对显著性表（语义 / 扩展两条臂共用同一套口径与文字格式） */
+function reportMcNemar(title: string, m: Map<string, { b: number; c: number }>, gain: string, loss: string): void {
+  console.log(title);
+  for (const k of ['K', 'S', 'M']) {
+    const e = m.get(k);
+    if (!e) continue;
+    const p = binom2(Math.min(e.b, e.c), e.b + e.c);
+    console.log('  ' + k + ' 臂：' + gain + ' ' + e.b + ' 条 · ' + loss + ' ' + e.c + ' 条 · 净 ' + (e.b - e.c >= 0 ? '+' : '') + (e.b - e.c)
+      + ' · McNemar 精确 p=' + p.toFixed(3) + (p < 0.05 ? '  ← 显著' : ''));
+  }
+}
+
 let probeN = 0, fuseDiff = 0, gateOpen = 0;
 interface Acc { n: number; h1: number; h3: number; h10: number; satTop1: number }
 const mk = (): Acc => ({ n: 0, h1: 0, h3: 0, h10: 0, satTop1: 0 });
 // 词法臂 K/S/M；语义臂 Ks/Ss/Ms —— **同一个目标会话、同一批题面**，两臂配对可比
-const acc: Record<string, Acc> = { K: mk(), S: mk(), M: mk(), Ks: mk(), Ss: mk(), Ms: mk() };
+const acc: Record<string, Acc> = { K: mk(), S: mk(), M: mk(), Ks: mk(), Ss: mk(), Ms: mk(), Ke: mk(), Se: mk(), Me: mk() };
+/** 扩展臂的阶段计数与样例（截图留存用：什么词扩成了什么词，出问题时唯一能查的东西） */
+const expStats = { n: 0, seeded: 0, expanded: 0, terms: 0, pathHits: 0, ms: 0, baseMs: 0, sample: [] as Array<{ q: string; seeds: string[]; terms: string[] }> };
 /** 逐题结果（落盘用）：两臂的命中名次都记，扫描完可以算配对 McNemar，而不是只看汇总百分比 */
 const rows: Array<{ arm: string; query: string; target: string; lex: number; sem: number }> = [];
 /** 巨型会话（≥800 条消息）在 top-1 里的占比 —— 反向护栏：语义若只是"给巨无霸再加一条路"，这个数会不降反升 */
@@ -213,7 +262,33 @@ const msgCount = new Map<string, number>();
 }
 for (const it of items) {
   let ids: string[] = [];
+  const t0 = Date.now();
   try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId); } catch { continue; }
+  expStats.baseMs += Date.now() - t0;
+  // ── 标签扩展臂：同一题、同一目标，只是在旧行为之上多开一条扩展路（单变量） ──
+  let expIds: string[] = [];
+  if (EXPAND) {
+    const t1 = Date.now();
+    try {
+      const tr: { seeds?: Array<{ tag: string }>; terms?: Array<{ name: string }>; pathHits?: number } = {};
+      expIds = searchSessions(db, {
+        project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM,
+        tagExpand: true, tagReserve: TAG_RESERVE, tagHops: TAG_HOPS, tagMaxTerms: TAG_TERMS,
+        tagInFusion: TAG_FUSION ? true : undefined, tagTrace: tr,
+      } as never).map((h) => h.sessionId);
+      expStats.n++;
+      if ((tr.seeds?.length ?? 0) > 0) expStats.seeded++;
+      if ((tr.terms?.length ?? 0) > 0) expStats.expanded++;
+      expStats.terms += tr.terms?.length ?? 0;
+      expStats.pathHits += tr.pathHits ?? 0;
+      if (expStats.sample.length < 5 && (tr.terms?.length ?? 0) > 0) {
+        expStats.sample.push({ q: it.query, seeds: (tr.seeds ?? []).map((s) => s.tag), terms: (tr.terms ?? []).map((t) => t.name) });
+      }
+    } catch (e) {
+      if (expStats.n === 0) console.log('⚠️ 扩展臂单题失败：' + String((e as Error)?.message ?? e).slice(0, 140));
+    }
+    expStats.ms += Date.now() - t1;
+  }
   // ── 语义臂：同一题、同一目标，只是多注入了语义命中（配对比较） ──
   let semIds: string[] = [];
   if (semReady && semanticHitsOf) {
@@ -246,13 +321,14 @@ for (const it of items) {
   };
   const li = tally(acc[it.arm], ids);
   const si = semReady ? tally(acc[it.arm + 's'], semIds) : -1;
-  if (semReady) rows.push({ arm: it.arm, query: it.query, target: it.target, lex: li, sem: si });
+  const ei = EXPAND ? tally(acc[it.arm + 'e'], expIds) : -1;
+  if (semReady || EXPAND) rows.push({ arm: it.arm, query: it.query, target: it.target, lex: li, sem: si, exp: ei });
 }
 
 const fusionLabel = FUSION === undefined ? '产品默认(条件)' : (FUSION ? '强制on' : 'off');
 console.log('库: ' + dbPath + '  改写: ' + (REWRITE ? 'on' : 'off') + '  融合: ' + fusionLabel + '  长度归一: ' + (LENGTHNORM ? 'on' : 'off'));
 console.log('臂   样本    hit@1        hit@3        hit@10      巨霸top1');
-for (const k of ['K', 'S', 'M', 'Ks', 'Ss', 'Ms']) {
+for (const k of ['K', 'S', 'M', 'Ks', 'Ss', 'Ms', 'Ke', 'Se', 'Me']) {
   const a = acc[k];
   if (a.n === 0) continue;
   const p = (x: number) => a.n ? ((x / a.n) * 100).toFixed(1) + '%' : '-';
@@ -276,40 +352,24 @@ if (FUSION === undefined && !NO_PROBE && probeN) {
   console.log('  · 默认 vs 强制融合 结果不同：' + fuseDiff + '（' + pc(fuseDiff) + '）—— 融合算法本身会不会改排序');
   console.log('  · 默认 vs 关掉融合 结果不同：' + gateOpen + '（' + pc(gateOpen) + '）—— **默认档是否真的走过了融合**（0% = 闸门恒真、条件融合是死代码）');
 }
-// ── 配对显著性（McNemar 精确检验）：只看"语义救回几条 / 打掉几条"，不看绝对百分比 ──
-if (semReady && rows.length > 0) {
-  const byArm = new Map<string, { b: number; c: number }>();
-  for (const r of rows) {
-    const e = byArm.get(r.arm) ?? { b: 0, c: 0 };
-    const lexHit = r.lex === 0, semHit = r.sem === 0;   // 只看 hit@1
-    if (lexHit && !semHit) e.c++;   // 词法中、语义不中 —— 退步
-    if (!lexHit && semHit) e.b++;   // 词法中、语义中 —— 改善
-    byArm.set(r.arm, e);
-  }
-  const binom2 = (k: number, n: number) => { // 双侧精确二项（n 很小也准）
-    if (n === 0) return 1;
-    let s2 = 0;
-    for (let i = 0; i <= n; i++) {
-      let c2 = 1;
-      for (let j = 0; j < i; j++) c2 = c2 * (n - j) / (j + 1);
-      const p = c2 * Math.pow(0.5, n);
-      if (i <= k || i >= n - k) s2 += p;
-    }
-    return Math.min(1, s2);
-  };
-  console.log('配对 McNemar（hit@1，词法 → 语义）：');
-  for (const k of ['K', 'S', 'M']) {
-    const e = byArm.get(k);
-    if (!e) continue;
-    const p = binom2(Math.min(e.b, e.c), e.b + e.c);
-    console.log('  ' + k + ' 臂：语义救回 ' + e.b + ' 条 · 语义打掉 ' + e.c + ' 条 · 净 ' + (e.b - e.c >= 0 ? '+' : '') + (e.b - e.c)
-      + ' · McNemar 精确 p=' + p.toFixed(3) + (p < 0.05 ? '  ← 显著' : ''));
-  }
+// ── 配对显著性（McNemar 精确检验）：只看「救回几条 / 打掉几条」，不看绝对百分比 ──
+if (semReady && rows.length > 0) reportMcNemar('配对 McNemar（hit@1，词法 → 语义）：', mcnemarByArm(rows, 'sem'), '语义救回', '语义打掉');
+if (EXPAND && rows.length > 0) {
+  reportMcNemar('配对 McNemar（hit@1，词法 → 标签扩展）：', mcnemarByArm(rows, 'exp'), '扩展救回', '扩展打掉');
+  const q = (x: number) => expStats.n ? (x / expStats.n * 100).toFixed(1) + '%' : '-';
+  console.log('扩展臂统计（' + expStats.n + ' 条查询）：命中种子 ' + expStats.seeded + '（' + q(expStats.seeded) + '）'
+    + ' · 扩出词 ' + expStats.expanded + '（' + q(expStats.expanded) + '）'
+    + ' · 平均扩展词 ' + (expStats.expanded ? (expStats.terms / expStats.expanded).toFixed(1) : '-') + ' 个'
+    + ' · 扩展路平均命中 ' + (expStats.expanded ? (expStats.pathHits / expStats.expanded).toFixed(1) : '-') + ' 个会话');
+  console.log('  延迟：基线 ' + (expStats.baseMs / Math.max(1, expStats.n)).toFixed(0) + 'ms/次 · 扩展 ' + (expStats.ms / Math.max(1, expStats.n)).toFixed(0) + 'ms/次'
+    + '（' + (expStats.baseMs ? (expStats.ms / expStats.baseMs).toFixed(2) : '-') + 'x）');
+  for (const s of expStats.sample) console.log('  样例 「' + s.q + '」 种子=[' + s.seeds.join(',') + '] → 扩展=[' + s.terms.join(',') + ']');
 }
 const jf = arg('json', '');
 if (jf) fs.writeFileSync(jf, JSON.stringify({
   at: new Date().toISOString(), dbPath, rewrite: REWRITE, limit: LIMIT, acc,
-  knobs: { semantic: SEMANTIC, threshold: THRESHOLD, reserve: RESERVE, topk: TOPK, dtype: DTYPE || null, fusion: fusionArg || 'default', lengthnorm: LENGTHNORM },
-  semReady, semWhy, rows,
+  knobs: { semantic: SEMANTIC, threshold: THRESHOLD, reserve: RESERVE, topk: TOPK, dtype: DTYPE || null, fusion: fusionArg || 'default', lengthnorm: LENGTHNORM,
+    expand: EXPAND, tagreserve: TAG_RESERVE, taghops: TAG_HOPS, tagterms: TAG_TERMS, tagfusion: TAG_FUSION },
+  expStats, semReady, semWhy, rows,
 }, null, 2));
 if (ROWS_OUT) fs.writeFileSync(ROWS_OUT, JSON.stringify(rows, null, 2));

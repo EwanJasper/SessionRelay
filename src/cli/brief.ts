@@ -38,6 +38,12 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
   // 呈现层折叠（ADR-003 D3）：近重复只折叠"这一次显示"，存储一条不动 —— 简报里 5 个名额
   // 应该给 5 件不同的事，而不是同一件事说 3 遍。判据复用核心 isNearDuplicate（含长度比门，
   // 修掉生产前缀键误杀「采用 Vite 作为前端构建工具」那个 bug）。
+  // [1021 修一个我自己引入的崩溃] 这两个常量原来声明在**决策过滤之后**（原第 73 行），
+  //   而决策那条 48h 过滤（第 60 行左右）要用 `cutoff` ⇒ **TDZ：ReferenceError: Cannot access 'cutoff' before initialization**。
+  //   是 graph-recall 在跑真实 CLI 时炸出来的（`node --check`/编译器都不报，因为它是运行期 TDZ，不是语法错）。
+  //   教训：`const` 的 TDZ 只在**执行到那一行之前**才炸，静态检查抓不到 —— 这类只能靠「真的跑一遍」。
+  const BRIEF_FRESH_MS = 48 * 3600_000;
+  const cutoff = Date.now() - BRIEF_FRESH_MS;
   const rawDecisions = listDecisions(db, projectId, {}).slice(-limit).reverse()
     // ── 1020 · P1：压缩卡片机制（压缩不掉召回）──
     //   L3 压缩写回后：原始条目带 `compressed_into: <卡片id>`，同时追加了一条卡片。
@@ -50,13 +56,36 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
     //   （「决定要不要另下 Launcher ← 问句，不是决策2. 决定已归档记忆 ← 碎片」这种串行污染），
     //   而 DSH / ZCode 两侧的简报是**过滤过的** ⇒ 用户拿 CLI 核对「简报会说什么」会看错。
     //   判据与两侧同源（`cli/brief-filter.ts`，check-brief-filters §⑥ 有行为对拍）。
-    .filter((d) => passesBriefFilters(String((d as { text?: string }).text ?? '')));
+    .filter((d) => passesBriefFilters(String((d as { text?: string }).text ?? '')))
+    // [1021 红队 R4] 时间窗 + pin 豁免，与 DSH/ZCode 同规：
+    //   · 48h 内的决策才进简报（简报说的是「最近在动什么」）
+    //   · **pin 过的不受时间窗限制** —— 用户亲手置顶的东西不该被时间挤掉
+    //     （这条与 DSH 曾经的 bug 同源：那边一度写成 `key === 'decisions' && pinned`，
+    //      导致 30 天前 pin 的未决一边被砍一边留着。判据只许有一份。）
+    .filter((d) => {
+      const dd = d as { pinned?: boolean; at?: string };
+      if (dd.pinned === true) return true;
+      const t = Date.parse(String(dd.at ?? ''));
+      return !Number.isFinite(t) || t >= cutoff;   // 时间不可解析时宁可保留（容错不静默丢）
+    });
   const { rows: decisions, folded } = foldNearDuplicates<DecisionRow>(rawDecisions, 0.8, lengthRatioGate);
-  const cutoff = Date.now() - 14 * 86_400_000;
+  // [1021 红队 R4 修复] **三路分叉**：这里原来是「决策无时间窗 + 未决 14 天」，
+  //   而 DSH（plugins/dsh/index.js:81 `FRESH_MS = 48 * 3600_000`）与
+  //   ZCode（integrations/zcode/brief-shared.mjs:25 同值）**两者都是 48 小时**。
+  //   后果：拿 `srelay brief` 核对「简报会说什么」会看到**完全不同的内容**（177 条 vs 十几个）。
+  //   本项目的判据铁律是「只许有一份」——这里对齐到 48h，与两侧同值。
+  //   ⚠️ 若将来觉得未决问题该放长（未决是欠条，欠越久越该被看见），**要三处一起改**，不能只改这里。
+  //   （声明已上移到本函数开头 —— 原来在这里会用时未定义，见上方注释）
   // [1017 夜 U-A] 渲染侧过滤：以前这里**一条判据都没有**，于是 `srelay brief` 显示的内容
   // 与用户真正看到的简报（DSH/ZCode 两侧都过滤）不一致 —— 拿它核对"简报会说什么"会看错。
   // 判据与 DSH/ZCode 同源（见 cli/brief-filter.ts 的说明与 check-brief-filters §⑥ 的行为对拍）。
-  const unresolved = listUnresolved(db, projectId, 100)
+  // [1021 红队 R12 修复] 原来是 `listUnresolved(db, projectId, 100)` **先截断再过滤**。
+  //   问题：取证 100 条 → 按 14 天保质期滤掉一批 → 再按判据滤掉一批 → 最后才 slice(limit)。
+  //   如果最新那 100 条里有大量过期/被过滤的，**名额就白白空了**，而库里明明还有够格的问题。
+  //   修法：先多取（4× 上限），过滤完再截。取多了只是多读几行 JSON，代价远小于简报缺条目。
+  //   不直接无上限取：库大时 listUnresolved 会把全部未决读进内存，那是另一个极端。
+  const UNR_FETCH = Math.max(100, limit * 4);
+  const unresolved = listUnresolved(db, projectId, UNR_FETCH)
     .filter((r) => new Date(r.at).getTime() >= cutoff)
     .filter((r) => passesUnresolvedFilters(r.q))
     .slice(0, limit);
@@ -97,5 +126,17 @@ function collectExperiences(root: string, opts: { top?: number; maxChars?: numbe
       });
       return rows.map((r: LessonRow) => ({ text: r.text, scope: r.scope, grade: r.grade }));
     } finally { db.close(); }
-  } catch { return []; }   // 全局库还不存在/打不开 = 没有经验，不影响简报其他段
+  } catch (e) {
+    // [1021 红队 R11 修复] 原来是 `catch { return [] }` —— **全局库一坏，整段经验凭空消失且零留痕**。
+    //   用户看到的是「没有经验」，无法区分「真没有」和「库坏了」。这是本项目最嫌恶的静默失效。
+    //   修法：区分两种情形 ——
+    //     · 库**不存在**（ENOENT）= 全新用户，真的没有经验 ⇒ 安静返回 []，这是正常状态；
+    //     · 其它异常（权限/损坏/锁）⇒ 打到 stderr 一行，让人看得见，但仍返回 [] 不让简报整段崩。
+    const code = String((e as { code?: string })?.code ?? '');
+    const msg = String((e as Error)?.message ?? e);
+    if (code !== 'ENOENT' && !/does not exist|no such table/i.test(msg)) {
+      try { process.stderr.write('[brief] 经验段读取失败（简报其余部分不受影响）：' + msg.slice(0, 160) + '\n'); } catch { /* 连 stderr 都写不了就别管了 */ }
+    }
+    return [];
+  }
 }

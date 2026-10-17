@@ -22,6 +22,21 @@ export async function tailCompleteLines(
   consumedLineCount: number,
 ): Promise<TailResult> {
   const fh = await open(path, 'r');
+  // ── [1021 红队 R1 修复] 文件被截断/整体改写后，cursor 会永远停在旧 offset ──
+  //   实测后果（红队探针）：把 JSONL 截断后连续 3 次读取都是 `0 行 / newOffset 不变`，
+  //   **该会话之后所有新消息永远读不到，且没有任何告警** —— 采集永久停摆。
+  //   根因：本文件早就写了 `detectRewrite()`，但**从来没有被调用过**（死代码），
+  //   三个适配器（claude-code / codex / qoder）都走这里，于是三条线一起中招。
+  //   修法：在这里统一判一次 rewrite —— 判据**只有这一份**，三个适配器共享。
+  //     文件变小 = 被截断/重写 ⇒ cursor 从头再来（行号也归零，因为它按会话内确定性计算）。
+  //     `>` 而非 `>=`：文件恰好等于 offset 是正常「没有新内容」，不是 rewrite。
+  if (fromByte > 0) {
+    const st = await fh.stat();
+    if (detectRewrite(Number(st.size), fromByte)) {
+      fromByte = 0;
+      consumedLineCount = 0;
+    }
+  }
   const chunks: Buffer[] = [];
   let total = 0;
   try {
