@@ -505,6 +505,12 @@ export function searchSessions(db: DB, opts: SearchOptions): SearchHit[] {
 
 /** 原 searchSessions 主体，逐字未改（仅改名）—— 对外行为经 searchSessions 包装后保持不变 */
 function searchCore(db: DB, opts: SearchOptions): SearchHit[] {
+  // ⚠️ limit 必须在这里**一次性规范化**（红队实测：只夹 slice(0,limit) 那一处没用 ——
+  //   默认路径走 fusedSearch，它有自己的 slice(0,limit)；limit=-1 在 6 场库上返回 4 条、
+  //   在 644 场真实库上会返回 ~643 条带 snippet 的命中，撑爆调用方上下文）。
+  //   放在入口：后面所有 slice / 计数都用同一个已经合法的值，不需要每处各夹一遍。
+  const safeLimit = Math.max(0, Math.trunc(Number(opts.limit ?? 20) || 0));
+  opts = { ...opts, limit: safeLimit };
   const hits = searchOnce(db, opts);
   if (opts.rewrite === false) return hits;
 

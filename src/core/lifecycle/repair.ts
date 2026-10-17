@@ -126,9 +126,16 @@ export async function repairProject(root: string): Promise<RepairOutcome> {
       const cfg = loadConfig(root);
       const r = await runSync({ projectRoot: root, config: cfg });
       const after = integrityOf(db);
-      return { ...after, repaired: after.ok, mode: 'rename', note: '库不存在，已新建：+' + r.newSessions + ' 场 / +' + r.newMessages + ' 条' };
+      // ⚠️ 失败时必须把 kind 改掉（红队实测）：原来失败也返回 `...before`（kind 仍是 missing），
+      //   而 runner 只把 corrupt/error 计入失败 ⇒ 自愈停摆了却显示 ✅、health_events 也不记。
+      //   missing + repaired:false = 「本该建起来却没建起来」= 真失败。
+      if (!after.ok) {
+        return { ...after, kind: 'error', repaired: false, mode: 'rename',
+          note: '库缺失但新建没成功（' + after.kind + '，不是「本轮跳过」）：+' + r.newSessions + ' 场 / +' + r.newMessages + ' 条' };
+      }
+      return { ...after, repaired: true, mode: 'rename', note: '库不存在，已新建：+' + r.newSessions + ' 场 / +' + r.newMessages + ' 条' };
     } catch (e) {
-      return { ...before, repaired: false, note: '新建失败：' + String((e as Error).message).slice(0, 80) };
+      return { ...before, kind: 'error', repaired: false, note: '库缺失且新建失败：' + String((e as Error).message).slice(0, 80) };
     }
   }
 

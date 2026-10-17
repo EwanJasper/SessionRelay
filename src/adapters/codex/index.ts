@@ -5,13 +5,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { open } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { readTailProbe, tailCompleteLines } from '../claude-code/tailer.js';
 import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult } from '../types.js';
 
-/** 前缀连续性检查窗口（字节）。256B 足以区分任何真实重写，又是 O(1) 读 */
-const TAIL_PROBE_BYTES = 256;
+// （前缀连续性检查窗口 TAIL_PROBE_BYTES 与 readTailProbe 一起住在 claude-code/tailer.ts，
 
 export const SOURCE_ID = 'codex';
 
@@ -166,8 +163,11 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;
+  // 代际偏移（同 claude-code 那份注释）：重写后进独立 seq 空间，旧文与新文都保住。
+  //   不加偏移的话，新内容会与旧文撞同一 seq，db 的 growable 判据拒绝覆盖 ⇒ **新正文永久写不进库**。
+  const genBase = rewrites * 1_000_000;
   for (const l of t.lines) {
-    const r = parseLine(l.text, l.lineNo);
+    const r = parseLine(l.text, l.lineNo + genBase);
     if (r.kind === 'message') messages.push(r);
     else if (r.kind === 'bad') bad++;
   }

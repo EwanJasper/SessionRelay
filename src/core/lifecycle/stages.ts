@@ -171,7 +171,18 @@ export function dueStages(st: LifecycleState, nowMs: number, opts: { only?: Stag
  */
 export const RETRY_AFTER_MS = 30 * 60_000;  // 30 分钟放一次探测
 
+/**
+ * 不参与熔断的阶段（2026-10-18 验证红队 P3）。
+ *
+ * guard 是**体检本身**：把它熔断掉，等于「发现有病之后就不再体检」——
+ *   一个持续损坏的项目会让守护每 30 分钟才探一次，期间所有其它阶段照常跑，
+ *   而唯一会报警的那个被关进了冷却。
+ *   熔断的目的是「别把坏掉的重活反复重试拖垮链路」，体检是只读且极轻的操作，不在其列。
+ */
+const NO_BREAKER: ReadonlySet<StageId> = new Set<StageId>(['guard']);
+
 export function shouldSkip(st: LifecycleState, id: StageId, nowMs = Date.now()): { skip: boolean; reason?: string } {
+  if (NO_BREAKER.has(id)) return { skip: false };
   const prev = st.stages[id];
   if (!prev || prev.ok || (prev.fails ?? 0) < 3) return { skip: false };
   // 到了冷却期 ⇒ 放行一次探测（注意：这里**不清零 fails**，探测成功才由 recordStage 归零）

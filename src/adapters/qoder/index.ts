@@ -177,8 +177,10 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;
+  // 代际偏移（同 claude-code 那份注释）：重写后进独立 seq 空间，旧文与新文都保住。
+  const genBase = rewrites * 1_000_000;
   for (const l of t.lines) {
-    const r = parseLine(l.text, l.lineNo);
+    const r = parseLine(l.text, l.lineNo + genBase);
     if (r.kind === 'message') messages.push(r);
     else if (r.kind === 'bad') bad++;
   }

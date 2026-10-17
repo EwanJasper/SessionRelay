@@ -88,8 +88,13 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;
+  // ⚠️ 代际偏移：整段重写后 seq 会重排，若不偏移，新内容会与旧文撞同一个 seq，
+  //   db 的 growable 判据（防「用新内容盖掉旧正文」）会拒绝覆盖 ⇒ **新正文永久写不进库**
+  //   （验证红队 #2：适配器层读得到、端到端库里仍是旧的）。
+  //   让重写后的内容进 seq 1e6 起的独立代际空间：旧文保留、新文也进来，谁都不丢。
+  const genBase = rewrites * 1_000_000;
   for (const l of t.lines) {
-    const r = parseLine(l.text, l.lineNo);
+    const r = parseLine(l.text, l.lineNo + genBase);
     if (r.kind === 'message') messages.push(r);
     else if (r.kind === 'bad') bad++;
   }

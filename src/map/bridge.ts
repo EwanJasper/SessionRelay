@@ -70,9 +70,16 @@ function errorText(e: unknown): string {
   return m.replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
-/** 表格单元格不接受换行/制表符（明细与 evidence 按设计就是多行的）。 */
+/**
+ * 表格单元格不接受换行/制表符（明细与 evidence 按设计就是多行的），**也不接受竖线**。
+ *
+ * 竖线必须在这里剥（2026-10-18 验证红队 #18）：它被剥错过一次，因为在**读侧**剥 ——
+ *   而读侧走的是 `split('|')`，竖线早就被切成列分隔符了，那个 replace 是空操作。
+ *   后果：label 含 `|` 的节点投影出的看板行会被切错格、当成一条**人写行**读回来 ⇒
+ *   下一轮凭空多出一个幻影节点（护栏放过时）。剥在写侧，这个问题从源头不存在。
+ */
 function flatText(v: unknown): string {
-  return typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  return typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').replace(/\|/g, '/').replace(/\s+/g, ' ').trim() : '';
 }
 
 function clip(text: string, max: number): string {

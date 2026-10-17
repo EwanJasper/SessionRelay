@@ -232,6 +232,10 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
       // 红队 P2：原来即使 repaired=false 也一律记 ok:true，日志还写「✅ 损坏自愈」。
       //   但 busy / missing / error 三种情况本来就是「本轮不动」，不该算失败；
       //   只有「确实该修却没修成」才算失败。
+      // 失败判据（红队两轮打回后定稿）：
+      //   busy（被占用）/ missing（没建库）本来就是「本轮不动」，不算失败；
+      //   现在 repair 自己会把「missing 但建不起来」标成 kind='error'，所以只要看 kind 就够了。
+      //   原来写 `corrupt || error` 时，missing 分支的失败被漏掉 ⇒ 假成功。
       if (!out.repaired && (out.kind === 'corrupt' || out.kind === 'error')) failed++;
       fixed.push(base(r) + (out.repaired ? ' 已重建' : ' 未重建（' + out.note.slice(0, 40) + '）'));
     }

@@ -1260,11 +1260,18 @@ function upgradeHatchedMap(root: string, existing: { page: MapPage; revision: st
   }
   if (edges.length === 0) return keep('依赖列解析不出任何边，保持单层（没有可补的东西）');
   // 重建，而不是逐节点改层：一次性 remove + declare，中途任何一条被拒 → 整页不落盘（文件一个字节都不动）
+  //
+  // ⚠️ 但**必须保住人改过的 status**（验证红队 #15b 实测打回）：原来 declare 用的是
+  //   buildImportNodes 按**看板状态**算出来的 nodes ⇒ 整页 remove+declare 之后，
+  //   人在地图里改成 blocked 的节点会被悄悄改回 doing。
+  //   地图是结构真值，看板只是它的投影 —— 补齐分层这件事只该动「层和边」，不该动状态。
+  const prevStatus = new Map(page.nodes.map((n) => [n.id, n.status]));
+  const keptNodes = nodes.map((n) => ({ ...n, status: prevStatus.get(n.id) ?? n.status }));
   const operations = [
     // remove 的 data 是「片段」而不是单个 id：{nodes:[{id}]} / {layers:[{id}]}（实测踩到过）
     { op: 'remove' as const, data: { nodes: page.nodes.map((n) => ({ id: n.id })) } },
     { op: 'remove' as const, data: { layers: [{ id: PLAN_LAYER_ID }] } },
-    { op: 'declare' as const, data: { layers, nodes, edges } },
+    { op: 'declare' as const, data: { layers, nodes: keptNodes, edges } },
   ];
   const applied = applyPatch(root, { expectedRevision: existing.revision, operations });
   if (!applied.ok) return keep('补齐时落盘失败（地图原样保留）：' + errorLine(applied.error));
@@ -1318,6 +1325,11 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
     if (rows.length === 0) return { ...none, note: 'progress.md 里没有可解析的人写行' };
 
     const byLabel = new Map(page.nodes.map((n) => [n.label.trim(), n]));
+    // 「原本就在图里」的 label 集合 —— matched 只认它。
+    //   红队实测：`byLabel` 在下面会补进本轮新建的 label（防同名节点），如果 matched 直接读 byLabel，
+    //   那**同轮重复的行**就会被算成「匹配」⇒ 6 节点人写图 + 20 新行 + 5 条重复 ⇒ matched=5 ⇒
+    //   上限 25 ≥ 20 ⇒ 照塞 20 个噪音节点。护栏必须只认**存量**匹配。
+    const originalLabels = new Set(byLabel.keys());
     const usedIds = new Set(page.nodes.map((n) => n.id));
     let matched = 0;
     const statusOps: Array<{ id: string; status: MapStatus }> = [];
@@ -1330,7 +1342,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       const want = importStatus(str(c[2]).trim());
       const have = byLabel.get(label);
       if (have) {
-        matched++;
+        if (originalLabels.has(label)) matched++;   // 只认存量（见 originalLabels 注释）
         // ⚠️ **不反推 status**（2026-10-18 红队实测打回）：
         //   文档 docs/map-cli.md:415 明写「想让下一场会话看见什么，就写进地图的 context.next 与节点状态，
         //   而不是去手改 progress.md」，:410 也写「投影不改地图里的 status」。
