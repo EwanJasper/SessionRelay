@@ -114,8 +114,13 @@ export const KNOB_SPECS: KnobSpec[] = [
   { path: 'recompute.check_every_min', label: '重算检查间隔（分钟）', type: 'number', min: 1, max: 1440, step: 1,
     hint: '提取规则版本落后时的后台重算节奏（默认 360）' },
   // ── [1021] 时间衰减（模块 main/core/decay/）──
-// ⚠️ 默认值是**关**（shared/config-merge.ts），D:/agent1super 实测 decay.enabled=false。
-//   这里原写"默认开"与实现对不上 —— 面板显示以**实际值**为准，注释已订正（graph-recall 2026-10-18 报）。
+// 默认值是**开**（core/decay/decay.ts 的 DEFAULT_DECAY.enabled = true，config-merge.ts:138 直接用它）。
+// ⚠️ 2026-10-18 我（Lead）在这里犯过一个错，记下来防复发：
+//   我看到 D:/agent1super/.sessionrelay/config.json 里 decay.enabled=false，就断定"默认是关"，
+//   并把 graph-recall 原来那句"默认开"当成错的改掉了。**实际是我错了** ——
+//   那是**项目配置里的显式值**（有人显式关过），不是代码默认值。
+//   教训：「配置里是 X」≠「默认是 X」。判断默认值只能看 DEFAULT_* 常量这一处。
+//   现在 9 个项目的 config 已统一改回 enabled=true，与代码默认一致。
   { path: 'decay.enabled', label: '时间衰减', type: 'boolean',
     hint: '让「最近发生的事」在检索里排得更前。**只乘排序分数、不过滤** —— 老记录仍能搜到，只是排后面；floor 保底 0.25' },
   { path: 'decay.mode', label: '衰减曲线', type: 'string',
