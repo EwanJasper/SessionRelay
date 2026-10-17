@@ -41,7 +41,7 @@ export const STAGES: StageSpec[] = [
   //   而 `core/graph/expand.ts` 读它时只会在空表时提示「先跑脚本」，**不会自己重建**。
   //   这属于「模块做完 ≠ 进入运行」的同类问题（时间衰减那轮刚吃过一次）。
   //   体量 light：实测 620 会话全量重建 1.3s，可跑在宿主进程内；每天一次足够。
-  { id: 'tags', title: '标签图谱重建（检索扩展 / 逐词溯源用）', everySec: 86400, mutates: true, weight: 'light' },
+  { id: 'tags', title: '标签图谱重建（检索扩展 / 逐词溯源用）', everySec: 86400, mutates: true, weight: 'heavy' },
   { id: 'aging', title: '老化压缩（老会话正文→摘要，结论留全）', everySec: 86400, mutates: true, lossy: true, weight: 'heavy' },
   { id: 'distribute', title: '分发（简报段 / 面板 / 导出）', everySec: 900, mutates: false, weight: 'light' },
 ];
