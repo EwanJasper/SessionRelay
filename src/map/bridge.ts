@@ -15,6 +15,7 @@
 //   若只卡内容行，行数会随 context.next 的有无而多一行——上限就成了看情况的东西。
 
 import fs from 'node:fs';
+import path from 'node:path';
 import {
   MAP_MODULE,
   err,
@@ -252,6 +253,22 @@ export function mapBriefLine(root: string, opts: { page?: string; maxChars?: num
       const limit = opts.staleDays ?? 7;
       if (Number.isFinite(days) && days >= limit) parts.push('（地图 ' + days + ' 天未更新，可能与现实脱节）');
     } catch { /* 取不到 mtime 就不显示，不编造 */ }
+    // [第2档 · 自动证据] 门禁结果自动落档（tools/ses-rebuild.mjs 写的），这里只**读**。
+    //   为什么是证据：地图要求「done 要有证据」，而「门禁跑过没有、过没过」本来就是客观事实 ——
+    //   让人/AI 去抄一遍就是添麻烦。用户原话：「不要被动调用工具」。
+    //   只读不写地图节点：写进节点会覆盖人写的 evidence，展示层拼起来才对。
+    try {
+      const gf = path.join(root, '.sessionrelay', 'map', 'gate.json');
+      if (fs.existsSync(gf)) {
+        const g = JSON.parse(fs.readFileSync(gf, 'utf8')) as { at?: string; ok?: boolean };
+        const t = g.at ? Date.parse(g.at) : NaN;
+        if (Number.isFinite(t)) {
+          const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+          const age = mins < 60 ? mins + ' 分钟前' : Math.round(mins / 60) + ' 小时前';
+          parts.push(g.ok ? '门禁 ' + age + ' ✅' : '🔴 门禁 ' + age + ' 未过');
+        }
+      }
+    } catch { /* 门禁没跑过就不显示，不编造 */ }
     let line = parts.join(' · ');
     const cap = opts.maxChars ?? 200;
     if (line.length > cap) line = line.slice(0, Math.max(0, cap - 1)) + '…';
