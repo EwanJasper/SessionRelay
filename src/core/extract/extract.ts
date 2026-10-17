@@ -8,13 +8,17 @@ export interface Msg {
   content: string;
   seqNum: number;
   createdAt?: string | null;
+  /** 消息的稳定主键。**1020 新增**：`seqNum` 是位置索引，消息被裁剪后整体前移 ⇒
+   *  按 seq 回查会指到**错的那条**（dsh-memory-kit 把这个叫「序号漂移」，是他们的头号坑）。
+   *  实测我们 857 条决策里 525 条（61%）按 seq 定位不到。id 是稳定的，用它回查才对。 */
+  id?: string;
 }
 
 export interface ExtractedMeta {
   files: string[];
   topics: string[];
-  decisions: Array<{ text: string; seq: number; at?: string; kind?: 'decision' | 'negative' }>;
-  questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }>;
+  decisions: Array<{ text: string; seq: number; msgId?: string; at?: string; kind?: 'decision' | 'negative' }>;
+  questions: Array<{ q: string; seq: number; msgId?: string; at?: string; unresolved: boolean }>;
   codeBlockCount: number;
   keyExchanges: Array<{ userText: string; aiText: string; userSeq: number; reason: string }>;
 }
@@ -421,7 +425,7 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         const key = text.slice(0, 20);
         if (seen.has(key)) break;
         seen.add(key);
-        out.push({ text, seq: m.seqNum, at: m.createdAt ?? undefined, kind: isNegativeDecision(text) ? 'negative' : 'decision' });
+        out.push({ text, seq: m.seqNum, msgId: m.id, at: m.createdAt ?? undefined, kind: isNegativeDecision(text) ? 'negative' : 'decision' });
         break;;
       }
       if (out.length >= 10) return out;
@@ -574,6 +578,7 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
       out.push({
         q: qText,
         seq: m.seqNum,
+        msgId: m.id,
         at: m.createdAt ?? undefined,
         // [1017 夜 · U-A 真根治] 加第三维：**这句后来被回答了吗**。
         // 原判据（位置 ∨ 关键词）实测与「未答」不相关（7/7 都被答过，其后 305~524 条 assistant）。

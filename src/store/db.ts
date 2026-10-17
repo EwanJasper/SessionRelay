@@ -531,9 +531,9 @@ export function getMessageRange(db: DB, sessionId: string, fromSeq: number, toSe
 import { extractMessages, extractDecisions, extractQuestions, extractTopics, summaryRule, sanitizeMsgs, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
 
 export function getSessionMessages(db: DB, sessionId: string): Msg[] {
-  return (db.prepare('SELECT role, content, seq_num, created_at FROM messages WHERE session_id = ? ORDER BY seq_num')
-    .all(sessionId) as Array<{ role: string; content: string; seq_num: number; created_at: string | null }>)
-    .map((r) => ({ role: r.role === 'user' ? 'user' : 'assistant', content: r.content, seqNum: r.seq_num, createdAt: r.created_at }));
+  return (db.prepare('SELECT id, role, content, seq_num, created_at FROM messages WHERE session_id = ? ORDER BY seq_num')
+    .all(sessionId) as Array<{ id: string; role: string; content: string; seq_num: number; created_at: string | null }>)
+    .map((r) => ({ id: r.id, role: r.role === 'user' ? 'user' : 'assistant', content: r.content, seqNum: r.seq_num, createdAt: r.created_at }));
 }
 
 /** confirmed 统一入口（judge 与 srelay confirm 共用）：提取元数据 + summary_rule + meta_text 重算 */
