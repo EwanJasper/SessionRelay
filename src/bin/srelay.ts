@@ -69,7 +69,7 @@ program
 
 program
   .command('semantic')
-  .description('语义检索（可选）：换一种说法也能命中历史会话——本地 CPU 推理，显式启用')
+  .description('语义检索（可选，实测无召回提升且检索慢一倍，默认关；纯字面匹配已够用）')
   .option('--enable', '启用：安装依赖（用户缓存目录）+ 模型就绪 + 存量回填')
   .option('--disable', '停用（向量数据保留，检索立即回退纯字面匹配）')
   .option('--status', '状态（默认）')

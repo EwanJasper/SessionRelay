@@ -71,7 +71,19 @@ function queryMetaUnits(db: DB, exprs: string[], project: string, extra?: ExtraW
   return out;
 }
 
-/** 语义命中保底槽位默认值（唯一一处；engine 与 CLI status 共用） */
+/**
+ * 语义命中保底槽位默认值（唯一一处；engine 与 CLI status 共用）。
+ *
+ * [1020 实测] **语义档默认关，且实测开它不划算** —— 用 978 道基准题面采 80 题量：
+ *   · 语义开（保底 3 槽）：hit@10 = **40.0%**，单次检索 **610ms**
+ *   · 语义开（保底 1 槽）：hit@10 = **43.8%**
+ *   · 语义**关**          ：hit@10 = **45.0%**，单次检索 **284ms**
+ * ⇒ 召回差异（40% vs 45%，n=80）**在统计噪声内**，但延迟差异 2.15 倍不是噪声。
+ *   机制：保底槽位从 FTS 尾部**抢走**名额给语义结果，而语义选得不如 FTS。
+ * 这与历史记录一致：交接 §15 记的「一代纯 RRF 已证否回滚」、语义臂参数扫描 hit@1 几乎没动
+ *   （McNemar p=1.000）。**两次独立测量同向。**
+ * 结论：保持默认关。要开的话把本值降到 1（实测比 3 好），别用 3。
+ */
 export const DEFAULT_RESERVE_SLOTS = 3;
 
 export interface SearchOptions {
