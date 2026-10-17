@@ -86,4 +86,23 @@ describe('看板 → 地图增量同步', () => {
     expect(r.statusFixed).toBe(0);
     expect(pageOf(d).revision).toBe(revBefore);
   });
+
+  it('★ 匹配率过低（人写的结构图）⇒ 只同步状态、不新增节点', async () => {
+    const d = mk([['任务甲', '✅']]);
+    hatchMapFromKanban(d);
+    // 手工把这张图改成「人写的结构图」：节点名与看板行完全无关
+    const { applyPatch } = await import('../../src/map/store/apply.js');
+    const before = pageOf(d);
+    applyPatch(d, {
+      expectedRevision: before.revision,
+      operations: [{ op: 'declare', data: { nodes: [{ id: 'arch1', label: '架构模块甲', layer: 'plan', status: 'done' }] } }],
+    });
+    // 看板加两行（与图完全对不上）
+    fs.writeFileSync(path.join(d, 'progress.md'), kanban([['乙事', '✅'], ['丙事', '✅'], ['丁事', '✅']]));
+    const r = syncMapFromKanban(d);
+    expect(r.ok).toBe(true);
+    expect(r.added).toBe(0);
+    expect(r.note).toContain('结构图');
+    expect(pageOf(d).page.nodes.map((n) => n.label)).not.toContain('丁事');
+  });
 });

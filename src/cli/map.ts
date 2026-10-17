@@ -1275,6 +1275,8 @@ const INBOX_LAYER_ID = 'inbox';
 const INBOX_LAYER_NAME = '收件箱（progress.md 新增，未分层）';
 /** 单轮最多新增几个节点：防一次脏看板把图冲垮（多出来的下一轮继续）。 */
 const MAX_ADD_PER_ROUND = 20;
+/** 已有图与看板**一个节点都对不上**时，当成「人写的结构图」：只同步状态、不新增（见下方护栏注释）。
+ *  为什么不是一个比例阈值：比例会误伤「原有行全对上 + 看板真的新增了很多行」的正常项目。 */
 
 /**
  * 【第 1 档 · 增量同步】看板变了 → 地图跟着变（用户 2026-10-18：「标签和节点一直那样」）。
@@ -1304,6 +1306,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
 
     const byLabel = new Map(page.nodes.map((n) => [n.label.trim(), n]));
     const usedIds = new Set(page.nodes.map((n) => n.id));
+    let matched = 0;
     const statusOps: Array<{ id: string; status: MapStatus }> = [];
     const fresh: Array<{ id: string; label: string; layer: string; status: MapStatus }> = [];
     for (const c of rows) {
@@ -1312,6 +1315,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       const want = importStatus(str(c[2]).trim());
       const have = byLabel.get(label);
       if (have) {
+        matched++;
         if (have.status !== want) statusOps.push({ id: have.id, status: want });
         continue;
       }
@@ -1321,22 +1325,40 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       usedIds.add(id);
       fresh.push({ id, label, layer: INBOX_LAYER_ID, status: want });
     }
-    if (statusOps.length === 0 && fresh.length === 0) return { ok: true, added: 0, statusFixed: 0, note: '与看板一致' };
+    // ── 匹配率护栏（2026-10-18 现场实测后被逼出来的）──
+    //   实测：agent1super 的 progress.md 有 21 行人写行，地图有 13 个手写节点，**匹配率 0%**。
+    //   因为它们根本不是一回事：人写行是**任务流水**（「pi 五扩展」「MCP 全局配置」），
+    //   地图节点是**架构模块**（kernel/store/api/cli）—— 两个维度。
+    //   没有护栏的话，一次同步会往这张成熟的手写结构图里塞 20 个 inbox 噪音节点。
+    //   判据：这张图若是**从看板长出来的**（孵化/升级产物），匹配率天然接近 100%；
+    //   匹配率过低就说明它是人写的结构图 ⇒ 本轮**只同步状态，不新增**。
+    // 判据用**绝对匹配数**而不是比例：比例会误伤「原有行全对上、但看板确实新增了很多行」的正常项目
+    //  （10 个对上 + 25 个新增 ⇒ 29%，看着像噪音，其实全是真新增）。
+    // 「一个都对不上」才是「这张图不是从看板长出来的」的硬信号 —— 没有误伤空间。
+    let freshGuarded = fresh;
+    let guardNote = '';
+    if (fresh.length > 0 && matched === 0 && page.nodes.length > 0) {
+      freshGuarded = [];
+      guardNote = '（与看板 0 个节点对得上，像是人写的结构图：本轮只同步状态、不新增节点）';
+    }
+    if (statusOps.length === 0 && freshGuarded.length === 0) {
+      return { ok: true, added: 0, statusFixed: 0, note: '与看板一致' + guardNote };
+    }
 
     // 一个 patch 落完：中途任何一条被拒 ⇒ 整页不写（文件一个字节都不动）
     const operations: Array<{ op: 'declare' | 'update' | 'remove'; data: unknown }> = [];
-    if (fresh.length > 0 && !page.layers.some((l) => l.id === INBOX_LAYER_ID)) {
+    if (freshGuarded.length > 0 && !page.layers.some((l) => l.id === INBOX_LAYER_ID)) {
       const maxRank = page.layers.reduce((m, l) => Math.max(m, l.rank), -1);
       operations.push({ op: 'declare', data: { layers: [{ id: INBOX_LAYER_ID, name: INBOX_LAYER_NAME, rank: maxRank + 1 }] } });
     }
     if (statusOps.length > 0) operations.push({ op: 'update', data: { nodes: statusOps } });
-    if (fresh.length > 0) operations.push({ op: 'declare', data: { nodes: fresh } });
+    if (freshGuarded.length > 0) operations.push({ op: 'declare', data: { nodes: freshGuarded } });
     const applied = applyPatch(root, { expectedRevision: existing.value.revision, operations });
     if (!applied.ok) return { ...none, note: '落盘失败（地图原样保留）：' + errorLine(applied.error) };
     const bits: string[] = [];
-    if (fresh.length > 0) bits.push('新增 ' + String(fresh.length) + ' 个节点到收件箱');
+    if (freshGuarded.length > 0) bits.push('新增 ' + String(freshGuarded.length) + ' 个节点到收件箱');
     if (statusOps.length > 0) bits.push('同步 ' + String(statusOps.length) + ' 个节点状态');
-    return { ok: true, added: fresh.length, statusFixed: statusOps.length, note: bits.join('；') };
+    return { ok: true, added: freshGuarded.length, statusFixed: statusOps.length, note: bits.join('；') + guardNote };
   } catch (e) {
     return { ...none, note: '增量同步失败（已兜住）：' + String((e as Error).message).slice(0, 60) };
   }
