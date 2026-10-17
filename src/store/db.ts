@@ -1318,19 +1318,29 @@ export function insertMessage(
 export function upsertMessage(
   db: DB,
   m: { sessionId: string; role: string; content: string; seqNum: number; createdAt?: string },
-): { changes: number; updated: boolean } {
+): { changes: number; updated: boolean; conflict: boolean } {
   const idxSource = m.content.length > 100_000 ? m.content.slice(0, 100_000) : m.content;
   const prev = db.prepare(
     'SELECT id, role, content FROM messages WHERE session_id = ? AND seq_num = ?',
   ).get(m.sessionId, m.seqNum) as { id: number; role: string; content: string } | undefined;
   if (!prev) {
     const ins = insertMessage(db, m);
-    return { changes: ins, updated: false };
+    return { changes: ins, updated: false, conflict: false };
   }
-  if (prev.role === m.role && prev.content === m.content) return { changes: 0, updated: false };
+  if (prev.role === m.role && prev.content === m.content) return { changes: 0, updated: false, conflict: false };
+  // ── [1021 回归 P1] 覆盖必须有**方向依据**，否则会静默吃掉已采到的原文 ──
+  // 病历（红队实测）：上游会话文件被整段重写/截断时，codex 适配器会把 offset 归零、
+  //   行号重排 ⇒ 同一个 seq_num 上坐着**完全不同的另一个人说的话**。此时无条件 UPDATE
+  //   等于用新内容盖掉旧正文，而且不报错：v1 三条 → 重写 → 库里变 v2，v1 永久消失；
+  //   再截断还会留下「seq1 是新的、seq2/3 是旧的」两代混合体。
+  // 判据：只有**流式生长**（旧正文是新正文的前缀且变长）才允许覆盖 ——
+  //   那正是 #04 要治的形态（同一条回答从半截写完整）。其余一律保留旧文并回报 conflict，
+  //   由调用方决定告警/落审计，**不许在这里替用户做丢弃决定**。
+  const growable = m.content.length > prev.content.length && m.content.startsWith(prev.content);
+  if (!growable) return { changes: 0, updated: false, conflict: true };
   db.prepare('UPDATE messages SET role = ?, content = ?, search_text = ? WHERE id = ?')
     .run(m.role, m.content, searchTextOf(idxSource), prev.id);
-  return { changes: 1, updated: true };
+  return { changes: 1, updated: true, conflict: false };
 }
 
 export function countMessages(db: DB, sessionId: string): number {

@@ -8,6 +8,7 @@ import { dbFile, relayDir, findRelayRoot, ignoreFile } from '../shared/paths.js'
 import {
   openExisting, createDb, getSessionFull, getLinkedSessions,
   insertTombstone, insertForgetLog, finalizeForgetLog, insertForgetDetail, getForgetHistory,
+  isNoteSession,
 } from '../store/db.js';
 import { appendSessionIgnoreRule, loadIgnoreRules } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
@@ -101,13 +102,16 @@ function resolveRef(db: DB, ref: string): { ok: true; row: SessionFull } | { ok:
 }
 
 function typeFilterMismatch(f: ForgetFlags, row: SessionFull): string | null {
-  if (f.note && row.source !== 'note') return `--note 指定笔记，但 ${row.id} 是 ${row.source} 会话`;
-  if (f.session && row.source === 'note') return `--session 指定会话，但 ${row.id} 是笔记（用 --note 或去掉过滤）`;
+  // [1021 回归 P3] 笔记判据统一走 isNoteSession（source==='note' || origin==='note'）：
+  // 只判 source 会让历史 origin='note' 的笔记在这层过滤里被当普通会话 —— 保护/统计都会漏。
+  const isNote = isNoteSession(row);
+  if (f.note && !isNote) return `--note 指定笔记，但 ${row.id} 是 ${row.source} 会话`;
+  if (f.session && isNote) return `--session 指定会话，但 ${row.id} 是笔记（用 --note 或去掉过滤）`;
   return null;
 }
 
 /** note/imported 无本地源文件，不在复活路径上——跳过双闸（设计 §3.6） */
-const needsBarriers = (row: SessionFull) => row.origin !== 'imported' && row.source !== 'note';
+const needsBarriers = (row: SessionFull) => row.origin !== 'imported' && !isNoteSession(row);
 
 export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> {
   const root = findRelayRoot(process.cwd());
@@ -168,7 +172,7 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
 
     const links = getLinkedSessions(db, row.id);
     const decisionCount = row.decisions.length;
-    const isNote = row.source === 'note';
+    const isNote = isNoteSession(row);
 
     // 预览模式（无 --yes 不删——防误触）
     if (!f.yes) {

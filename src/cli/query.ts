@@ -2,7 +2,7 @@
 import { loadConfig, type CaptureMode } from '../shared/config.js';
 import { assembleScope } from '../core/scope/assemble.js';
 import { searchSessions } from '../search-svc/engine.js';
-import { findSessionByPrefix, getSession, listSessions, getMessageRange } from '../store/db.js';
+import { findSessionByPrefix, getSession, listSessions, getMessageRange, isNoteSession } from '../store/db.js';
 import { openStats } from '../core/stats/counter.js';
 import { requireRoot, openRelayDb, pc, fmtDate, stateBadge } from './ui.js';
 
@@ -132,8 +132,9 @@ export async function cmdList(opts: { source?: string; state?: string; limit?: n
     }
     if (rows.length === 0) { console.log(pc.dim('（空）先 srelay sync 或等待守护捕获。')); return; }
     // 笔记单独分组展示（note 是 AI 结论记录，不是对话会话）
-    const sessions = rows.filter(s => s.source !== 'note');
-    const notes = rows.filter(s => s.source === 'note');
+    // [1021 回归 P3] 判据统一走 isNoteSession（含历史 origin='note' 形态）
+    const sessions = rows.filter(s => !isNoteSession(s));
+    const notes = rows.filter(s => isNoteSession(s));
     for (const s of sessions) {
       console.log(`${pc.dim(fmtDate(s.last_event_at ?? s.created_at))}  ${s.source.padEnd(11)} ${stateBadge(s.state).padEnd(10)} 「${(s.title ?? '').slice(0, 36)}」 ${pc.dim(`${s.id} · ${s.message_count}msg`)}`);
     }

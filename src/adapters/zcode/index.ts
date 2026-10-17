@@ -31,6 +31,7 @@ export function resetConn(): void {
   cachedConn = null;
   cachedPath = null;
   cachedCols = null;
+  probeGate = null; // 换了连接，data_version 基准也变了，粗闸缓存必须一起失效
 }
 
 // ── 表结构探测（[1021 #04] 需要 time_updated 这一列，但老库/测试夹具不一定有）──
@@ -82,6 +83,9 @@ export function dbSig(dbPath: string): string {
 }
 
 /** 消息正文指纹：判「重读到的内容是否真的变了」（#04） */
+/** changeProbe 的粗闸缓存：gateKey 未变时直接复用上次的逐会话签名（零 SQL）。 */
+let probeGate: { key: string; result: Map<string, string> } | null = null;
+
 function contentHash(s: string): string {
   return createHash('sha1').update(s).digest('hex').slice(0, 16);
 }
@@ -386,14 +390,30 @@ export const adapter: SessionSourceAdapter = {
     const z = getConn(dbPath);
     try {
       z.pragma('busy_timeout = 3000');
+      // ── [1021 回归 P0] O(1) 粗闸，挡住「没变化也要全表扫」──
+      // 病历（红队实测）：#04 把签名从 MAX(rowid) 改成 MAX(time_updated)+COUNT(*)，
+      //   而这两列**没有索引** ⇒ 两表全扫。真实库（message 16.5 万 / part 61.5 万）：
+      //   签名从 190ms 涨到 1.53s（8×，冷启动 7.7s）；sync 每源每周期同步调一次，
+      //   本机 9 个项目 ⇒ 每轮阻塞约 13.5s，期间心跳与其它 worker 定时器全被推迟。
+      // 修法：先用**连接级**的 PRAGMA data_version 做粗闸 —— 它由 SQLite 维护，
+      //   外部进程一提交就变（我们只读，所以变化必定来自 ZCode 的写入），读取是 O(1)。
+      //   粗闸没变 ⇒ 直接返回上一轮签名（水位线照旧命中，本轮零 SQL）。
+      //   粗闸变了才做那次昂贵的 GROUP BY —— 那时代价是**真的有东西变了**，值得。
+      // 为什么不用 dbSig（主库+wal 的 mtime:size）当主闸：它也行（实测 0.41ms），
+      //   但 data_version 是 SQLite 自己记账，比文件时间戳更难骗；dbSig 保留给 discover，
+      //   两者职责不同，不为"统一"把它们硬合成一个。
+      const dv = String(z.pragma('data_version', { simple: true }));
       const cols = schemaOf(z, dbPath);
       const mTouch = touchCol(cols.message);
       const pTouch = touchCol(cols.part);
+      const gateKey = dbPath + '#' + dv;
+      if (probeGate && probeGate.key === gateKey) return new Map(probeGate.result);
       type Sig = { session_id: string; t: number | null; n: number };
       const msg = z.prepare('SELECT session_id, MAX(' + mTouch + ') AS t, COUNT(*) AS n FROM message GROUP BY session_id').all() as Sig[];
       const part = z.prepare('SELECT session_id, MAX(' + pTouch + ') AS t, COUNT(*) AS n FROM part GROUP BY session_id').all() as Sig[];
       for (const r of msg) out.set(r.session_id, 'm' + (r.t ?? 0) + '/' + r.n);
       for (const r of part) out.set(r.session_id, (out.get(r.session_id) ?? 'm0/0') + ';p' + (r.t ?? 0) + '/' + r.n);
+      probeGate = { key: gateKey, result: new Map(out) };
       return out;
     } catch (e) {
       // 探针失败 → 空签名 → 全部不命中水位线 → 全量 ingest（安全侧）。

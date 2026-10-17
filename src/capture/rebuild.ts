@@ -2,7 +2,7 @@
 // 语义：按当前配置从源重新摄取（尊重 mode 与 ignore）；imported 会话无本地源 → 从旧库整体搬迁；
 //       旧库保留为 .bak（安全网）。守护运行中拒绝（写竞争），--force 可越过（自担风险）。
 import fs from 'node:fs';
-import { createDb, openExisting, dueIdle, markPending, confirmSession, isNoteSession } from '../store/db.js';
+import { createDb, openExisting, dueIdle, markPending, confirmSession, isNoteSession, isUnrebuildableSession } from '../store/db.js';
 import { dbFile } from '../shared/paths.js';
 import type { DB } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
@@ -144,7 +144,8 @@ export async function runRebuild(opts: { root: string; cfg: RelayConfig; force?:
           } catch (e) { migrateFailures.push(`笔记 ${id} 搬迁失败：${(e as Error).message}`); }
           continue;
         }
-        if (old.origin !== 'imported') continue;
+        // [1021 回归 P3] 统一判据：笔记上面已单独处理，剩下不可重建的就是 imported。
+        if (!isUnrebuildableSession(old)) continue;
         const r = oldDb.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as Record<string, unknown>;
         const j = <T,>(v: unknown, fb: T): T => { try { return v == null ? fb : JSON.parse(String(v)) as T; } catch { return fb; } };
         const res = insertImportedSession(fresh, {
@@ -156,6 +157,11 @@ export async function runRebuild(opts: { root: string; cfg: RelayConfig; force?:
           summaryRule: (r.summary_rule as string | null) ?? null, author: (r.author as string | null) ?? null,
           importedFrom: (r.imported_from as string | null) ?? null, originProject: (r.origin_project as string | null) ?? null,
           contentHash: (r.content_hash as string | null) ?? null, sourceFile: (r.source_file as string | null) ?? null,
+          // [1021 回归 P2] 隔离态必须**原样搬过来**。
+          //   病历（红队实测）：重建走 insertImportedSession 却没传 quarantined ⇒ 隔离会话落成 confirmed
+          //   ⇒ 包里那些**未审核**的决策重新进入"已确认结论"视图（#12 的隐私边界被 rebuild 绕过）；
+          //   同时 runRelease 要求 state='quarantine'，于是隔离正文永远放不出来且静默 released=0。
+          quarantined: String(r.state ?? '') === 'quarantine',
         });
         if (res.skipped) { preserved++; continue; }
         const msgs = oldDb.prepare('SELECT seq_num, role, content, created_at FROM messages WHERE session_id = ? ORDER BY seq_num').all(id) as Array<{ seq_num: number; role: string; content: string; created_at: string | null }>;

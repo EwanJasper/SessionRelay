@@ -174,8 +174,15 @@ export function runImport(opts: {
  */
 export function runRelease(opts: { root: string; db: DB; idPrefix: string }): { released: number; skipped: Array<{ id: string; why: string }> } {
   // 只放行**隔离态**的会话：以前按 id 前缀无条件扫，normal 会话（source_file 指向包文件）也会被"放行"一次
-  const rows = opts.db.prepare("SELECT id, source_file FROM sessions WHERE id LIKE ? AND state = 'quarantine'")
-    .all(opts.idPrefix + '%') as Array<{ id: string; source_file: string | null }>;
+  // [1021 回归 P2] 放行条件要兼容两类行：
+  //   ① state='quarantine' —— 正常隔离态；
+  //   ② state 已被改成 confirmed、但 source_file 仍指向隔离目录 —— rebuild 修复前的旧数据
+  //      （那时 rebuild 会把隔离态抹掉）。只认 state 的话，这些正文**永远放不出来**，
+  //      而且 released=0 还不报原因 —— 静默失败。
+  const rows = opts.db.prepare(
+    "SELECT id, source_file FROM sessions WHERE id LIKE ? AND ("
+    + "  state = 'quarantine' OR source_file LIKE '%quarantine%')",
+  ).all(opts.idPrefix + '%') as Array<{ id: string; source_file: string | null }>;
   let released = 0;
   const skipped: Array<{ id: string; why: string }> = [];
   const tx = opts.db.transaction(() => {

@@ -22,6 +22,14 @@ export interface SyncStats {
    * 但**必须**计入某个可观测的量，否则"重读并覆盖"这件事本身又变成静默行为。
    */
   updatedMessages: number;
+  /**
+   * 同一 seq 上出现**不同内容**的条数（[1021 回归 P1]）。
+   *
+   * 这不是"更新"，是**冲突**：源端被整段重写/截断时，旧 seq 会指向另一段话。
+   * 我们保留旧正文、不覆盖，并在这里计数 + 往 warnings 里写一条人话 ——
+   * 计数存在的意义就是「不许静默丢弃」。
+   */
+  conflicts?: number;
   resumed: number;
   badLines: number;
   blocked: number;
@@ -310,15 +318,29 @@ async function ingestOne(
       //   ⇒ 覆盖被静默丢弃 ⇒ 库里永久留着半截回答，且没有任何迹象。
       //   改用 upsertMessage：新消息照常插入，已存在的正文变了就覆盖。
       //   计数要分开：覆盖不算 newMessages（否则"新增"虚高），但要计入 updatedMessages（否则又静默）。
+      // [1021 回归 P1] 覆盖**只在流式生长时**发生（判据在 upsertMessage 里）。
+      //   其余"同一 seq 上坐着不同内容"的情况说明源端被整段重写/截断了 ——
+      //   保留旧正文，并把冲突**报出来**：静默盖掉等于替你丢了已采到的原文。
       let inserted = 0;
       let updated = 0;
+      let conflicts = 0;
       for (const m of read.messages) {
         const u = upsertMessage(db, { sessionId: up.id, role: m.role, content: m.content, seqNum: m.seqNum, createdAt: m.createdAt });
-        if (u.updated) updated++; else inserted += u.changes;
+        if (u.updated) updated++;
+        else if (u.conflict) conflicts++;
+        else inserted += u.changes;
       }
       if (inserted > 0) bumpMessageCount(db, up.id, inserted);
       ctx.result.newMessages += inserted;
       ctx.result.updatedMessages += updated;
+      if (conflicts > 0) {
+        ctx.result.conflicts = (ctx.result.conflicts ?? 0) + conflicts;
+        ctx.result.warnings.push(
+          '会话「' + (ds.title ?? ds.sourceSessionId) + '」有 ' + conflicts + ' 条消息在同一序号上内容不同'
+          + '（源文件可能被整段重写/截断）——已保留库内旧正文，未覆盖。'
+          + '如确认源端为新版本，可用 srelay forget 该会话后重新收录。',
+        );
+      }
     } else {
       bumpMessageCount(db, up.id, read.messages.length);
       ctx.result.newMessages += read.messages.length;
