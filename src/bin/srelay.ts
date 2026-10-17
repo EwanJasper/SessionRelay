@@ -414,6 +414,38 @@ program
   });
 
 program
+  .command('map')
+  .description('地图层（.sessionrelay/map/*.json）：read=读图 | apply=原子改图（1..100 条操作，一次落盘）| declare/update/remove=单操作糖 | check=源码指纹对账 | export=出图/快照 | import=从 progress.md 或快照导入 | init=建空图')
+  .argument('[action]', 'read（默认）', 'read')
+  .option('--root <dir>', '项目根（默认当前目录）')
+  .option('--page <slug>', '页 id（默认页 = map）')
+  .option('--resource <kind>', 'pages | map | nodes | edges | layers | changes')
+  .option('--id <id>', '按 id 精确查')
+  .option('--ids <list>', '按多个 id 查（逗号分隔）')
+  .option('--status <s>', 'todo | doing | blocked | done | regressed')
+  .option('--limit <n>', '分页上限（默认 30，最大 100）')
+  .option('--cursor <c>', '不透明游标（把上次返回的原样传回；图变了会 CONFLICT）')
+  .option('--fields <list>', '只保留这些字段（identity 与边两端永远保留）')
+  .option('--file <path>', 'patch / 片段的来源（- = stdin）')
+  .option('--expected-revision <rev>', '期望的页 revision（不符 → CONFLICT；"absent" = 文件必须不存在）')
+  .option('--title <t>', 'init 的标题（默认项目目录名）')
+  .option('--from <path>', 'import 的来源：progress.md 或地图快照 .json')
+  .option('--mmd', 'export：Mermaid 源码')
+  .option('--md', 'export：Markdown')
+  .option('--d2', 'export：D2 源码（装了 d2 二进制可一键导出 SVG/PNG）')
+  .option('--out <path>', 'export：写到这个文件（默认 stdout）')
+  .option('--to <path>', 'export：把 JSON 快照写进仓库内路径（必须配 --json）')
+  .option('--fail-on-changed', 'check：发现源码漂移时退出码 1（默认只报告）')
+  .option('--json', '机器格式')
+  .action(async (action: string, opts) => {
+    const { cmdMap } = await import('../cli/map.js');
+    // 退出码由 cmdMap 自己落到 process.exitCode（0 / 1 改输入 / 2 可重试）；
+    // 这里只把 commander 解析出的旗标原样透传——两边的拼写以 MapCliFlags 为准，
+    // 抄一份旗标表就一定会漂移（本仓库的老毛病）。
+    await cmdMap(action, opts as never);
+  });
+
+program
   .command('recompute')
   .description('手动触发提取规则重算（doctor 提示"或手动触发"时用这个；守护默认 6 小时才跑一批）')
   .option('--batch <n>', '每批会话数，默认 50')
