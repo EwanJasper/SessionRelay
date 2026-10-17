@@ -15,6 +15,10 @@ description: 交接、全资源地图与状态栈（原 handoff + project-atlas 
 > 合并理由：三者**本来就是同一条流水线的三段**——状态栈是「底座怎么跑」，交接件是「交给人看什么」，地图是「项目有什么」。
 > 分开维护的实测代价：handoff 的 B5-2 只是「指向 project-atlas」，常只刷文件全图、忘写现状节；而 state-stack 的看板填表纪律又与交接侧的看板同步各写一遍。
 
+> **适配版本**：本技能对齐 **SessionRelay v0.5.1-fork.1+**（DSH 13 个原生工具 / MCP `srelay serve` 13 个）。
+> 早期版本（工具名还是 `search_sessions` / `get_decisions` 那一代）下 §0.2 的表会对不上，
+> 遇到调不到的工具名，先用 `srelay serve` 看实际清单，别硬猜。
+
 ### 什么时候才写（这条比触发方式重要）
 
 | 情形 | 写不写交接件 |
@@ -66,6 +70,27 @@ description: 交接、全资源地图与状态栈（原 handoff + project-atlas 
 > ⚠️ **静默半失效**（本框架最嫌恶的故障）：注入通道全绿而用户什么都看不到。
 > 自查顺序见 §7；一句话——**装好了 ≠ 注入了**。
 
+
+### 0.2 查东西用哪个工具（**别手动翻文件**）
+
+框架已经把记忆做成了**工具**。问「以前定过吗」就去查，不要 grep 文档、不要读 progress.md 猜。
+
+| 你想知道 | 用哪个 | 别这么做 |
+|---|---|---|
+| 以前定过这个吗？**为什么否掉了 X**？ | `srelay_search(kind='decisions')` | ❌ 翻交接件 / 读 CHANGELOG 猜 |
+| 我们之前讨论过 Y 吗？ | `srelay_search`（默认 kind='sessions'） | ❌ grep 代码注释 |
+| 这个文件为什么这么写？ | `srelay_search(kind='files')` 或 `srelay_history` | ❌ git blame 单点猜测 |
+| 还有什么没定的？ | `srelay_search(kind='unresolved')` 或 `srelay_unresolved` | ❌ 翻 issue / TODO 注释 |
+| 记不清关键词，**换个说法就搜不到** | `srelay_related`（以会话为锚推荐相关历史） | ❌ 反复换词硬搜 |
+| 那个会话完整讲了什么？ | `srelay_show`（可 `role:'user'` 只看提问省 token） | ❌ 让对方重述 |
+| 这两个会话什么关系 / 串起来 | `link_sessions` / `get_linked_sessions` | ❌ 只靠文件名猜 |
+| 记忆库到底存了多少、在跑吗？ | `srelay_stats` / `get_stats` / `srelay doctor` | ❌ 看面板刷新猜 |
+
+> **判据**：只要问题里含「以前 / 上次 / 为什么定成这样 / 还差什么」，先查工具再说话。
+> 工具查不到才说明「真没有」——这和「我没找到」是两件事，别混。
+
+**跨面一致性**：DSH 与 ZCode 走**同一份库、同一套工具**（DSH 13 个原生工具，ZCode 经 MCP `srelay serve` 13 个）。
+任一边查到的结论，另一边必须也能查到。**查不到就是 bug，不是"这边没装"**。
 
 ---
 
@@ -274,7 +299,7 @@ py scripts/gen_atlas.py <项目根> [--out <文件>] [--append-section <地图�
 | 步骤 | 命令 / 动作 |
 |---|---|
 | 施工期自动留痕（L1） | 不用手动——守护按项目采集；**改完代码要提醒"哪个常驻进程需要重启"**（铁律 21） |
-| 收尾写记忆（B5-3） | `srelay save --recent 1d --tag <阶段标签>`；跨会话事实/决策也可经 MCP 写 |
+| 收尾写记忆（B5-3） | `srelay save --recent 1d --tag <阶段标签>`；**单条结论用 `srelay_record` / `save_note`**（带 tag，下一会话开场就能看到）；会话间因果用 `link_sessions` 显式连起来 |
 | 交接件归档进记忆 | `srelay save <交接件路径>`，接手者可 `srelay search` 找回 |
 | 看板同步（L2） | 各项目 `progress.md` + `board.mmd`；守护会自动刷新"自动区"，**人写的行不许被覆盖** |
 | 出图 | `srelay kanban graph [--html|--d2]` → `<项目>/.sessionrelay/board/board.mmd` |

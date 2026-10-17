@@ -103,10 +103,47 @@ function refreshOwnGraph(root: string, markdown: string): string {
 }
 
 /** 把自动区（模块列 = auto:todos）替换成最新待办；**其余行逐字保留**。 */
+/**
+ * 单文件写的**原子独占锁**（[1021] 治看板并发覆盖）。
+ *
+ * 病历：syncKanbanAuto 是「读全文 → 改 → 写回」，两类并发会互相吃掉：
+ *   ① 两个守护进程同时刷（实测出现过两个会话同时 active）；
+ *   ② 人正在编辑器里改 progress.md，守护同时刷。
+ *   后写的覆盖先写的，而且**没有任何迹象**——典型的静默数据丢失。
+ *
+ * 为什么不用 shared/lock.ts 的 acquireLock：那把锁是**守护进程**的（一个项目一把），
+ *   看板刷新借用它会和守护互斥，等于每次刷新都要抢守护的锁，代价和语义都不对。
+ *   这里要的是「只管这一个文件、极短持有、抢不到就跳过」。
+ *
+ * 判据：openSync(…, 'wx') 是**原子**的（O_CREAT|O_EXCL），天然互斥，不依赖时序。
+ *   staleMs 兜底：持锁进程崩了不会留下永久死锁（超过它就把锁当僵尸清掉）。
+ */
+function withKanbanLock<T>(file: string, fn: () => T, staleMs = 10_000): { ok: true; value: T } | { ok: false; reason: string } {
+  const lockPath = file + '.lock'
+  try {
+    try {
+      const st = fs.statSync(lockPath)
+      if (Date.now() - st.mtimeMs > staleMs) fs.unlinkSync(lockPath)   // 僵尸锁
+    } catch { /* 没有锁，正常路径 */ }
+    const fd = fs.openSync(lockPath, 'wx')
+    try { fs.writeSync(fd, String(process.pid)) } finally { fs.closeSync(fd) }
+  } catch {
+    // 抢不到**不是错误**：说明另一个写入者正在改，本轮跳过，下一轮采集会再来。
+    // 但要**说出来**——静默跳过会让人以为"看板自动更新坏了"。
+    return { ok: false, reason: '另一个写入者正在刷看板，本轮跳过' }
+  }
+  try {
+    return { ok: true, value: fn() }
+  } finally {
+    try { fs.unlinkSync(lockPath) } catch { /* 已被清掉 */ }
+  }
+}
+
 export function syncKanbanAuto(root: string, cfg: RelayConfig): { ok: boolean; reason: string; rows: number } {
   const file = path.join(root, 'progress.md')
   if (!fs.existsSync(file)) return { ok: false, reason: '没有 progress.md（先跑 srelay kanban init）', rows: 0 }
-  try {
+  // [1021] 读-改-写必须**独占**：两个守护同时刷 / 人正在编辑器里改，都会互相覆盖。
+  const locked = withKanbanLock(file, () => {
     const todos = todoRowsOf(root, cfg)
     const fresh = renderTodoRows(todos)
     const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/)
@@ -133,9 +170,10 @@ export function syncKanbanAuto(root: string, cfg: RelayConfig): { ok: boolean; r
     fs.writeFileSync(file, next, 'utf8')
     graphNote = refreshOwnGraph(root, next)
     return { ok: true, reason: `自动区已刷新（旧 ${dropped} 行 → 新 ${fresh.length} 行）${graphNote}`, rows: fresh.length }
-  } catch (e) {
-    return { ok: false, reason: '刷新失败：' + String((e as Error)?.message ?? e).slice(0, 80), rows: 0 }
-  }
+  })
+  // 抢不到锁也不是错误：说明另一个写入者正在改，本轮跳过，下一轮采集会再来。
+  if (!locked.ok) return { ok: false, reason: locked.reason, rows: 0 }
+  return locked.value
 }
 
 // ───────────────────── 看板 → 可视化（2026-10-15 夜 · 桥接） ─────────────────────
