@@ -406,8 +406,14 @@ export interface PanelCompression {
 const LAYERS: CompressionLayer[] = [
   { id: 'L0', name: '同会话逐字去重', kind: '无损', status: 'on',
     note: '同一场会话里逐字重复的条目合并成一条并记 dupCount；检索面看不到噪声，信息一条不丢。由生命周期的 compact 阶段自动跑。' },
-  { id: 'L1', name: '跨会话近重复合并', kind: '无损（但掉召回）', status: 'rejected',
-    note: '实测省 57% 体积却掉召回，被门禁否决 ⇒ 默认不跑。代码留在核心库可复现（core/compact/dedup.ts），但不接任何自动路径。' },
+  { id: 'L1', name: '跨会话近重复合并', kind: '确定性合并（文本被吸收）', status: 'rejected',
+    note: '2026-10-17 实测省 57% 体积但 hit@1 掉 5~7pt，被门禁否决 ⇒ 默认不跑。'
+      + '**2026-10-18 找到并修掉了真正的原因**：掉召回不是"合并"造成的，是**代表选择规则**造成的 —— '
+      + '原规则取"时间最新的一条"，而跨来源的近重复里最新往往是 workflow 子代理的转述，'
+      + '它吸收掉主会话的拍板后，幸存者带 origin=workflow，被读路径的 origin 过滤整组挡掉。'
+      + '现已实现 representative=\'highest-trust\'（低可信来源不许当代表，升档过不了"全组互相似"就不合并）：'
+      + '实测 music 库「转述压拍板」的组 **30 → 0**，而压缩后体积一模一样（58KB→21KB 两者相同）。'
+      + '**仍未接线**：还差写回 sessions.decisions + 重建 meta_text（否则检索索引还是旧文本）+ 召回基准复测三步。' },
   { id: 'L2', name: '老化归档', kind: '有损（只删正文）', status: 'on',
     note: '老会话的原始正文蒸发，派生结论/话题/摘要骨架保留，审计进 cleanup_log。ADR-003：判据是连续强度 strength = max(0, 1 − 年龄/90)。' },
   { id: 'L3', name: '模型压缩（多条决策/经验合成上级条目）', kind: '有损（原文永不删）', status: 'off',
