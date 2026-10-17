@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dbFile, configFile, globalDbFile, relayDir } from '../shared/paths.js';
+import { decisionKey } from '../store/decision-validity.js';
 import { registryCandidates } from '../shared/registry.js';
 import { defaultConfig, mergeConfig, saveConfig, readConfigFile, type RelayConfig } from '../shared/config-merge.js';
 import { isInjectable, liveImportance, INJECT_THRESHOLD, DECAY_PER_DAY, type LessonRow } from '../store/lesson-gate.js';
@@ -100,6 +101,20 @@ function bytesOf(file: string): number {
 }
 
 /** 单项目取数。失败**返回 error 而不是抛**——一个库坏了不该让整张面板打不开 */
+/**
+ * 读已被取代的决策 key 集合。旧库没有旁表 ⇒ 返回空集（= 全部视为有效），
+ * **绝不能因为读不到表就让所有决策凭空消失**（这是本条设计的兼容铁律）。
+ */
+function supersededDecisionKeys(db: unknown): Set<string> {
+  const out = new Set<string>();
+  try {
+    const rows = (db as { prepare: (s: string) => { all: () => unknown[] } })
+      .prepare('SELECT decision_key FROM decision_validity WHERE active = 0').all() as Array<{ decision_key?: string }>;
+    for (const r of rows) if (r.decision_key) out.add(String(r.decision_key));
+  } catch { /* 无旁表 / 旧库：全部视为有效 */ }
+  return out;
+}
+
 export function panelProjectCard(root: string, extra: { daemonAlive?: boolean; lastActiveAt?: string | null } = {}): PanelProject {
   const out: PanelProject = {
     root, name: path.basename(root) || root, ok: false, error: null,
@@ -124,13 +139,23 @@ export function panelProjectCard(root: string, extra: { daemonAlive?: boolean; l
     //         unresolved 数**全部** key_questions（含已回答）⇒ 686，真实 55。
     //   同一时刻同一事实，四个入口给出 686/55/4/1 —— 这就是「面板在撒谎」的具体形态。
     //   决策：按 text 去重 + 排除 workflow 出处（与 db.ts 读路径同口径）。
-    const decSql = "SELECT count(DISTINCT json_extract(je.value,'$.text')) AS c FROM"
+    // [1021 决策有效性] 计数也要吃旁表：把 DISTINCT 文本取回来，在 JS 里按 decisionKey 判活性。
+    //   为什么不在 SQL 里过滤：decision_key 是 JS 侧的归一化（NFKC/大小写/标点）算出来的，
+    //   SQL 里再写一遍就是**第二份判据**（本仓头号病）。宁可多取几百条文本回来。
+    //   无旁表记录的老决策按 active 处理（兼容铁律，与 listDecisions 同一条）。
+    const decSql = "SELECT DISTINCT json_extract(je.value,'$.text') AS t FROM"
       // [1021 审查 #12] 隔离会话的决策不计入「已确认结论」——与 listDecisions 同一判据
       + " (SELECT decisions AS v FROM sessions WHERE decisions IS NOT NULL"
       + "  AND json_valid(decisions) AND length(decisions) > 2"
       + "  AND COALESCE(state,'') <> 'quarantine') t, json_each(t.v) je"
       + " WHERE COALESCE(json_extract(je.value,'$.origin'),'') <> 'workflow'";
-    out.decisions = Number((db.prepare(decSql).get() as { c?: number } | undefined)?.c ?? 0);
+    const deadKeys = supersededDecisionKeys(db);
+    const decRows = db.prepare(decSql).all() as Array<{ t: string | null }>;
+    out.decisions = decRows.filter((r) => {
+      const t = r.t == null ? '' : String(r.t);
+      if (!t) return false;
+      return !deadKeys.has(decisionKey(t));
+    }).length;
     //   未决：只数 `$.unresolved` 为真的。
     out.unresolved = countJsonItems(db, 'key_questions', "COALESCE(json_extract(je.value,'$.unresolved'),0) <> 0");
     out.ok = true;
