@@ -77,6 +77,8 @@ export interface HarvestReport {
   written: number;
   /** 落库后不是 draft 的（写入语义被别处改了）—— 任何 >0 都要吼出来 */
   notDraft: string[];
+  /** 本轮"库里已有、只把 hits 加了 1"的条数（重复遇到 = 反复发生的真坑） */
+  repeated: number;
   /** 取样（前 20 条新候选；dry-run 与事件日志用） */
   samples: Harvested[];
 }
@@ -88,9 +90,25 @@ export interface HarvestOptions {
   dry?: boolean;
   /** 每个项目最多扫多少条消息（默认 4000） */
   cap?: number;
+  /**
+   * 项目所属领域（来自 .sessionrelay/config.json 的 domain 字段）。
+   *
+   * 给了 ⇒ 产出 scope='domain'，**同领域的项目共享**这批草稿；
+   * 没给 ⇒ 退回 scope='project'，只有本项目看得见。
+   *
+   * 为什么是"给了才共享"而不是默认共享：domain 是**人显式分的组**（writing / music-app /
+   * minecraft …）。没分组就共享等于"把写代码的经验注入到写小说的项目"——猜错比不猜更糟。
+   * 未分组项目的行为与之前完全一致（scope='project'），所以这条改动对它们零影响。
+   */
+  domain?: string;
 }
 
-type AnyDb = { prepare: (s: string) => { all: (...a: unknown[]) => unknown[]; get?: (...a: unknown[]) => unknown } };
+type AnyStmt = {
+  all: (...a: unknown[]) => unknown[];
+  get?: (...a: unknown[]) => unknown;
+  run?: (...a: unknown[]) => unknown;
+};
+type AnyDb = { prepare: (s: string) => AnyStmt };
 
 /**
  * 从一个项目库采集经验，写进全局库。**只产草稿**、幂等（按全文去重）。
@@ -120,8 +138,30 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   );
   const fresh = cands.filter((c) => !existing.has(c.text));
 
+  // ── [1021 C1] 重复遇到 = 真信号，不再静默丢掉 ──
+  //
+  // 病历：原来库里已有的候选**直接跳过**，一点痕迹都不留。于是"同一句经验被反复挖出来"
+  // 这个最强的信号被扔了 —— 反复出现恰恰说明它是**反复发生的真坑**，而不是一次性的吐槽。
+  //
+  // 现在：给已有条目 hits+1（封顶 HITS_CAP）。
+  //   · hits 进 liveImportance 的 min(1, hits*0.1) ⇒ 最多 +1.0，**永远推不过注入线**
+  //     （inferred 1.5 + 1.0 = 2.5 < 阈值 5.5）⇒ 不可能靠"被重复挖到"混进 prompt；
+  //   · 它的真正用途是给 maintainLessons 一个"该拎出来给人看"的依据（见 C1 那段）。
+  //   口径仍然是那句：**机器不确定时标记不确定，而不是替人下结论**。
+  const HITS_CAP = 20;
+  let repeated = 0;
+  if (!opts.dry) {
+    const dupTexts = new Set(cands.filter((c) => existing.has(c.text)).map((c) => c.text));
+    if (dupTexts.size) {
+      const bump = gdb.prepare('UPDATE lessons SET hits = MIN(hits + 1, ?), updated_at = ? WHERE text = ?');
+      const nowIso = new Date().toISOString();
+      for (const t of dupTexts) { bump.run?.(HITS_CAP, nowIso, t); repeated++; }
+    }
+  }
+
   const report: HarvestReport = {
     scanned: msgs.length, found: cands.length, fresh: fresh.length, written: 0, notDraft: [],
+    repeated,
     samples: fresh.slice(0, 20),
   };
   if (opts.dry || !fresh.length) return report;
@@ -131,8 +171,10 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
       text: c.text, quote: c.quote, sourceRef: c.sourceRef,
       route: c.role === 'user' ? 'user-message' : 'none',
       grade: c.level,
-      scope: 'project' as const,
+      // 有 domain ⇒ domain 级（同领域共享）；无 ⇒ project 级（仅本项目）
+      scope: (opts.domain ? 'domain' : 'project') as 'domain' | 'project',
       workspaceId,
+      ...(opts.domain ? { domain: opts.domain } : {}),
       // 显式 draft：自动提取 ≠ 人工确认（三者：抽取/confirm/评级，各自独立）
       status: 'draft' as const,
     };

@@ -26,7 +26,7 @@ import { recomputeExtractions } from '../../capture/recompute.js';
 import { compactExactSessions } from '../compact/exact.js';
 import { compactNearDuplicates } from '../compact/near-dup.js';
 import { harvestLessons } from '../extract/lesson-harvest.js';
-import { resolveWorkspaceId } from '../../shared/workspace.js';
+import { resolveWorkspaceId, resolveDomain } from '../../shared/workspace.js';
 import { cleanDerivedColumns } from '../extract/derived-cleanup.js';
 import { buildTagGraph } from '../graph/tags.js';
 import { autoArchiveProject, autoArchivePolicyOf } from '../../capture/archive.js';
@@ -260,6 +260,8 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
       try {
         const r = harvestLessons(global as never, pdb as never, resolveWorkspaceId(root), {
           days: typeof cfg.lesson?.harvest_days === 'number' ? cfg.lesson.harvest_days : 7,
+          // 同领域的项目共享草稿；未分组项目仍是 project 级（零影响）
+          domain: resolveDomain(root),
         });
         scanned += r.scanned; found += r.found; fresh += r.fresh; written += r.written;
         notDraft += r.notDraft.length;
@@ -278,7 +280,9 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   if (todue.some((s) => s.id === 'consolidate')) await runOne(specOf('consolidate'), () => {
     if (!global) return '全局库不可用（' + (globalOpenError ?? '未知') + '），跳过';
     const r = maintainLessons(global);
-    return '衰减 ' + r.decayed + ' · 退休 ' + r.retired + ' · 复活 ' + r.resurrected + ' · 待人工确认 ' + r.superseded;
+    // held = 因"反复出现"被拦下没退休的（已标 needs_review 等人看一眼）
+    return '衰减 ' + r.decayed + ' · 退休 ' + r.retired + ' · 复活 ' + r.resurrected
+      + ' · 待人工确认 ' + r.superseded + (r.held ? ' · 拦下未退休 ' + r.held : '');
   });
 
   // ── ⑥ 无损去重（light）──

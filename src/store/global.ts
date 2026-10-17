@@ -156,17 +156,98 @@ export function ftsExpr(q: string): string {
   return toks.map((t) => '"' + t + '"').join(' OR ');
 }
 
-export function maintainLessons(db: Database.Database): { decayed: number; retired: number; resurrected: number; superseded: number } {
+/**
+ * [1021 C1] inferred 的"待复核保留"阈值：被反复采集到几次才值得拎出来给人看。
+ * 3 次 = 至少横跨三个采集窗口（每个 6h）还能重现，说明是真反复发生的坑，不是一次口误。
+ */
+const REPEAT_MARK = 3;
+/** 豁免轮数上限：超过这么多轮就不再拦，防止一个永远挖得到的垃圾条目长期占据复核队列 */
+const KEEP_ALIVE_MAX_ROUNDS = 30;
+/**
+ * [1021 C1 修正] inferred 的**观察窗**（天）。
+ *
+ * 为什么需要它（这是个真 bug，不是补丁）：
+ *   C1 第一版只写了"hits ≥ 3 才拦下不退休"。但**节奏对不上** ——
+ *   consolidate 每小时跑，harvest 6 小时才跑一次，于是第一轮进来的 inferred
+ *   在 hits 还没涨到 2 的时候就被 consolidate 退休了。**保护代码永远走不到**。
+ *   真库印证：28 条 inferred 全 retired，hits 合计正好 28（每条只涨了 1 次）。
+ *
+ * 现在：inferred 且 hits < REPEAT_MARK 时，若年龄还不到观察窗就**先不动它**
+ *   （既不退休也不标记），让它有机会在后续几轮采集里证明自己"会反复出现"。
+ *   观察窗过后仍没攒够 hits ⇒ 照常退休。所以最终仍然只有两类结局：
+ *   攒够 → 待人工确认；攒不够 → 退休。只是把"判决"推迟到证据够了之后。
+ *
+ * 安全边界不变：这些条目仍是 inferred ⇒ 闸 1 硬排除 ⇒ **进不了注入层**。
+ */
+const INFERRED_GRACE_DAYS = 7;
+
+/**
+ * 给 inferred 条目挂"待人工确认"标记；返回 true 表示本轮**拦下不退休**。
+ *
+ * 豁免次数记在 source_ref 末尾的 `×N` 里（不新增列：DB 迁移成本不值当，
+ * 而且 source_ref 本来就是人看的字符串）。
+ */
+/** 条目的年龄（天）。解析不出来按 0 算（= 当作新条目，给观察窗）。 */
+function ageDays(r: LessonRow): number {
+  const t = Date.parse(String(r.created_at || ''));
+  return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 86400000) : 0;
+}
+
+function keepAlive(db: Database.Database, r: LessonRow, now: string): boolean {
+  const m = /×(\d+)$/.exec(String(r.source_ref || ''));
+  const used = m ? Number(m[1]) : 0;
+  if (used >= KEEP_ALIVE_MAX_ROUNDS) return false;
+  const base = String(r.source_ref || '').replace(/ ?×\d+$/, '');
+  const note = (base ? base + ' · ' : '') + '反复出现(hits=' + Number(r.hits || 0) + ') 待人工确认 ×' + (used + 1);
+  // 只标 needs_review + 记次数；**status 一个字都不动** ⇒ 进不了注入层
+  db.prepare('UPDATE lessons SET needs_review = 1, updated_at = ?, source_ref = ? WHERE id = ?')
+    .run(now, note.slice(0, 400), r.id);
+  return true;
+}
+
+export function maintainLessons(db: Database.Database): {
+  decayed: number; retired: number; resurrected: number; superseded: number;
+  /** 因"反复出现"被拦下、标了 needs_review 的条数 */
+  held: number;
+  /** 因"还在观察窗内"暂不判决的 inferred 条数 */
+  probation: number;
+} {
   const rows = db.prepare('SELECT * FROM lessons').all() as LessonRow[];
   const upd = db.prepare('UPDATE lessons SET status = ?, updated_at = ? WHERE id = ?');
   const now = new Date().toISOString();
   let decayed = 0, retired = 0, resurrected = 0;
+  let held = 0;
+  let probation = 0;
+  const heldIds: number[] = [];
   for (const r of rows) {
     // [红队 A-3] **人明确否决的不许被自动复活**：rejected 是终态。
     if (String(r.status) === 'rejected') continue;
     const live = liveImportance(r);
     if (live < INJECT_THRESHOLD) {
       decayed++;
+      // ── [1021 C1] inferred 的上升通道：**反复被采集到的不退休，标成待人工确认** ──
+      //
+      // 病历：采集给助手消息产的候选一律 inferred（1.5 分），而本函数每小时跑一次、
+      //   1.5 < 阈值 5.5 ⇒ **出生即死**。实测 17 条里有 7 条就是这么没的，
+      //   而它们当中可能真有价值 —— 机器不该替人判"这条没用"，它只该说"我不确定"。
+      //
+      // 现在：inferred 且 hits ≥ REPEAT_MARK（=被反复挖到 3 次）⇒ 标 needs_review=1 并**保持原状态**，
+      //   不进回收站。人复核时一眼能看到"这条反复出现过，你来定"。
+      //
+      // 边界守死（三处都不可放宽）：
+      //   · 只对 inferred 生效 —— verified-* 有自己的路径，不走这个例外；
+      //   · 只标 needs_review，**绝不改 status、绝不提分** ⇒ 仍然进不了注入层
+      //     （inferred 被闸 1 硬排除，哪怕 hits 拉满也只有 2.5 分）；
+      //   · 有上限（KEEP_ALIVE_MAX_ROUNDS）：豁免次数记在 source_ref 里，超过 30 轮就不再拦，
+      //     否则一个永远挖得到的垃圾条目会永久占着复核队列。
+      const isInferred = String(r.grade) === 'inferred';
+      const hits = Number(r.hits || 0);
+      if (isInferred && r.status !== 'retired') {
+        // 攒够重复次数 ⇒ 拦下并标记待人工确认
+        if (hits >= REPEAT_MARK && keepAlive(db, r, now)) { held++; heldIds.push(Number(r.id)); continue; }
+        // 还没攒够，但仍在观察窗内 ⇒ 先不判，给它机会再被挖到
+        if (hits < REPEAT_MARK && ageDays(r) < INFERRED_GRACE_DAYS) { probation++; continue; }
+      }
       if (r.status !== 'retired') { upd.run('retired', now, r.id); retired++; }
     } else if (r.status === 'retired') { upd.run('verified', now, r.id); resurrected++; }
   }
@@ -187,7 +268,8 @@ export function maintainLessons(db: Database.Database): { decayed: number; retir
       .run(now, note.slice(0, 400), pair.olderId);
     conflicts++;
   }
-  return { decayed, retired, resurrected, superseded: conflicts };
+  // held = 本轮因"反复出现"被拦下没退休的条数（它们被标了 needs_review，等人看一眼）
+  return { decayed, retired, resurrected, superseded: conflicts, held, probation };
 }
 
 /** Markdown 导出：经验库必须人可读、可 git、可手改（借鉴实测做法） */

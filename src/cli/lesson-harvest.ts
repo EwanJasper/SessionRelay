@@ -32,7 +32,11 @@ export async function runHarvest(
   workspaceId: string,
   opts: { days: number; dry?: boolean; json?: boolean },
 ): Promise<void> {
-  const rep = harvestLessons(gdb as never, pdb as never, workspaceId, { days: opts.days, dry: opts.dry });
+  // domain 从项目配置自动取（与生命周期同源：shared/workspace 的 resolveDomain）
+  const { resolveDomain } = await import('../shared/workspace.js');
+  const rep = harvestLessons(gdb as never, pdb as never, workspaceId, {
+    days: opts.days, dry: opts.dry, domain: resolveDomain(process.cwd()),
+  });
   if (opts.json) {
     console.log(JSON.stringify({ scanned: rep.scanned, found: rep.found, fresh: rep.fresh, written: rep.written, items: rep.samples.map((c) => c.text) }, null, 2));
     return;

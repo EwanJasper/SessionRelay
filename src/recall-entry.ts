@@ -15,6 +15,11 @@ export { searchSessions } from './search-svc/engine.js';
 export {
   openGlobal, pickForInjection, gate2Score, gate2Tokens,
   INJECT_THRESHOLD, liveImportance, isInjectable,
+  // [1021] 经验查询也走入口导出：MCP 的 srelay_lessons 与 CLI 共用同一份可见性判据。
+  //   不外泄 ⇒ 调用方只能自己拼 SQL ⇒ 那就是第二份判据（铁律禁止）。
+  listLessons, searchLessons,
+  // [1021] 维护也要从入口走：CLI 的 lesson maintain 与生命周期必须用**同一份**衰减/退休判据。
+  maintainLessons,
 } from './store/global.js';
 export { resolveDomain, resolveWorkspaceId, workspaceKey } from './shared/workspace.js';
 export { findRelayRootInfo, findRelayRoot, inferProjectRoot, isUnclaimableAncestor } from './shared/paths.js';
