@@ -226,8 +226,22 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
       seq: seqOf(best?.rid ?? 0),
     });
   }
+  // ── [1021] meta 双路命中加分（此前被**整个丢弃**）──
+  //   原实现：`if (hits.some(sid)) continue;` —— 会话只要在 messages 路出现过，
+  //   meta 路（标题/决策/话题）的命中就**完全不参与打分**，只用于捞 messages 路没找到的会话。
+  //   后果：一个会话「正文里只是擦边提了一句、但标题或决策里就是主题」时，
+  //   它拿到的仍是那个擦边的弱分，然后被别的会话挤出 top-10。
+  //   这正是「词明明在会话里却排不进前 10」最可能的成因之一（另一种是 BM25 本身）。
+  //   修法：双路都命中 ⇒ 在既有分上**再加** meta 分（权重 META_BOOST）。
+  //   ⚠️ 保留「messages 路已有的 snippet/seq」不动 —— 只是加分，不换代表消息。
+  //   ⚠️ 这是**默认关**的实验旋钮：先量再接（见 META_BOOST 常量处的说明）。
   for (const [sid, sc] of metaHits) {
-    if (hits.some((h) => h.sessionId === sid)) continue; // messages 优先（T27）
+    const existing = hits.find((h) => h.sessionId === sid);
+    if (existing) {
+      // 双路命中：加分（META_BOOST=0 时等于旧行为）
+      if (META_BOOST > 0) { existing.score += sc * META_BOOST; existing.viaMeta = true; }
+      continue;
+    }
     hits.push({ sessionId: sid, score: sc * 0.5, snippet: '', viaMeta: true, coverage: coverageOf(sid), seq: 0 });
   }
 
@@ -434,6 +448,23 @@ export const DEFAULT_TAG_EXPAND = false;
  * 给「两三千条消息的巨无霸」降权。常数 300 越小越激进；要调只改 `LEN_PENALTY_PIVOT`。
  */
 export const LEN_PENALTY_PIVOT = 300;
+
+/**
+ * meta 双路命中加分权重（1021 新增，**默认 0 = 旧行为**）。
+ *
+ * 背景：`queryMetaUnits` 那条路查的是标题/决策/话题（`sessions.meta_text`），
+ * 而原实现里，只要会话已经在 messages 路出现过，meta 命中就**被整个丢弃**（`continue`）。
+ * 于是「正文擦边提了一句、但标题就是主题」的会话拿不到它应得的加分。
+ *
+ * 取值：`score += metaScore * META_BOOST`。0=关（旧行为）；0.5 = 与「只走 meta」同权；
+ * 1.0 = 双路等价。用环境变量 `SRELAY_META_BOOST` 覆盖，便于基准做单变量 A/B。
+ *
+ * ⚠️ **先量再接**：这个值必须先跑基准再定，不要拍脑袋改默认。
+ */
+const META_BOOST = (() => {
+  const v = Number(process.env.SRELAY_META_BOOST ?? 0);
+  return Number.isFinite(v) && v >= 0 ? v : 0;
+})();
 
 export function lenPenaltyOf(messageCount: number): number {
   return 1 / (1 + Math.log10(1 + Math.max(0, messageCount) / LEN_PENALTY_PIVOT));

@@ -129,6 +129,32 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     if (alive.alive) { releasePipeLock(root); return null; }
   }
 
+  // ── [1021 红队 R9] 启动资源账本：从这里起，拿到的每样东西都必须能被回滚 ──
+  //   病历（红队探针实测，修前三条全部复现）：
+  //     A 库文件损坏 → openExisting 抛错**直接穿出本函数**（原第 151 行在 try 之外）：
+  //       管道锁 + 文件锁双双泄漏。管道锁是进程级内核对象，本进程不死就永远占着；
+  //       文件锁让 isDaemonAlive 恒为 true ⇒ 全局守护每 10 分钟收编一次、每次失败、
+  //       每次再占一份，该项目**永久收编不进来**。
+  //     B openExisting 成功之后才失败（如 config 缺 identity）→ 原 catch 只清 timer 与管道锁：
+  //       db 句柄没人关（Windows 上 relay.sqlite 一直 EBUSY，forget/rebuild 全废），
+  //       文件锁也没释放，且**一条日志都不打**（异常发生在 try 之外，连 catch 都进不去）。
+  //   现在：所有失败分支共用同一个 cleanup()（定时器/监听器/db/两把锁一处释放），
+  //   并把失败原因写进 log —— 硬规则 4：容错不许静默。
+  const timers: NodeJS.Timeout[] = [];
+  const watchers: Array<{ close(): void }> = [];
+  let dbRef: ReturnType<typeof openExisting> | undefined;
+  let freed = false;
+  const cleanup = () => {
+    if (freed) return;
+    freed = true;
+    for (const t of timers) clearInterval(t);
+    for (const w of watchers) { try { w.close(); } catch { /* 关不上也不掩盖原始错误 */ } }
+    if (dbRef) { try { dbRef.close(); } catch { /* 同上 */ } dbRef = undefined; }
+    releaseLock(root);
+    releasePipeLock(root);
+  };
+
+  try {
   // [fork 1010] 防孤儿：启动 shell 退出时本实例随之退出。agent 后台命令拉起的
   // project 模式 watch 曾无限期存活（父 shell 早已不在），与全局守护抢锁。
   let orphanTimer: NodeJS.Timeout | undefined;
@@ -137,18 +163,24 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     orphanTimer = setInterval(() => {
       try {
         process.kill(launcher, 0);
-      } catch {
-        log('启动器进程已退出，本实例退出（防孤儿）');
+      } catch (e) {
+        // [1021 R9] 原先这里是空 catch：把"启动器已退出"与其他错误（EPERM 等）混为一谈，
+        // 且不留任何原因。现在带上原因（仍是退出语义，只补可诊断性）。
+        log(`启动器进程不可达（${(e as Error).message}），本实例退出（防孤儿）`);
         clearInterval(orphanTimer);
         releaseLock(root);
         releasePipeLock(root);
+        if (dbRef) { try { dbRef.close(); } catch { /* 进程即将退出 */ } }
         process.exit(0);
       }
     }, 15_000);
+    timers.push(orphanTimer);
   }
 
   const heartbeat = setInterval(() => touchLock(root), 15_000);
+  timers.push(heartbeat);
   const db = openExisting(dbFile(root));
+  dbRef = db;                                   // [R9] 交给账本，失败时由 cleanup 关闭
   const projectId = opts.config.identity.project_id ?? projectIdOf(root);
 
   let chain: Promise<void> = Promise.resolve(); // 串行化所有写周期（T23 的进程内体现）
@@ -178,9 +210,10 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     return chain;
   };
 
-  const watchers: Array<{ close(): void }> = [];
+  // [1021 R9] watchers 复用外层账本里的数组：启动失败时由 cleanup 统一 close
   const judgeTimer = setInterval(() => cycle('tick'), 30_000);
   const safetyTimer = setInterval(() => cycle('safety'), 60_000);
+  timers.push(judgeTimer, safetyTimer);
 
   // [fork 1011] D26 自动归档（用户拍板：默认启用/60d/7d/增量式 VACUUM）：
   // 低频检查串行进写链；首次启动即跑一次——顺带完成 auto_vacuum 启用式 VACUUM，
@@ -204,6 +237,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     runAuto();
     archiveTimer = setInterval(runAuto, archivePolicy.checkEveryMin * 60_000);
     archiveTimer.unref();
+    timers.push(archiveTimer);          // [R9] 进账本，失败/停止时统一清
   }
 
   // [fork 1013] 审计 P3：提取规则版本落后 → 后台分批重算。
@@ -226,6 +260,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
   runRecompute();
   recomputeTimer = setInterval(runRecompute, RECOMPUTE_EVERY_MS);
   recomputeTimer.unref();
+  timers.push(recomputeTimer);          // [R9] 进账本，失败/停止时统一清
   let stopped = false;
 
   try {
@@ -249,13 +284,13 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     }
     log(`守护运行中（pid ${process.pid}，项目 ${root}）`);
   } catch (e) {
-    // [fork 0922] worker 初始化失败：释放已持资源并报告 null（全局模式下跳过该项目，不拖垮进程）
-    if (orphanTimer) clearInterval(orphanTimer);
-    if (archiveTimer) clearInterval(archiveTimer);
-    if (recomputeTimer) clearInterval(recomputeTimer);
-    clearInterval(heartbeat); clearInterval(judgeTimer); clearInterval(safetyTimer);
-    releasePipeLock(root);
-    log(`守护启动失败（${root}）: ${(e as Error).message}`);
+    // [fork 0922] worker 初始化失败：报告 null（全局模式下跳过该项目，不拖垮进程）
+    // [1021 红队 R9] 释放**全部**已持资源：定时器 + 监听器 + db 句柄 + 文件锁 + 管道锁。
+    //   原实现只清 timer 与管道锁 ⇒ db 句柄与文件锁泄漏（红队探针：db 文件 EBUSY、
+    //   isDaemonAlive 恒 true、日志一行不打）。openExisting 自身抛错的路径原先根本
+    //   进不到这里（异常穿出函数），现由上面的 try 收口。
+    cleanup();
+    log(`守护初始化失败（${root}）: ${(e as Error).message}`);
     return null;
   }
 
@@ -264,18 +299,25 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     stop: async () => {
       if (stopped) return;
       stopped = true;
-      if (orphanTimer) clearInterval(orphanTimer);
-      if (archiveTimer) clearInterval(archiveTimer);
-      if (recomputeTimer) clearInterval(recomputeTimer);
-      for (const w of watchers) w.close();
-      clearInterval(heartbeat); clearInterval(judgeTimer); clearInterval(safetyTimer);
-      await chain.catch(() => {});
-      db.close();
-      releaseLock(root);
-      releasePipeLock(root);
+      // [1021 R9] 与启动失败共用 cleanup：停止不再单独维护资源清单（原实现与失败分支
+      // 已经漂移过 —— 失败分支漏了 db.close 与文件锁，正是 R9 的病根）。
+      for (const t of timers) clearInterval(t);
+      // 原实现是 `await chain.catch(() => {})`：写链失败被静默吞掉。容错不许静默，
+      // 至少打一行（资源照样释放）。
+      await chain.catch((e) => log(`退出前等待写链失败（继续释放资源）: ${(e as Error).message}`));
+      cleanup();
       log('已退出');
     },
   };
+  } catch (e) {
+    // [1021 红队 R9] 收口"进入初始化 try 之前"的失败：openExisting（库损坏 / schema 过新 /
+    //   SQLITE_BUSY）、projectId 解析、定时器初始化。原实现这些语句在 try 之外，异常直接
+    //   穿出本函数（调用方只看到 throw），管道锁与文件锁留在原地、db 句柄不关、一行日志不打。
+    //   cleanup() 幂等；这里的 log 是"失败必须留痕"的唯一保证（硬规则 4）。
+    cleanup();
+    log(`守护启动失败（${root}）: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 /** 单项目守护（原入口语义）：worker + SIGINT/SIGTERM 等待 */

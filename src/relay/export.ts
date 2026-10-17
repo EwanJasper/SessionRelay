@@ -38,7 +38,7 @@ export interface ExportResult {
 
 interface ExportData {
   sessions: HopSessionFile[];
-  decisions: Array<{ at: string; source: string; sessionId: string; title: string | null; text: string; seq: number; pinned?: boolean; kind?: 'decision' | 'negative' }>;
+  decisions: Array<{ at: string; source: string; sessionId: string; title: string | null; text: string; seq: number; pinned?: boolean; kind?: 'decision' | 'negative'; msgId?: string | number }>;
   topicMap: Record<string, string[]>;
   fileMap: Record<string, number>;
   messageCount: number;
@@ -98,6 +98,9 @@ function buildExportData(opts: ExportOptions): ExportData {
     at: d.at ?? s.created_at, source: s.source, sessionId: s.id, title: s.title, text: d.text, seq: d.seq,
     ...(d.pinned !== undefined ? { pinned: d.pinned } : {}),
     ...(d.kind !== undefined ? { kind: d.kind } : {}),
+    // [1021 红队 R13] msgId 一起带走（元数据里才是接收方唯一能稳定回查的键）；
+    // 但导入方必须剥掉它 —— 那是**导出方库**的自增主键，见 relay/import.ts。
+    ...(d.msgId !== undefined ? { msgId: d.msgId } : {}),
   })));
   const topicMap: Record<string, string[]> = {};
   for (const s of sessions) for (const t of s.topics) (topicMap[t] ??= []).push(s.id);

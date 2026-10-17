@@ -526,6 +526,87 @@ export function getMessageRange(db: DB, sessionId: string, fromSeq: number, toSe
   return db.prepare('SELECT role, content, seq_num, created_at FROM messages WHERE session_id = ? AND seq_num >= ? AND seq_num <= ? ORDER BY seq_num').all(sessionId, fromSeq, toSeq) as Array<{ role: string; content: string; seq_num: number; created_at: string | null }>;
 }
 
+// ═══════════ 出处回跳（[1021 红队 R13] msgId 优先 / seq 回落 / 回落留痕）═══════════
+//
+// 病历：v22 给决策/未决条目加了 `msgId`（= `messages.id`，稳定主键）治「序号漂移」，
+//   但**读路径一个都没消费它**（grep 全仓只有 extract.ts 两处写入 + version.ts 注释）。
+//   而 `seq` 是位置索引，消息被裁剪/归档后整体前移 ⇒ 用户照着 CLI 打出来的
+//   `--range N:N` 回查，会指到**错的那条**或空结果，且不报错。
+//
+// 这里的约定（三个读路径 cli/meta.ts · mcp/server.ts · relay/export.ts 共用）：
+//   ① 有 msgId → 按 id 查（稳定）；
+//   ② **没有 msgId 才回落 seq**；回落要能被统计（via 字段），不许静默；
+//   ③ 有 msgId 但查不到（原文已归档）→ via='none'，**不再拿 seq 猜**——猜了就是漂移本身。
+
+export interface MessageRef {
+  /** msgId = 稳定主键命中；seq = 回落（该条目没有 msgId，序号漂移时会指错）；none = 两路都不中（原文已归档） */
+  via: 'msgId' | 'seq' | 'none';
+  /** 命中的消息（via='none' 时缺省） */
+  message?: { id: string | number; seq_num: number; role: string; createdAt: string | null };
+}
+
+/** 出处回跳的唯一收口。见上方约定。 */
+export function resolveMessageRef(
+  db: DB, sessionId: string,
+  ref: { msgId?: string | number | null; seq?: number | null },
+): MessageRef {
+  const raw = ref.msgId;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+    // messages.id 是 INTEGER：数字串按数字比（SQLite 亲和性本就如此，这里显式化避免依赖隐式转换）
+    const key: string | number = typeof raw === 'number' ? raw : (/^\d+$/.test(String(raw).trim()) ? Number(String(raw).trim()) : String(raw).trim());
+    const m = db.prepare('SELECT id, seq_num, role, created_at FROM messages WHERE session_id = ? AND id = ?')
+      .get(sessionId, key) as { id: string | number; seq_num: number; role: string; created_at: string | null } | undefined;
+    // 有 msgId 但查不到 = 原文已被归档/裁剪。**刻意不回落 seq**：那条路正是"指到错的那条"的来源。
+    return m ? { via: 'msgId', message: { id: m.id, seq_num: m.seq_num, role: m.role, createdAt: m.created_at } } : { via: 'none' };
+  }
+  const seq = ref.seq;
+  if (seq !== undefined && seq !== null && Number.isFinite(Number(seq))) {
+    const m = db.prepare('SELECT id, seq_num, role, created_at FROM messages WHERE session_id = ? AND seq_num = ?')
+      .get(sessionId, Number(seq)) as { id: string | number; seq_num: number; role: string; created_at: string | null } | undefined;
+    return m ? { via: 'seq', message: { id: m.id, seq_num: m.seq_num, role: m.role, createdAt: m.created_at } } : { via: 'none' };
+  }
+  return { via: 'none' };
+}
+
+/** 按稳定主键取一条消息全文（MCP srelay_show 的 message_id 回查用）。 */
+export function getMessageById(
+  db: DB, sessionId: string, msgId: string | number,
+): { id: string | number; seq_num: number; role: string; content: string; created_at: string | null } | undefined {
+  const key: string | number = typeof msgId === 'number' ? msgId : (/^\d+$/.test(String(msgId).trim()) ? Number(String(msgId).trim()) : String(msgId).trim());
+  return db.prepare('SELECT id, seq_num, role, content, created_at FROM messages WHERE session_id = ? AND id = ?')
+    .get(sessionId, key) as { id: string | number; seq_num: number; role: string; content: string; created_at: string | null } | undefined;
+}
+
+export interface MsgIdCoverage {
+  decisions: { total: number; withMsgId: number };
+  questions: { total: number; withMsgId: number };
+  /** 未决（questions 里 unresolved=true 的那些）——简报/CLI 真正会回跳的子集 */
+  unresolved: { total: number; withMsgId: number };
+}
+
+/** 量"msgId 覆盖率"：**修 R13 之前必须先跑它**，否则会把"读端已修"说成"漂移已根治"。
+ *  本机实测（2026-10-17，622 场 / 831 条决策 / 806 条问题）：withMsgId = 0 ——
+ *  因为真正跑过的两条写路径（recompute / judge 增量）SELECT 里没带 `id`，msgId 从来没被写进库。 */
+export function msgIdCoverage(db: DB, projectId: string): MsgIdCoverage {
+  const rows = db.prepare('SELECT decisions, key_questions FROM sessions WHERE project_id = ?').all(projectId) as Array<{ decisions: string | null; key_questions: string | null }>;
+  const out: MsgIdCoverage = { decisions: { total: 0, withMsgId: 0 }, questions: { total: 0, withMsgId: 0 }, unresolved: { total: 0, withMsgId: 0 } };
+  const has = (o: unknown): boolean => {
+    const v = (o as { msgId?: unknown } | null)?.msgId;
+    return v !== undefined && v !== null && String(v).trim() !== '';
+  };
+  for (const r of rows) {
+    let decs: unknown[] = []; let qs: unknown[] = [];
+    try { decs = JSON.parse(r.decisions ?? '[]'); } catch { decs = []; }
+    try { qs = JSON.parse(r.key_questions ?? '[]'); } catch { qs = []; }
+    for (const d of Array.isArray(decs) ? decs : []) { out.decisions.total++; if (has(d)) out.decisions.withMsgId++; }
+    for (const q of Array.isArray(qs) ? qs : []) {
+      out.questions.total++; if (has(q)) out.questions.withMsgId++;
+      if ((q as { unresolved?: boolean } | null)?.unresolved) { out.unresolved.total++; if (has(q)) out.unresolved.withMsgId++; }
+    }
+  }
+  return out;
+}
+
 // ───────────────────── Phase 2：confirmed 副作用与元数据查询 ─────────────────────
 
 import { extractMessages, extractDecisions, extractQuestions, extractTopics, summaryRule, sanitizeMsgs, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
@@ -572,7 +653,9 @@ export function refreshDecisionsIncremental(db: DB, id: string): boolean {
   let existing: Array<{ text: string; seq: number; at?: string }> = [];
   try { existing = JSON.parse((db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(id) as { decisions?: string } | undefined)?.decisions ?? '[]'); } catch { existing = []; }
   const lastSeq = existing.reduce((m, d) => Math.max(m, d.seq ?? 0), 0);
-  const msgs = (db.prepare('SELECT role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? AND seq_num > ? ORDER BY seq_num')
+  // [1021 红队 R13] SELECT 必须带 id：这条（judge 增量，最高频的写路径）原来不带，
+  //   于是 extractDecisions 拿到的 m.id 是 undefined，msgId 从来没被写进库（实测覆盖率 0%）。
+  const msgs = (db.prepare('SELECT id, role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? AND seq_num > ? ORDER BY seq_num')
     .all(id, lastSeq) as Msg[]).map((m) => ({ ...m, role: m.role === 'user' ? 'user' as const : 'assistant' as const }));
   // ⚠️ 必须走 extractForWrite：这里曾直接调 extractDecisions(msgs)，没过 sanitizeMsgs，
   // 技能目录垃圾从最高频的 pending 路径原样写回库（红队 1014 🔴）。且本路径每闲置
@@ -686,6 +769,9 @@ export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary
 export interface DecisionRow {
   at: string; source: string; sessionId: string; title: string | null;
   text: string; seq: number; msgAt?: string; pinned?: boolean;
+  /** [v22 / 1021 红队 R13] 消息稳定主键（= `messages.id`）：**出处回跳优先用它**。
+   *  存量条目（v22 之前抽的）没有这个字段，读取端会回落 seq 并留痕（见 resolveMessageRef）。 */
+  msgId?: string | number;
   /** ADR-001：这条决策是否编码"否掉一条路"。缺省视为 'decision'（存量数据无此字段）。 */
   kind?: 'decision' | 'negative';
 }
@@ -712,7 +798,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
   // key → { idx: 已入队条目下标（-1 = 被 --kind 过滤掉了）, atMs, pinned }
   const seen = new Map<string, { idx: number; atMs: number; pinned: boolean }>();
   for (const r of rows) {
-    let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }> = [];
+    let decs: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative'; msgId?: string | number }> = [];
     let topics: string[] = [];
     try { decs = JSON.parse(r.decisions); topics = JSON.parse(r.topics ?? '[]'); } catch { continue; }
     if (filter?.topic && !topics.includes(filter.topic) && !r.title?.includes(filter.topic)) continue;
@@ -739,7 +825,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         if (atMs <= prev.atMs) continue;
         prev.atMs = atMs;
         if (prev.idx < 0) continue;   // 之前被 --kind 过滤掉：保持"整键不上"，不因时间更新而复活
-        const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: prev.pinned || d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+        const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgId: d.msgId, msgAt: d.at, pinned: prev.pinned || d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
         // [1015 夜 · 红队 A#2 修复] 覆写前**必须重判 --kind**：
         //   原先直接 out[prev.idx] = row ⇒ `decisions --kind decision` 可能返回 kind='negative' 的行
         //   （构造复现：同键两条，先到的 kind=decision、后到的 kind=negative 且时间更新）。
@@ -750,7 +836,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         out[prev.idx] = row;
         continue;
       }
-      const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+      const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgId: d.msgId, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
       if (wantKind && row.kind !== wantKind) { seen.set(key, { idx: -1, atMs, pinned: row.pinned === true }); continue; }
       seen.set(key, { idx: out.length, atMs, pinned: row.pinned === true });
       out.push(row);
@@ -808,7 +894,11 @@ export function setDecisionPinned(db: DB, projectId: string, fragment: string, p
   return changed;
 }
 
-export interface UnresolvedRow { q: string; at: string; source: string; sessionId: string; title: string | null }
+export interface UnresolvedRow {
+  q: string; at: string; source: string; sessionId: string; title: string | null;
+  /** [R13] 消息稳定主键；存量条目没有 → 读取端回落 seq 并留痕 */
+  msgId?: string | number;
+}
 
 export function listUnresolved(db: DB, projectId: string, limit = 20): UnresolvedRow[] {
   // [fork 0924] 同步排除 workflow 施工会话（与 listDecisions 同规，问题 4 的垃圾同源）
@@ -818,14 +908,14 @@ export function listUnresolved(db: DB, projectId: string, limit = 20): Unresolve
   const out: UnresolvedRow[] = [];
   const seenQ = new Set<string>();
   for (const r of rows) {
-    let qs: Array<{ q: string; at?: string; unresolved: boolean }> = [];
+    let qs: Array<{ q: string; at?: string; unresolved: boolean; msgId?: string | number }> = [];
     try { qs = JSON.parse(r.key_questions); } catch { continue; }
     for (const q of qs.filter((x) => x.unresolved)) {
       // [fork 0924] 同一问题在多个会话被捕获时去重（简报曾同条双显）
       const key = dedupKey(q.q);
       if (key && seenQ.has(key)) continue;
       if (key) seenQ.add(key);
-      out.push({ q: q.q, at: q.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title });
+      out.push({ q: q.q, at: q.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title, msgId: q.msgId });
     }
   }
   return out.slice(0, limit);
@@ -895,8 +985,8 @@ export interface SessionFull {
   id: string; source: string; sourceSessionId: string; projectId: string; origin: string;
   state: string; title: string | null; createdAt: string; lastEventAt: string | null;
   messageCount: number; files: string[]; topics: string[];
-  decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }>;
-  questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }>;
+  decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative'; msgId?: string | number }>;
+  questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean; msgId?: string | number }>;
   summaryRule: string | null; userTags: string[]; author: string | null;
   importedFrom: string | null; originProject: string | null; contentHash: string | null;
   sourceFile: string | null;
@@ -923,7 +1013,7 @@ export function getSessionFull(db: DB, id: string): SessionFull | undefined {
 export interface ImportedSessionInput {
   source: string; sourceSessionId: string; projectId: string;
   title: string | null; createdAt: string; lastEventAt: string | null;
-  messageCount: number; topics: string[]; decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative' }>;
+  messageCount: number; topics: string[]; decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative'; msgId?: string | number }>;
   summaryRule: string | null; author: string | null; importedFrom: string | null; originProject: string | null;
   contentHash: string | null; sourceFile: string | null;
 }

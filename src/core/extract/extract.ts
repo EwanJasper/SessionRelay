@@ -509,7 +509,8 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         if (seen.has(key)) break;
         seen.add(key);
         out.push({ text, seq: m.seqNum, msgId: m.id, at: m.createdAt ?? undefined, kind: isNegativeDecision(text) ? 'negative' : 'decision' });
-        break;;
+        break;   // [1021 红队 R14] 原为 `break;;`：多出来的分号是一个空语句（AST 层面无意义字符），
+                 // 靠正则改这段的人会被它误导。行为不变 —— 空语句不产生任何效果。
       }
       if (out.length >= 10) return out;
     }
@@ -733,10 +734,15 @@ export interface EnvFact {
   values: string[];
   seq: number;
   at?: string;
-  /** 命中的模式族——精度按族分别报（§4.5：组内单独报，不报总平均） */
+  /** 命中的模式族——精度按族分别报（§4.5：组内单独报，不报总平均）
+   *  ⚠️ 只有**两族**是可达的（1021 红队 R14）：旧声明里的 `'installed-at'` 从来没有
+   *  任何产出 —— extractEnvFacts 里 family 的三元表达式只有两支（是/为 → spec-is-value，
+   *  其余 → subject-spec-pred），"安装在/放在"的句子全落进 subject-spec-pred。
+   *  留着它会让"按族精度"报告出现一个**恒为 0 的族**，读起来像"该族零误报"。
+   *  已从联合类型删除；真要按"安装位置"分族就得改判据，那是另一次带实测的变更。 */
   family: EnvFamily;
 }
-export type EnvFamily = 'subject-spec-pred' | 'spec-is-value' | 'installed-at';
+export type EnvFamily = 'subject-spec-pred' | 'spec-is-value';
 
 /** 环境事实抽取（Phase 2 方案 B）。只挖 user 消息——归属错位是头号误报源（§3.3.C） */
 export function extractEnvFacts(msgs: Msg[]): EnvFact[] {

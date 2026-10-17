@@ -12,7 +12,7 @@ import { loadConfig, type RelayConfig } from '../shared/config.js';
 import { dbFile, findRelayRoot, relayDir } from '../shared/paths.js';
 import { touchRegistry, registryCandidates, type RegistryCandidate } from '../shared/registry.js';
 import { openExisting, listSessions, listDecisions, listUnresolved,
-         getMessageRange, findSessionByPrefix, getSession, countsByState, countsBySource,
+         getMessageRange, getMessageById, resolveMessageRef, findSessionByPrefix, getSession, countsByState, countsBySource,
          insertScopeLog, addSessionLink, getLinkedSessions, createNoteSession,
          getSessionFull, metaTextOf, type DB } from '../store/db.js';
 import { searchSessions } from '../search-svc/engine.js';
@@ -172,6 +172,12 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
   }, guard(async (args: { query: string; kind?: 'sessions' | 'decisions' | 'unresolved' | 'files'; limit?: number; topic?: string; source?: string; decision_kind?: 'decision' | 'negative'; project?: string } & zPredShape) => {
     const cur = get();
     const kind = args.kind ?? 'sessions';
+    // [1021 红队 R13] 检索命中出处补稳定主键：msg 是 seq（位置索引），会话被归档/裁剪后
+    //   按它回跳会指到错的那条。这里用 seq 反查一次拿到 messages.id，一并发给调用方。
+    const prov = (sessionId: string, seq: number) => {
+      const ref = resolveMessageRef(cur.db, sessionId, { seq });
+      return { msg: ref.message?.seq_num ?? seq, msgId: ref.message?.id ?? null };
+    };
 
     // ── kind=decisions：本项目全部已确认技术决策（带出处，可回跳）──
     if (kind === 'decisions') {
@@ -180,7 +186,8 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
         count: rows.length,
         decisions: rows.map((r) => ({
           at: r.at, text: r.text, kind: r.kind ?? 'decision', pinned: r.pinned === true,
-          provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msg: r.seq },
+          // [R13] 优先 msgId（稳定主键）；msg 仍是 seq，供不认 msgId 的老消费方用
+          provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msgId: r.msgId ?? null, msg: r.seq },
         })),
       });
     }
@@ -210,7 +217,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       return toolOut({
         kind: 'files', file: args.query,
         count: hits.length,
-        sessions: hits.map((h) => ({ ...sessionBrief(cur.db, h.sessionId), snippet: h.snippet, provenance: { ...sessionBrief(cur.db, h.sessionId), msg: h.seq } })),
+        sessions: hits.map((h) => ({ ...sessionBrief(cur.db, h.sessionId), snippet: h.snippet, provenance: { ...sessionBrief(cur.db, h.sessionId), ...prov(h.sessionId, h.seq) } })),
       });
     }
 
@@ -223,7 +230,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       viaMeta: h.viaMeta,
       viaSemantic: h.viaSemantic ?? false,
       snippet: h.snippet,
-      provenance: { ...sessionBrief(cur.db, h.sessionId), msg: h.seq, note: `srelay_show 可取全文` },
+      provenance: { ...sessionBrief(cur.db, h.sessionId), ...prov(h.sessionId, h.seq), note: `srelay_show 可取全文` },
     }));
     // token 感知：告诉 AI 本次响应量 + 省 token 的深入路径
     const respBytes = Buffer.byteLength(JSON.stringify(out), 'utf8');
@@ -244,12 +251,13 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       session_id: z.string(),
       start_msg: z.number().optional().describe('起始消息序号（含）'),
       end_msg: z.number().optional().describe('结束消息序号（含）'),
+      message_id: z.union([z.string(), z.number()]).optional().describe('消息稳定主键（出处块里的 msgId）。回跳单条出处时**优先用它**：seq 是位置索引，会话归档/裁剪后会漂'),
       role: z.enum(['user', 'assistant']).optional().describe('只取该角色的消息（user=用户提问，轻量）'),
       include_exchanges: z.boolean().optional().describe('附带关键往返（用户提问+AI结论对，约 3KB）——理解"为什么"的中间粒度，省去拉全文'),
       max_chars: z.number().optional().describe('单条截断长度（默认 1000；需全文时显式传大值如 5000）'),
       ...zProject,
     },
-  }, guard(async (args: { session_id: string; start_msg?: number; end_msg?: number; role?: 'user' | 'assistant'; include_exchanges?: boolean; max_chars?: number }) => {
+  }, guard(async (args: { session_id: string; start_msg?: number; end_msg?: number; message_id?: string | number; role?: 'user' | 'assistant'; include_exchanges?: boolean; max_chars?: number }) => {
     const { db, project } = get();
     const s = findSessionByPrefix(db, args.session_id, project) ?? getSession(db, args.session_id);
     if (!s) return toolOut({ found: false, reason: '未找到会话' });
@@ -261,6 +269,24 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     const requestedTo = args.end_msg ?? Math.max(s.message_count, 1);
     const to = Math.min(requestedTo, from + DEFAULT_MSGS - 1); // 不指定 end_msg 时最多 20 条
     const cap = args.max_chars ?? DEFAULT_CHARS;
+
+    // [1021 红队 R13] 稳定主键回查（seq 会漂）：给了 message_id 就只回这一条；
+    //   查不到 = 原文已归档 —— 明说，不许回一个空数组让调用方猜。
+    if (args.message_id !== undefined && args.message_id !== null) {
+      const m = getMessageById(db, s.id, args.message_id);
+      if (!m) {
+        return toolOut({ found: false, sessionId: s.id, msgId: args.message_id, reason: '原文已归档：该 msgId 在库里已无对应消息（seq 也不可信，故不回落）' });
+      }
+      const content = m.content.length > cap
+        ? m.content.slice(0, cap) + `…(全文 ${m.content.length} 字，max_chars 可调大)`
+        : m.content;
+      return toolOut({
+        found: true, via: 'msgId', session: sessionBrief(db, s.id),
+        range: [m.seq_num, m.seq_num], totalInDb: s.message_count, returned: 1,
+        messages: [{ seq: m.seq_num, msgId: m.id, role: m.role, content, createdAt: m.created_at }],
+        provenance: { sessionId: s.id, source: s.source, createdAt: s.created_at, state: s.state },
+      });
+    }
 
     let msgs = getMessageRange(db, s.id, from, to);
     if (args.role) msgs = msgs.filter((m) => m.role === args.role);

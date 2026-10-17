@@ -212,12 +212,16 @@ export interface RecomputeResult {
   archivedCleaned: number;
 }
 
-/** 取一个待重算会话的当前消息（用于重新跑提取器）。 */
+/** 取一个待重算会话的当前消息（用于重新跑提取器）。
+ *  ⚠️ [1021 红队 R13] SELECT 必须带 `id`：这是**版本重算**写路径，原来不带 id ⇒
+ *    extractDecisions 里的 `msgId: m.id` 恒为 undefined ⇒ v22 的"稳定主键"从来没写进库
+ *    （实测 622 场 / 831 条决策 msgId 覆盖率 **0%**）。读端修好也没东西可读，先补这里。 */
 function messagesOf(db: DB, sessionId: string): Msg[] {
   const rows = db.prepare(
-    'SELECT role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY seq_num',
-  ).all(sessionId) as Msg[];
-  return rows.map(r => ({ role: r.role, content: r.content, seqNum: r.seqNum, createdAt: r.createdAt ?? null }));
+    'SELECT id, role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? ORDER BY seq_num',
+  ).all(sessionId) as Array<{ id: number; role: 'user' | 'assistant'; content: string; seqNum: number; createdAt: string | null }>;
+  // id 归一成字符串：messages.id 是 INTEGER，两条写路径（重算 / confirm）形态保持一致
+  return rows.map((r) => ({ id: String(r.id), role: r.role, content: r.content, seqNum: r.seqNum, createdAt: r.createdAt ?? null }));
 }
 
 /** 重算单个会话的提取字段（写回同一行，不动消息本体）。 */

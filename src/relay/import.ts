@@ -24,6 +24,19 @@ function fingerprint(s: HopSessionFile): string {
   return sha256Hex(s.messages.map((m) => `${m.seq}|${m.role}|${m.content}`).join('\n'));
 }
 
+/** [1021 红队 R13] HOP 包里的 `msgId` 是**导出方库**的 `messages.id`（自增主键），
+ *  导进本库后指向不存在的消息。原样照搬的后果：读取端"有 msgId 但查不到" ⇒ 误报
+ *  "原文已归档"。所以导入时一律剥掉；`seq` 是包内自带、导入后仍成立，读取端会以
+ *  via='seq' 的方式回落（并且**把这个回落计数打出来**，不留痕的回落就是 R13 的半修）。
+ *  question 侧同理，虽然当前导入不写 key_questions，先备好不吃亏。 */
+function withoutForeignMsgIds<T>(arr: T[] | undefined): T[] {
+  return (arr ?? []).map((item) => {
+    const copy = { ...(item as unknown as Record<string, unknown>) };
+    delete copy.msgId;
+    return copy as unknown as T;
+  });
+}
+
 export function runImport(opts: {
   root: string; cfg: RelayConfig; db: DB; pkgPath: string;
   from?: string; quarantine?: boolean; stats?: StatsCounter;
@@ -48,7 +61,7 @@ export function runImport(opts: {
       const { skipped } = insertImportedSession(opts.db, {
         source: s.source, sourceSessionId: s.source_session_id, projectId,
         title: s.title, createdAt: s.created_at, lastEventAt: s.last_event_at,
-        messageCount: s.messages.length, topics: s.topics, decisions: s.decisions,
+        messageCount: s.messages.length, topics: s.topics, decisions: withoutForeignMsgIds(s.decisions),
         summaryRule: s.summary_rule, author: s.author,
         importedFrom: opts.from ?? manifest.exported_by, originProject: s.project_id,
         contentHash: fingerprint(s),
@@ -62,7 +75,7 @@ export function runImport(opts: {
       const { id, skipped } = insertImportedSession(opts.db, {
         source: s.source, sourceSessionId: s.source_session_id, projectId,
         title: s.title, createdAt: s.created_at, lastEventAt: s.last_event_at,
-        messageCount: s.messages.length, topics: s.topics, decisions: s.decisions,
+        messageCount: s.messages.length, topics: s.topics, decisions: withoutForeignMsgIds(s.decisions),
         summaryRule: s.summary_rule, author: s.author,
         importedFrom: opts.from ?? manifest.exported_by, originProject: s.project_id,
         contentHash: fingerprint(s), sourceFile: opts.pkgPath,
