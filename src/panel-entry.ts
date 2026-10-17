@@ -11,6 +11,8 @@ export {
   panelOverview, panelProjectCard, panelLessons, panelLifecycle, watchdogOnline,
   panelCompression, panelConfigView, panelApplyConfig,
   panelGraph,
+  // [1021 安全轴] 面板 API 的 root 白名单校验（lib/index.js 的 METHODS 里调用）
+  assertRegisteredRoot,
   PANEL_CRITERIA,
 } from './panel/snapshot.js';
 export type {

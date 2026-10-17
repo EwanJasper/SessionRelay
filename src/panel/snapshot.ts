@@ -228,6 +228,36 @@ export interface PanelOverview {
   scopeNote: string;
 }
 
+// ── [1021 安全轴] 面板 API 的 root 参数**校验** ──
+//
+// 问题：`root` 从 HTTP 查询参数进来（`lib/index.js` 里 `String(params.root || '')`），
+//   一路传到 `dbFile(root)` = `path.join(root, '.sessionrelay', 'relay.sqlite')` 并**直接读**。
+//   全程零校验 ⇒ 任何能打到这个本地 HTTP 端点的人都可以拿它**探任意路径**
+//   （至少能判断某目录下有没有可读的 SQLite，属信息泄露 + 路径探测）。
+//
+// 修法：面板本来就**只需要显示已登记的项目**，白名单就是注册表本身。
+//   这比「禁 `..`、禁盘符」更稳 —— 路径校验的黑名单很难写全（短路径 8.3、符号链接、UNC、大小写），
+//   而「只认注册过的」是一个**封闭集合**。
+export function assertRegisteredRoot(root: string): string {
+  // ⚠️ 必须先拒空：`path.resolve('')` 会返回**当前工作目录**，而 cwd 往往恰好就是个合法项目
+  //   （仓库自带 .sessionrelay）⇒ 空参数会被静默当成「当前项目」，比报错危险得多。
+  const raw = String(root ?? '').trim();
+  if (!raw) throw new Error('缺少参数 root（项目根目录）');
+  const want = path.resolve(raw);
+  // ① 已登记的项目根 —— 正常路径
+  let ok = false;
+  try { ok = registryCandidates().some((c) => path.resolve(c.root) === want); } catch { ok = false; }
+  // ② 未登记、但确实是个**已初始化的 SessionRelay 项目**（目录下有 .sessionrelay）。
+  //   为什么要放这一条：面板自检会建一个临时项目来测写入路径；只认注册表会把它拒掉。
+  //   而且「用户刚 init 还没进注册表」也是合法场景。
+  //   安全上仍然收紧：攻击面从「任意路径」缩到「必须含 .sessionrelay 的路径」，
+  //   而这正是本系统唯一会去读的结构 —— 等价于「只能探到 SessionRelay 项目」。
+  if (!ok) {
+    try { ok = fs.existsSync(path.join(want, '.sessionrelay')); } catch { ok = false; }
+  }
+  if (!ok) throw new Error('拒绝访问：既不是已登记的项目根，也不含 .sessionrelay（' + String(root).slice(0, 100) + '）');
+  return want;
+}
 export function panelOverview(opts: { focus?: string | null } = {}): PanelOverview {
   const errors: string[] = [];
   const candidates = registryCandidates();
