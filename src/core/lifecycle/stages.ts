@@ -9,7 +9,7 @@
 //   ② 每个阶段**独立到期**（各自节奏），不是"每 30 分钟把所有阶段都跑一遍"；
 //   ③ 有损阶段（L3）必须带门禁，门禁不过就回滚并写 health_events。
 
-export type StageId = 'capture' | 'extract' | 'consolidate' | 'compact' | 'cleanup' | 'aging' | 'distribute' | 'guard' | 'repair';
+export type StageId = 'capture' | 'extract' | 'consolidate' | 'compact' | 'cleanup' | 'tags' | 'aging' | 'distribute' | 'guard' | 'repair';
 
 export interface StageSpec {
   id: StageId;
@@ -36,6 +36,12 @@ export const STAGES: StageSpec[] = [
   { id: 'consolidate', title: '经验衰减 / 退休 / 冲突标记', everySec: 3600, mutates: true, weight: 'light' },
   { id: 'compact', title: '无损去重（同会话精确重复）', everySec: 3600, mutates: true, weight: 'light' },
   { id: 'cleanup', title: '派生列清洗（topics/files 噪声）', everySec: 3600, mutates: true, weight: 'light' },
+  // [1021] 标签图谱重建：**必须进生命周期，否则它会烂掉**。
+  //   此前它只由 `scripts/graph-tag-build.mjs` 手动建一次，会话一变就与库不一致 ——
+  //   而 `core/graph/expand.ts` 读它时只会在空表时提示「先跑脚本」，**不会自己重建**。
+  //   这属于「模块做完 ≠ 进入运行」的同类问题（时间衰减那轮刚吃过一次）。
+  //   体量 light：实测 620 会话全量重建 1.3s，可跑在宿主进程内；每天一次足够。
+  { id: 'tags', title: '标签图谱重建（检索扩展 / 逐词溯源用）', everySec: 86400, mutates: true, weight: 'light' },
   { id: 'aging', title: '老化压缩（老会话正文→摘要，结论留全）', everySec: 86400, mutates: true, lossy: true, weight: 'heavy' },
   { id: 'distribute', title: '分发（简报段 / 面板 / 导出）', everySec: 900, mutates: false, weight: 'light' },
 ];

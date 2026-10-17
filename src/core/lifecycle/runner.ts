@@ -24,6 +24,7 @@ import { runSync } from '../../capture/sync.js';
 import { recomputeExtractions } from '../../capture/recompute.js';
 import { compactExactSessions } from '../compact/exact.js';
 import { cleanDerivedColumns } from '../extract/derived-cleanup.js';
+import { buildTagGraph } from '../graph/tags.js';
 import { autoArchiveProject, autoArchivePolicyOf } from '../../capture/archive.js';
 import { integrityOf, repairProject } from './repair.js';
 import {
@@ -233,6 +234,31 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
       const res = eachProject((_root, db) => cleanDerivedColumns(db, { apply: true }));
       const changed = res.reduce((a, x) => a + (x.r?.changed ?? 0), 0);
       return changed ? changed + ' 场会话的派生列已清洗（共丢 ' + res.reduce((a, x) => a + (x.r?.droppedKinds ?? 0), 0) + ' 种噪声）' : '0 场（本来就是干净的）';
+  });
+
+  // ── [1021] 标签图谱重建（light）──
+  //   为什么进生命周期：`scripts/graph-tag-build.mjs` 是手动脚本，而 `core/graph/expand.ts`
+  //   读到空表只会提示「先跑脚本」不会自建 ⇒ 会话一多图就与库不一致、且**没有任何机制发现**。
+  //   体量 1.3s/620 会话，daily 足够；失败只告警不阻塞（图是增强，不是主链路）。
+  if (todue.some((s) => s.id === 'tags')) await runOne(specOf('tags'), () => {
+    // reuse 默认 true：会话数没变时直接跳过（图没变就不重建，省 1.3s）
+
+    // ⚠️ `eachProject` 已经把回调返回值放进 `r` 了 —— 回调**直接返回 stats**，不要再套一层 {r:...}，
+    //   否则读的是 `x.r.tags` = undefined（我第一版就写错成双重包装，实测一直报「0 个标签」）。
+    type TagStats = { tags?: number; edges?: number; reused?: boolean };
+    const res = eachProject<TagStats | null>((_root, db) => {
+      try { return buildTagGraph(db) as TagStats; } catch { return null; }
+    });
+    let tags = 0, edges = 0, failed = 0, reused = 0;
+    for (const x of res) {
+      if (x.err || !x.r) { failed++; continue; }
+      if (x.r.reused) { reused++; continue; }   // 会话数没变 ⇒ buildTagGraph 自己跳过，不是失败
+      tags += x.r.tags ?? 0; edges += x.r.edges ?? 0;
+    }
+    if (failed > 0) return '⚠️ ' + failed + ' 个库重建失败（图是增强，不影响检索）';
+    // 报文必须区分「跳过」和「建了 0 个」—— 原来一律写 0，看起来像坏了（实测我自己就被骗了一次）
+    if (tags === 0 && edges === 0 && reused > 0) return '已是最新（' + reused + ' 个库跳过，图未变）';
+    return tags + ' 个标签 / ' + edges + ' 条共现边已刷新';
   });
 
   // ── ⑨ 老化压缩（heavy；有损，ADR-003 强度门）──
