@@ -57,7 +57,9 @@ import {
 // 为什么静态 import 这两个模块而不是等 index.ts 转出口：契约 §3 已冻结它们的签名，
 // 静态 import 能让 tsc 在**这里**就把签名对错抓出来（转出口只是转手，抓不住漂移）。
 import { checkSources, type ChangesReport } from '../map/stale.js';
-import { renderMapMermaid } from '../map/bridge.js';
+// kanbanLabelKey：看板里那个单元格长什么样（写侧唯一实现）。读侧必须用同一个键去对名，
+// 否则「地图自己的投影对不上自己」⇒ 永久冻结（见 bridge.ts 里的注释）。
+import { kanbanLabelKey, renderMapMermaid } from '../map/bridge.js';
 import { readDepColumn, readKanbanRows } from './kanban.js';
 // 开工档位（map.hatch）读的是项目配置。读不到就用默认 always —— 配置坏了不该让自动孵化停摆。
 import { loadConfig } from '../shared/config.js';
@@ -1265,8 +1267,23 @@ function upgradeHatchedMap(root: string, existing: { page: MapPage; revision: st
   //   buildImportNodes 按**看板状态**算出来的 nodes ⇒ 整页 remove+declare 之后，
   //   人在地图里改成 blocked 的节点会被悄悄改回 doing。
   //   地图是结构真值，看板只是它的投影 —— 补齐分层这件事只该动「层和边」，不该动状态。
-  const prevStatus = new Map(page.nodes.map((n) => [n.id, n.status]));
-  const keptNodes = nodes.map((n) => ({ ...n, status: prevStatus.get(n.id) ?? n.status }));
+  // ⚠️ 保住的不只是 status（红队 P3 实测）：原来只回填 status，evidence 变 undefined、
+  //   detail 被看板第 4 格覆盖 —— 而这段注释自己写着「只该动层和边」。
+  //   凡是**人在图里写的**字段（status/evidence/detail/sources）都按 id 原样带回来；
+  //   层与边（layer/edges）是这次操作真正要改的东西，不保。
+  const prev = new Map(page.nodes.map((n) => [n.id, n]));
+  const keptNodes = nodes.map((n) => {
+    const p = prev.get(n.id);
+    if (!p) return n;
+    return {
+      ...n,
+      status: p.status,
+      ...(p.evidence !== undefined ? { evidence: p.evidence } : {}),
+      ...(p.detail !== undefined ? { detail: p.detail } : {}),
+      ...(p.sources !== undefined ? { sources: p.sources } : {}),
+      ...(p.group !== undefined ? { group: p.group } : {}),
+    };
+  });
   const operations = [
     // remove 的 data 是「片段」而不是单个 id：{nodes:[{id}]} / {layers:[{id}]}（实测踩到过）
     { op: 'remove' as const, data: { nodes: page.nodes.map((n) => ({ id: n.id })) } },
@@ -1324,25 +1341,37 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
     const rows = readKanbanRows(root).filter((r) => !isMachineRow(str(r[3]).trim()));
     if (rows.length === 0) return { ...none, note: 'progress.md 里没有可解析的人写行' };
 
-    const byLabel = new Map(page.nodes.map((n) => [n.label.trim(), n]));
+    // ⚠️ 键必须走**与投影同一个函数**（红队 P2 实测打回）：
+    //   地图节点的 label 投影到看板时会被 flatText 拍平/折空白、被 clip 截到 60 字，
+    //   而这里原来直接用原 label ⇒ **地图自己的投影对不上自己**：
+    //   只剩自身投影 + 1 条新人写行时 matched=0 ⇒ 判成「人写结构图」⇒ 永久冻结（不可自愈）。
+    //   实测 3/3：`甲|x`→`甲/x`、`A  双空格`→`A 双空格`、70 字→60 字+`…`。
+    const byLabel = new Map(page.nodes.map((n) => [kanbanLabelKey(n.label), n]));
     // 「原本就在图里」的 label 集合 —— matched 只认它。
     //   红队实测：`byLabel` 在下面会补进本轮新建的 label（防同名节点），如果 matched 直接读 byLabel，
     //   那**同轮重复的行**就会被算成「匹配」⇒ 6 节点人写图 + 20 新行 + 5 条重复 ⇒ matched=5 ⇒
     //   上限 25 ≥ 20 ⇒ 照塞 20 个噪音节点。护栏必须只认**存量**匹配。
     const originalLabels = new Set(byLabel.keys());
     const usedIds = new Set(page.nodes.map((n) => n.id));
-    let matched = 0;
+    // 命中的 label 用**集合**记，不按行累加（红队 P2 实测）：
+    //   原来两行同名就 matched += 2 —— 于是 5 份重复的「甲」+ 20 条新行 ⇒ matched=5 ⇒
+    //   上限 25 ⇒ 照塞 20 个噪音节点；而只留 1 份「甲」时同样 20 行 ⇒ added=0。
+    //   同一场景两种结果，差别只是「粘错了 5 行」。note 里说「对上 5 个节点」，其实是**1 个节点 5 行**。
+    const matchedLabels = new Set<string>();
     const statusOps: Array<{ id: string; status: MapStatus }> = [];
     const fresh: Array<{ id: string; label: string; layer: string; status: MapStatus }> = [];
     for (const c of rows) {
       // `|` 必须剥掉（红队观察实测）：label 含竖线时，它投影出的看板行会被 readKanbanRows 切错格、
       //   当成一条人写行读回来 ⇒ 下一轮多出一个幻影节点（kb1:A）。表格分隔符不该出现在内容里。
-      const label = str(c[1]).replace(/\|/g, '/').trim().slice(0, LABEL_MAX);
+      // 键统一走 kanbanLabelKey（与投影写侧同一个函数）：这样「地图节点」和「看板行」才真能对上名。
+      const raw = str(c[1]).replace(/\|/g, '/').trim();
+      const label = raw.slice(0, LABEL_MAX);
       if (!label) continue;
+      const key = kanbanLabelKey(raw);
       const want = importStatus(str(c[2]).trim());
-      const have = byLabel.get(label);
+      const have = byLabel.get(key);
       if (have) {
-        if (originalLabels.has(label)) matched++;   // 只认存量（见 originalLabels 注释）
+        if (originalLabels.has(key)) matchedLabels.add(key);   // 只认存量，且按去重后的键计
         // ⚠️ **不反推 status**（2026-10-18 红队实测打回）：
         //   文档 docs/map-cli.md:415 明写「想让下一场会话看见什么，就写进地图的 context.next 与节点状态，
         //   而不是去手改 progress.md」，:410 也写「投影不改地图里的 status」。
@@ -1353,7 +1382,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       }
       // 同一轮里同一个 label 只建一个节点（红队 P2：复制行/120 字截断撞车会产生**同名节点**，
       //   其中一个永远收不到更新）。byLabel 里也要补上，否则同一 label 的两行会各建一个。
-      if (byLabel.has(label)) continue;
+      if (byLabel.has(key)) continue;
       if (fresh.length >= MAX_ADD_PER_ROUND) continue;
       // ⚠️ id 必须符合 MAP_ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/ —— **下划线非法**。
       //   原写法 'kb1' 撞名时拼成 'kb1_x' ⇒ 被 REFUSED ⇒ 整批操作被拒 ⇒ 此后新增与状态同步永久停摆。
@@ -1362,7 +1391,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       const nextKb = nextKbIndex(usedIds);
       const id = 'kb-' + String(nextKb);
       usedIds.add(id);
-      byLabel.set(label, { id, label, layer: INBOX_LAYER_ID, status: want } as never);
+      byLabel.set(key, { id, label, layer: INBOX_LAYER_ID, status: want } as never);
       fresh.push({ id, label, layer: INBOX_LAYER_ID, status: want });
     }
     // ── 匹配率护栏（2026-10-18 现场实测后被逼出来的）──
@@ -1383,6 +1412,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
     let freshGuarded = fresh;
     let guardNote = '';
     // matched === 0 ⇒ 一个都对不上，绝不新增（硬线）；有匹配时才按倍数放宽。
+    const matched = matchedLabels.size;
     const allowAdd = matched === 0 ? 0 : Math.max(3, matched * 5);
     if (fresh.length > 0 && page.nodes.length > 0 && fresh.length > allowAdd) {
       freshGuarded = [];

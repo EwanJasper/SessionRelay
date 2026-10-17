@@ -129,7 +129,9 @@ export async function repairProject(root: string): Promise<RepairOutcome> {
       // ⚠️ 失败时必须把 kind 改掉（红队实测）：原来失败也返回 `...before`（kind 仍是 missing），
       //   而 runner 只把 corrupt/error 计入失败 ⇒ 自愈停摆了却显示 ✅、health_events 也不记。
       //   missing + repaired:false = 「本该建起来却没建起来」= 真失败。
-      if (!after.ok) {
+      // ⚠️ 只有**真失败**才改 kind（红队 P3）：建库成功但紧接着被别的进程占住 ⇒ after.kind='busy'，
+      //   那不该算失败（下一轮自然会好），更不该被改写成 error。
+      if (!after.ok && after.kind !== 'busy') {
         return { ...after, kind: 'error', repaired: false, mode: 'rename',
           note: '库缺失但新建没成功（' + after.kind + '，不是「本轮跳过」）：+' + r.newSessions + ' 场 / +' + r.newMessages + ' 条' };
       }

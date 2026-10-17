@@ -167,13 +167,14 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   // 判据实现在 claude-code/tailer.ts 的 readTailProbe，三适配器共用一份。
   if (offset > 0 && typeof cur.tailHash === 'string') {
     const probe = await readTailProbe(ds.sourceFile, offset);
-    if (probe !== null && probe !== cur.tailHash) {
+    if (probe === null || probe !== cur.tailHash) {   // null = 文件变短，同样算重写
       offset = 0;
       lines = 0;
       rewrites += 1;
     }
   }
   const t = await tailCompleteLines(ds.sourceFile, offset, lines);
+  if (t.rewrote) rewrites += 1;   // tailer 内部判出的「变短重写」也要推进代际（见 claude-code 那份注释）
   const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;

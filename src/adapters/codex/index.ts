@@ -153,13 +153,14 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   // （seqNum = 行号，重写后必须重排）。留痕：rewrites 计数写进游标，source_files.cursor 里看得见。
   if (offset > 0 && typeof cur.tailHash === 'string') {
     const nowProbe = await readTailProbe(ds.sourceFile, offset);
-    if (nowProbe !== null && nowProbe !== cur.tailHash) {
+    if (nowProbe === null || nowProbe !== cur.tailHash) {   // null = 文件变短，同样算重写
       offset = 0;
       consumed = 0;
       rewrites += 1;
     }
   }
   const t = await tailCompleteLines(ds.sourceFile, offset, consumed);
+  if (t.rewrote) rewrites += 1;   // tailer 内部判出的「变短重写」也要推进代际（见 claude-code 那份注释）
   const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;

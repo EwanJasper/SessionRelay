@@ -278,7 +278,11 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
     //   改用 1e9 起的固定空间：真实行号到不了那里，且按 compParts 顺序递增 ⇒ 幂等。
     // 用 time_created（秒）做偏移：不同压缩摘要 seq 天然不同，同一批重跑又完全一致（幂等）。
     // 原来每轮从 1e9 重置 ⇒ 第二轮摘要又是 1e9+1 ⇒ UNIQUE 撞 + INSERT OR IGNORE ⇒ 静默丢弃。
-    const compSeqBase = (cp: { time_created: number }) => 1_000_000_000 + (Math.floor(cp.time_created / 1000) % 100_000_000);
+    // ⚠️ 不要取模（第三轮验证红队 P3）：`% 1e8` 的周期是 3.17 年，回绕点 2027-01-15T08:00Z，
+    //   回绕瞬间 seq 从 1 099 999 999 掉回 1 000 000 000 —— 跨回绕的会话里新摘要 seq
+    //   **低于**旧摘要 ⇒ ORDER BY seq_num DESC（semantic 的 tail）与导出的时间序倒置。
+    //   不取模：1e9 + 秒 唯一且单调，容量到 3 万年，比任何真实库的寿命都长。
+    const compSeqBase = (cp: { time_created: number }) => 1_000_000_000 + Math.floor(cp.time_created / 1000);
     for (const cp of compParts) {
       try {
         const data = JSON.parse(cp.data);

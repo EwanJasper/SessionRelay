@@ -78,13 +78,19 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   //   老游标没有 tailHash（这个字段是后加的）⇒ 跳过检查，保持向后兼容。
   if (offset > 0 && typeof cur.tailHash === 'string') {
     const probe = await readTailProbe(ds.sourceFile, offset);
-    if (probe !== null && probe !== cur.tailHash) {
+    // probe === null = 文件比 offset 还短。那**也是重写**（而且是更确定的一种）：
+    //   原来这里 `probe !== null &&` 把它当「跳过」，于是变短的重写连代际都不推进。
+    if (probe === null || probe !== cur.tailHash) {
       offset = 0;
       lines = 0;
       rewrites += 1;
     }
   }
   const t = await tailCompleteLines(ds.sourceFile, offset, lines);
+  // ⚠️ tailCompleteLines 内部还会自己判一次「文件变短」并**就地复位** offset/行号；
+  //   那条路径不经过 tailHash 分支 ⇒ 必须靠它回传的 rewrote 来推进代际，
+  //   否则行号从 1 重数而 genBase 不变 ⇒ seq 撞上一代 ⇒ 新正文永久写不进库。
+  if (t.rewrote) rewrites += 1;
   const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;

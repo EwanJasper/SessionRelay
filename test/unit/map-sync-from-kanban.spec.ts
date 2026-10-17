@@ -140,4 +140,27 @@ describe('看板 → 地图增量同步', () => {
     const r2 = syncMapFromKanban(d);
     expect(r2.added).toBe(5);
   });
+
+
+  it('★ 重复行不能凑 matched（原病：5 份「甲」+20 新行 ⇒ matched=5 ⇒ 塞 20 个噪音）', () => {
+    const rows = [];
+    for (let i = 0; i < 5; i++) rows.push(['甲', '✅']);   // 5 份同名（粘贴事故）
+    const d = mk(rows);
+    hatchMapFromKanban(d);
+    const more = rows.concat(Array.from({ length: 20 }, (_, i) => ['新任务' + i, '✅']));
+    fs.writeFileSync(path.join(d, 'progress.md'), kanban(more));
+    const r = syncMapFromKanban(d);
+    // 1 个去重 label ⇒ allowAdd = max(3, 5) = 5 < 20 ⇒ 拒绝新增
+    expect(r.added).toBe(0);
+  });
+
+  it('★ 地图自己的投影对不上自己时，不许判成「人写结构图」而永久冻结', () => {
+    // 原病：byLabel 用地图原 label，而投影会拍平/截断 ⇒ 只剩自身投影 + 1 条新行也 added=0。
+    const d = mk([['甲  双空格', '✅'], ['乙|竖线', '✅']]);
+    hatchMapFromKanban(d);
+    fs.writeFileSync(path.join(d, 'progress.md'), kanban([['甲  双空格', '✅'], ['乙|竖线', '✅'], ['新人写行', '✅']]));
+    const r = syncMapFromKanban(d);
+    expect(r.ok).toBe(true);
+    expect(r.added, '两条存量都对得上 ⇒ 应当放行新增，不该判成人写结构图').toBe(1);
+  });
 });

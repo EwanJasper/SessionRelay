@@ -48,6 +48,18 @@ export interface TailResult {
   newOffset: number;      // 已消费字节（到最后完整 \n 之后）
   pendingBytes: number;   // 未消费的残尾字节
   consumedLineCount: number; // 含本次后累计完整行数
+  /**
+   * 本次是否检测到**文件变短式重写**（offset 与行号被就地复位）。
+   *
+   * 为什么必须回传（2026-10-18 第三轮验证红队 P1，端到端实测）：
+   *   这里内部判了 detectRewrite 并静默复位 offset/行号，但**不告诉调用方**；
+   *   而三个适配器只在「tailHash 变了」那一支 `rewrites += 1`。
+   *   于是「变短的重写」走这条分支时：行号从 1 重数、genBase 却不变 ⇒ seq 与上一代撞
+   *   ⇒ upsertMessage 判 conflict ⇒ **库内保留旧正文、新正文永久写不进**。
+   *   实测：重写成更短的 2 行后 new=0 conflicts=1，库里三条一字未变，而源文件已是新的。
+   *   —— 这正是「代际偏移」那条修复要治的病，在同胞路径上原样存在。
+   */
+  rewrote?: boolean;
 }
 
 export async function tailCompleteLines(
@@ -64,11 +76,13 @@ export async function tailCompleteLines(
   //   修法：在这里统一判一次 rewrite —— 判据**只有这一份**，三个适配器共享。
   //     文件变小 = 被截断/重写 ⇒ cursor 从头再来（行号也归零，因为它按会话内确定性计算）。
   //     `>` 而非 `>=`：文件恰好等于 offset 是正常「没有新内容」，不是 rewrite。
+  let rewrote = false;
   if (fromByte > 0) {
     const st = await fh.stat();
     if (detectRewrite(Number(st.size), fromByte)) {
       fromByte = 0;
       consumedLineCount = 0;
+      rewrote = true;   // 必须回传：调用方靠它推进代际（见 TailResult.rewrote 注释）
     }
   }
   const chunks: Buffer[] = [];
@@ -89,7 +103,7 @@ export async function tailCompleteLines(
   const all = Buffer.concat(chunks);
   const lastNl = all.lastIndexOf(0x0a);
   if (lastNl === -1) {
-    return { lines: [], newOffset: fromByte, pendingBytes: total, consumedLineCount };
+    return { lines: [], newOffset: fromByte, pendingBytes: total, consumedLineCount, rewrote };
   }
   // UTF-8 多字节字符不会包含 0x0A，按字节切分安全
   const text = all.subarray(0, lastNl + 1).toString('utf8');
@@ -102,6 +116,7 @@ export async function tailCompleteLines(
     newOffset: fromByte + lastNl + 1,
     pendingBytes: total - (lastNl + 1),
     consumedLineCount: n,
+    rewrote,
   };
 }
 

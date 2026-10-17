@@ -48,7 +48,20 @@ export const MAP_ROWS_MAX = 500;
 const MAP_ROWS_MIN = 2;
 
 /** 任务列上限。看板是给人扫的：一行 120 字的 label 会把表格挤到没法读。 */
-const TASK_CELL_MAX = 60;
+export const TASK_CELL_MAX = 60;
+
+/**
+ * 节点 label 在**看板里长什么样**（写侧口径的唯一实现）。
+ *
+ * 为什么要有它（2026-10-18 红队 P2 实测）：看板→地图同步要拿「地图节点」和「看板行」对名，
+ *   而这两个东西**中间隔着一层投影** —— 投影会把 label 拍平（换行/制表符/竖线）、折叠空白、
+ *   截到 TASK_CELL_MAX 字。用原 label 去对，就会出现「地图自己的投影对不上自己」：
+ *   只剩自身投影 + 1 条新人写行时 matched=0 ⇒ 判成「人写结构图」⇒ **永久冻结、不可自愈**。
+ *   读侧必须用同一个函数算键，这个洞才不存在。
+ */
+export function kanbanLabelKey(label: unknown): string {
+  return clip(flatText(label), TASK_CELL_MAX);
+}
 /** 明细列上限（evidence 契约上限 2000，这里只做"一行摘要"）。 */
 const DETAIL_CELL_MAX = 200;
 
@@ -78,11 +91,11 @@ function errorText(e: unknown): string {
  *   后果：label 含 `|` 的节点投影出的看板行会被切错格、当成一条**人写行**读回来 ⇒
  *   下一轮凭空多出一个幻影节点（护栏放过时）。剥在写侧，这个问题从源头不存在。
  */
-function flatText(v: unknown): string {
+export function flatText(v: unknown): string {
   return typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').replace(/\|/g, '/').replace(/\s+/g, ' ').trim() : '';
 }
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   if (max <= 1) return '';
   return text.length > max ? text.slice(0, max - 1) + '…' : text;
 }
