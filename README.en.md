@@ -52,6 +52,56 @@ The fixes follow three rules: **errors must be visible** (`withDb` gained `onErr
 
 The GIF is silent — full narrated versions (English / 中文, plus a 9:16 vertical cut) are playable directly on the [Releases · v0.2.2](https://github.com/rui08984-dot/SessionRelay/releases/tag/v0.2.2) page.
 
+## Design philosophy: light, but correct
+
+Most "AI memory" projects take the same road: **embeddings + a local LLM that summarises**.
+That path works, but it welds three things into the memory layer — **a model, an inference, a network**.
+
+We refuse all three. **A memory layer should be as quiet, fast and predictable as fsync.**
+
+### Where we diverge from embedding-based memory frameworks
+
+| | Typical embedding + summarise | **SessionRelay** |
+|---|---|---|
+| **What is stored** | Vectors (the original text is discarded after summarising) | **The original text, unmodified** |
+| **How it is found** | Vector similarity | SQLite FTS5 full-text + CJK tokeniser |
+| **Needs a local LLM?** | **Yes** (summarise / extract / score) | **No** — zero inference dependency |
+| **Burns tokens in conversation?** | **Yes** (summary fed in every turn) | **Zero** — capture happens beside the model, not inside your context |
+| **Needs network?** | Often (API calls, model downloads) | **Never** — fully local |
+| **Time to first usable result** | Loads a model, seconds to tens of seconds | **Milliseconds** |
+| **Is memory rewritten?** | **Yes** — a summary is lossy compression, irreversibly | **No** — the original is intact and returned as-is |
+
+### Three things we deliberately gave up
+
+This is not all upside. Three places where we **chose** to lose:
+
+1. **No "smart summaries".** A summary always drops something — and **it does not tell you what it dropped**.
+   We would rather put all 5,000 characters in front of you than say "I condensed it into three sentences".
+   — Real cost: retrieval results are rawer; you scan them yourself. That is our choice.
+
+2. **No "semantic similarity".** If your keywords miss, they miss. You will not get "roughly the same meaning".
+   We compensate with three things: **CJK tokenisation**, a **co-occurrence tag graph** (walk the edges from a different angle),
+   and **`srelay_related`** (anchor on a session, which fixes "I reworded it and got nothing").
+   — Cost: you still have to pick decent keywords. Semantic search remains **optional**, never the default path.
+
+3. **No "cloud sync".** The store lives in `.sessionrelay/` inside your project. Copy the directory and you have everything.
+   — Cost: no automatic multi-machine sync. If you want it, sync that directory yourself.
+
+### So where is it actually better
+
+Not "more powerful" — **a better fit for this job**:
+
+- **Zero token cost in conversation.** Other schemes spend context in order to "remember"; our capture happens **outside the model**.
+  Chat all day and the memory layer's token cost is **0**.
+- **Deterministic and reproducible.** Same query today, same result next year. No dependency on model version or temperature.
+- **Interruption-safe.** If the daemon crashes, the network drops, or the model goes away — memory is still written.
+- **Auditable.** The database is plain SQLite. You can `SELECT` exactly what was recorded.
+  The question "what has the AI remembered about me" has a **definite answer** here.
+
+> **In one line**: other projects ask "how do we make the model remember more".
+> We ask "**how do a human and the next model get the unmodified facts, on demand**".
+> The first bets that models keep improving; the second bets that your data does not rot. We take the second bet.
+
 ## What you actually see (real screenshots)
 
 Upstream ships a CLI only. We made it **visible** — both images below are real data from this project, not mockups:
