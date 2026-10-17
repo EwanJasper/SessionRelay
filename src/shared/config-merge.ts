@@ -57,6 +57,21 @@ export interface RelayConfig {
     workflow_days?: number;
     check_every_min?: number;
   };
+  /** ═══ 地图自动孵化的「开工档位」（2026-10-18）═══
+   *  自动孵化挂在守护的 runSync 上，**默认 always** —— 与加这个开关之前逐字等价。
+   *  三档：
+   *    always  = 每个有 progress.md 的项目都自动建图（默认；小项目也会得到一张小图）
+   *    complex = 只有可解析的看板行 ≥ complex_min_rows 才建（小项目不打扰）
+   *    manual  = 从不自动建；等用户显式说要建图（`srelay map import`）
+   *  为什么要它：用户原话是「设一次永久生效」—— 不该每次都去说「这个项目要建图」。
+   *  为什么默认 always：改默认值等于改所有人的行为，而这条功能上线后已经在 7 个项目上跑过，
+   *    没有人抱怨噪音。想省噪音的人自己改成 complex，不必让所有人陪跑。
+   */
+  map?: {
+    hatch?: 'always' | 'complex' | 'manual';
+    /** complex 档的门槛：可解析看板行数 ≥ 这个值才建图（默认 5） */
+    complex_min_rows?: number;
+  };
   /** 时间衰减（1021；模块见 core/decay/）。**默认关**，只乘排序分数不过滤。
    *  ⚠️ 经验（lesson）线别用它：store/lesson-gate.ts 已有线性年龄扣分，两套一起用 = 衰减两次。 */
   decay?: import('../core/decay/decay.js').DecayConfig;

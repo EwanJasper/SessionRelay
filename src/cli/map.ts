@@ -59,6 +59,8 @@ import {
 import { checkSources, type ChangesReport } from '../map/stale.js';
 import { renderMapMermaid } from '../map/bridge.js';
 import { readDepColumn, readKanbanRows } from './kanban.js';
+// 开工档位（map.hatch）读的是项目配置。读不到就用默认 always —— 配置坏了不该让自动孵化停摆。
+import { loadConfig } from '../shared/config.js';
 // 依赖列 → 分层 + 真边（纯函数，test/unit/plan-graph.spec.ts 穷举过）。
 import { buildPlanLayout, type PlanDep, type PlanEdge, type PlanLayer, type PlanNode } from '../map/plan-graph.js';
 
@@ -1189,6 +1191,25 @@ function buildImportNodes(rows: string[][], file: string): BuiltNodes {
   return { ok: true, value: { layers, nodes, edges, skipped, truncated, unresolved, ambiguous } };
 }
 
+/** 开工档位（map.hatch）。读不到配置 / 值不认识 → always，与加这个开关之前逐字等价。 */
+function hatchLevelOf(root: string): 'always' | 'complex' | 'manual' {
+  try {
+    const v = loadConfig(root)?.map?.hatch;
+    if (v === 'always' || v === 'complex' || v === 'manual') return v;
+  } catch { /* 配置读不到按默认走：自动孵化不该因为配置坏了就停摆 */ }
+  return 'always';
+}
+
+/** complex 档的门槛（默认 5 行）。 */
+// 非法值不许静默变成 0 —— 那等于把 complex 悄悄变成 always，用户设了等于没设。
+function hatchMinRowsOf(root: string): number {
+  try {
+    const v = Number(loadConfig(root)?.map?.complex_min_rows);
+    if (Number.isFinite(v) && v >= 1) return Math.floor(v);
+  } catch { /* 同上 */ }
+  return 5;
+}
+
 /**
  * 孵化/升级共用的一句话总结（**文案只有一份**）：把「几个节点 / 几层 / 几条边」说清楚，
  * 再把解析不上的依赖原样报出来 —— 静默丢掉未解析的片段，等于让人以为依赖都建好了。
@@ -1266,6 +1287,15 @@ export function hatchMapFromKanban(root: string): { ok: boolean; imported: numbe
   try {
     const file = path.join(root, 'progress.md');
     if (!fs.existsSync(file)) return { ok: false, imported: 0, skipped: 0, note: '没有 progress.md，无需孵化' };
+    // ── 开工档位（用户要的「设一次永久生效」）──
+    //   判据放在**最前面**：档位是 manual 时连 progress.md 都不该读，否则「不建图」这句话只是没生效而已。
+    const level = hatchLevelOf(root);
+    if (level === 'manual') return { ok: false, imported: 0, skipped: 0, note: '开工档位=manual，不自动建图（要建请跑 srelay map import）' };
+    if (level === 'complex') {
+      const n = readKanbanRows(root).filter((r) => !isMachineRow(str(r[3]).trim())).length;
+      const need = hatchMinRowsOf(root);
+      if (n < need) return { ok: false, imported: 0, skipped: 0, note: '开工档位=complex，人写行 ' + String(n) + ' < 门槛 ' + String(need) + '，暂不建图' };
+    }
     const existing = readPageIfExists(root);
     if (!existing.ok) return { ok: false, imported: 0, skipped: 0, note: '地图读不了：' + errorLine(existing.error) };
     if (existing.value !== undefined) return upgradeHatchedMap(root, existing.value);
