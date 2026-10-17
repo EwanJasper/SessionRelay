@@ -56,7 +56,7 @@ program
 
 program
   .command('forget [id]')
-  .description('彻底遗忘：整条会话（含决策）从本库消失，永不复活（空间老化用 archive，彻底消失用 forget）')
+  .description('彻底遗忘：整条会话（含决策）从本库消失、永不复活。省空间用 archive，彻底消失才用它')
   .option('--session <id>', '限定捕获会话（防误删笔记）')
   .option('--note <id>', '限定笔记')
   .option('--all', '整库重置（需 --confirm <projectId>，守护运行中拒绝）')
@@ -80,7 +80,7 @@ program
 
 program
   .command('compress')
-  .description('L3 模型压缩：用生成模型把旧决策/旧经验合成上级条目（默认关；原文永不删；可审计可回滚）')
+  .description('模型压缩：把旧决策合成上级条目。默认关、原文永不删、可审计可回滚')
   .option('--dry-run', '看它会合并什么（不调模型、不写库）')
   .option('--apply', '真跑：调模型 + 写审计（原文快照进 compress_detail）')
   .option('--write-back', '配 --apply：把合并结果写回数据（原文只加 compressed_into 标记，不删不改；简报跳过、检索照旧）')
