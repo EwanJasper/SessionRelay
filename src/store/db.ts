@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import { toSearchText } from '../core/tokenize/tokenizer.js';
 import { stripInjected } from '../core/extract/extract.js';
 import { EXTRACT_VERSION } from '../core/extract/version.js';
-import { decisionKey } from './decision-validity.js';
+import { decisionAgeDays, decisionKey } from './decision-validity.js';
 
 // 便捷再导出：dbFile 常被误从本模块导入（实测已误 4 次），统一出口消灭此类错误
 export { dbFile } from '../shared/paths.js';
@@ -850,6 +850,9 @@ export interface DecisionRow {
   msgId?: string | number;
   /** ADR-001：这条决策是否编码"否掉一条路"。缺省视为 'decision'（存量数据无此字段）。 */
   kind?: 'decision' | 'negative';
+  /** 这条决策多旧了（天；0=今天；时间解析不了 = null）。**只用于提醒，不用于隐藏** ——
+   *  本仓不做自动推翻，理由见 decisionAgeDays 的注释。 */
+  ageDays: number | null;
 }
 
 export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string; kind?: 'decision' | 'negative' }): DecisionRow[] {
@@ -879,6 +882,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
   // [1021 决策有效性] 旁表过滤：active=0 的不返回；**无记录的老决策保持 active**（兼容铁律）。
   // 一眼一次批量读（避免每会话一条查询）；SRELAY_SHOW_EXPIRED=1 看全史，默认只看有效结论。
   // 旧库缺旁表时按"无记录=active"处理 —— 绝不能因为读不到表就让所有决策消失。
+  const nowMs = Date.now(); // 一次拍定，同一次读取里所有决策用同一个「现在」比年龄
   const showExpired = process.env.SRELAY_SHOW_EXPIRED === '1';
   let validityBySession: Map<string, Map<string, number>> | null = null;
   if (!showExpired) {
@@ -921,7 +925,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         if (atMs <= prev.atMs) continue;
         prev.atMs = atMs;
         if (prev.idx < 0) continue;   // 之前被 --kind 过滤掉：保持"整键不上"，不因时间更新而复活
-        const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgId: d.msgId, msgAt: d.at, pinned: prev.pinned || d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+        const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgId: d.msgId, msgAt: d.at, pinned: prev.pinned || d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision', ageDays: decisionAgeDays(at, nowMs) };
         // [1015 夜 · 红队 A#2 修复] 覆写前**必须重判 --kind**：
         //   原先直接 out[prev.idx] = row ⇒ `decisions --kind decision` 可能返回 kind='negative' 的行
         //   （构造复现：同键两条，先到的 kind=decision、后到的 kind=negative 且时间更新）。
@@ -932,7 +936,7 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
         out[prev.idx] = row;
         continue;
       }
-      const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgId: d.msgId, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision' };
+      const row: DecisionRow = { at, source: r.source, sessionId: r.id, title: r.title, text: d.text, seq: d.seq, msgId: d.msgId, msgAt: d.at, pinned: d.pinned === true, kind: d.kind === 'negative' ? 'negative' : 'decision', ageDays: decisionAgeDays(at, nowMs) };
       if (wantKind && row.kind !== wantKind) { seen.set(key, { idx: -1, atMs, pinned: row.pinned === true }); continue; }
       seen.set(key, { idx: out.length, atMs, pinned: row.pinned === true });
       out.push(row);

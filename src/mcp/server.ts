@@ -224,6 +224,9 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
         ...(outOfScope > 0 ? { hint: `另有 ${outOfScope} 条决策在 scope 之外，可调用 set_scope({mode:'full'}) 放宽（隐私 ignore 不受影响）` } : {}),
         decisions: limited.map((r) => ({
           at: r.at, text: r.text, kind: r.kind ?? 'decision', pinned: r.pinned === true,
+          // [1026 决策时效] 多旧了 —— 只提醒，不隐藏、不自动推翻（理由见 decisionAgeDays）。
+          //   老结论照样返回，让读的一方自己判断还算不算数；藏起来才是不可恢复的错。
+          ageDays: r.ageDays,
           // [R13] 优先 msgId（稳定主键）；msg 仍是 seq，供不认 msgId 的老消费方用
           provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msgId: r.msgId ?? null, msg: r.seq },
         })),

@@ -4,6 +4,7 @@ import { listDecisions, listUnresolved, resolveMessageRef } from '../store/db.js
 import { searchSessions } from '../search-svc/engine.js';
 import { getSession } from '../store/db.js';
 import { requireRoot, openRelayDb, pc, fmtDate } from './ui.js';
+import { DECISION_STALE_DAYS } from '../store/decision-validity.js';
 
 export async function cmdDecisions(opts: { topic?: string; source?: string; kind?: string; limit?: number; json?: boolean }): Promise<void> {
   const root = requireRoot();
@@ -40,7 +41,11 @@ export async function cmdDecisions(opts: { topic?: string; source?: string; kind
     for (const r of rows) {
       // ADR-001：否定性决策加 ✗，与拍板采用的 ✓ 一眼分开
       const mark = r.kind === 'negative' ? pc.red('✗') : pc.green('✓');
-      console.log(`${pc.dim(fmtDate(r.at))} ${mark} [${r.source}] ${r.text}`);
+      // [1026 决策时效] 老决策打个「旧」标 —— 只提醒、不隐藏。
+      //   为什么不是自动推翻：判「谁推翻了谁」要对话上下文，光看文本推不出来；
+      //   而误判（藏起一条仍有效的结论）是无声的、不可恢复的。所以这里只把「多旧」说出来。
+      const age = r.ageDays === null || r.ageDays < DECISION_STALE_DAYS ? '' : pc.yellow(`  ⚠ ${r.ageDays} 天前定的`);
+      console.log(`${pc.dim(fmtDate(r.at))} ${mark} [${r.source}] ${r.text}${age}`);
       // [R13] 出处：只打印**回查得到**的 range；查不到就说原文已归档（不再给一个查不到的 seq）
       const ref = refOf(r);
       const head = `        出处：「${(r.title ?? '').slice(0, 30)}」 ${r.sessionId}`;

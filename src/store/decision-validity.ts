@@ -24,6 +24,28 @@ export function decisionKey(text: string | null | undefined): string {
     .slice(0, DECISION_KEY_MAX);
 }
 
+/** 超过这么多天的决策，输出时打个「旧」标（不是隐藏，只是提醒）。 */
+export const DECISION_STALE_DAYS = 30;
+
+/**
+ * 这条决策是多久以前定的（整日向下取整；时间解析不了 → null）。
+ *
+ * 为什么本仓**不做自动推翻**（2026-10-18 拍板，不是没做是决定不做）：
+ *   判「这条被那条推翻了」需要对话上下文 —— 光看两条决策文本推不出来。
+ *   而代价不对称：漏判（过时的还显示）代价小、看得见、可恢复；
+ *   误判（仍有效的被藏起来）代价大、且**无声无息** —— 用户根本不知道少了哪一条。
+ *   所以这里只做**可逆**的那一半：把「多旧」如实说出来，让读者自己掂量。
+ *   真要标推翻，走显式声明（和 pin / forget 同类，由人或有上下文的一方发起），
+ *   绝不让推断去猜 —— 猜错一次，整套「已确认结论」就没人敢信了。
+ */
+export function decisionAgeDays(at: string | null | undefined, nowMs: number = Date.now()): number | null {
+  if (typeof at !== 'string' || at.trim() === '') return null;
+  const ms = Date.parse(at);
+  if (!Number.isFinite(ms)) return null;
+  const d = Math.floor((nowMs - ms) / 86400000);
+  return d < 0 ? 0 : d; // 时钟回拨/未来时间按 0 处理：别让一条决策显示成「-3 天前」
+}
+
 export interface DecisionValidityRow {
   session_id: string;
   decision_key: string;
