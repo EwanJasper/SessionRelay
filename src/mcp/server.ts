@@ -106,10 +106,17 @@ function toolAllowlist(): Set<string> | null {
 }
 
 /** 全部工具名（用于白名单完整性校验与 selftest 断言） */
+// ⚠️ 这张表必须**逐字覆盖**下面每一个注册调用的名字（2026-10-18 实测漏过 srelay_lessons）：
+//   漏一个的后果不是崩，而是「全写白名单 = 走全注册」那条优化对它静默失效 ——
+//   用户把 14 个全列上、以为走了白名单，实际走的是全注册分支，行为一样但判据已经错了。
+//   新增工具时**必须同时改这里**；判据在 test/unit/mcp-tool-names.spec.ts（静态对拍，不靠手工数）。
+//   （措辞注意：这里不要写出注册调用的字面写法 —— scripts/check-artifacts.mjs 是按它计数的，
+//     注释长得像代码就会被数成第 15 个调用。）
 const TOOL_NAMES = {
   srelay_search: 1, srelay_show: 1, list_sessions: 1, get_stats: 1, set_scope: 1,
   annotate_session: 1, save_note: 1, export_handoff: 1, import_handoff: 1,
   release_quarantine: 1, link_sessions: 1, get_linked_sessions: 1, suggest_related_sessions: 1,
+  srelay_lessons: 1,
 } as const;
 
 export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise<unknown>): McpServer {

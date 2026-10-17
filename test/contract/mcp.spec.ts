@@ -129,7 +129,12 @@ describe('P7 · MCP 只读子集（SRELAY_MCP_TOOLS 白名单，Phase 1）', () 
     const t = new StdioClientTransport({
       command: process.execPath,
       args: ['--import', `file:///${path.join(REPO, 'node_modules/tsx/dist/loader.mjs').replace(/\\/g, '/')}`, path.join(REPO, 'src/bin/srelay.ts'), 'serve'],
-      env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT, SRELAY_NO_DAEMON_SPAWN: '1', SRELAY_MCP_TOOLS: 'srelay_search,srelay_show,list_sessions,get_stats,set_scope,annotate_session,save_note,export_handoff,import_handoff,release_quarantine,link_sessions,get_linked_sessions,suggest_related_sessions' } as Record<string, string>,
+      env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT, SRELAY_NO_DAEMON_SPAWN: '1', // [1026] 名单必须与 TOOL_NAMES **逐字对齐**（这里原本漏了 srelay_lessons）：
+    //   漏一个的后果实测到了 —— 写满 13 个时 `want.size >= all.size` 不成立，于是走了白名单分支、
+    //   只注册 13 个，而这条测试断言 14 ⇒ 红。它红的时机恰好是「TOOL_NAMES 补全之后」，
+    //   说明这条测试真正测的是「两份名单是否一致」，而它自己的那份名单没人维护。
+    //   ⇒ 现在两份都对到 14，TOOL_NAMES 那边有 test/unit/mcp-tool-names.spec.ts 静态对拍兜底。
+    SRELAY_MCP_TOOLS: 'srelay_search,srelay_show,srelay_lessons,list_sessions,get_stats,set_scope,annotate_session,save_note,export_handoff,import_handoff,release_quarantine,link_sessions,get_linked_sessions,suggest_related_sessions' } as Record<string, string>,
       stderr: 'ignore',
     });
     const c = new Client({ name: 'srelay-full-wl', version: '0.0.0' });

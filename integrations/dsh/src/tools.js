@@ -137,7 +137,10 @@ export const searchTool = defineTool({
         decisions: 'srelay_decisions',
         unresolved: 'srelay_unresolved',
         lessons: 'srelay_lessons',
-        history: 'srelay_history',
+        // MCP 侧（srelay serve）把这个能力叫 kind=files，DSH 侧照抄同一个词 ——
+        // 同一个能力在两个客户端上叫两个名字，最后一定是「用户记住了 A、在 B 上试了没用」。
+        files: 'srelay_history',
+        history: 'srelay_history', // 旧写法留着，已经写 history 的调用不该断
         related: 'srelay_related',
       }
       const target = ROUTE[kind]
