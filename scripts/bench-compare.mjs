@@ -11,6 +11,9 @@
 //   后者在配对数据上过于保守（同样的数据，配对能检出、独立比会漏掉）。
 //   差值 CI 跨 0 ⇒ **没显著**，报告里不许写成"提升"。
 import fs from "node:fs";
+// 统计只许一份：实现在 scripts/bench-stats.mjs，判据在 test/unit/bench-stats.spec.ts。
+// 本脚本只做「读两份结果 + 排版」，不做任何统计推导。
+import { pct, pairedDiffCI, clusterDiffCI, mcnemar } from "./bench-stats.mjs";
 
 const args = process.argv.slice(2);
 const files = args.filter((a) => !a.startsWith("--"));
@@ -24,28 +27,7 @@ const B = JSON.parse(fs.readFileSync(files[1], "utf8"));
 const LABA = opt("labelA", files[0].split(/[\\/]/).pop());
 const LABB = opt("labelB", files[1].split(/[\\/]/).pop());
 
-function pct(s, p) {
-  if (!s.length) return NaN;
-  const i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
-  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
-}
-/** 配对差值 bootstrap：重采样**题**，每次算 mean(a)-mean(b)，取 2.5/97.5 分位 */
-function pairedDiffCI(a, b, iters = 10000, seed = 0xbeef) {
-  const n = a.length;
-  if (!n) return null;
-  const d = a.map((x, i) => x - b[i]);
-  const mean = d.reduce((s, x) => s + x, 0) / n;
-  let s = seed >>> 0;
-  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
-  const out = new Array(iters);
-  for (let t = 0; t < iters; t++) {
-    let sum = 0;
-    for (let k = 0; k < n; k++) sum += d[Math.floor(rnd() * n)];
-    out[t] = sum / n;
-  }
-  out.sort((x, y) => x - y);
-  return { mean, lo: pct(out, 0.025), hi: pct(out, 0.975) };
-}
+
 
 const h1 = (r) => (r.lex === 0 ? 1 : 0);
 const h10 = (r) => (r.lex >= 0 ? 1 : 0);
@@ -80,34 +62,60 @@ const BUCKETS = [
 const f = (x) => (x * 100).toFixed(1) + "%";
 const fs2 = (x) => (x >= 0 ? "+" : "") + (x * 100).toFixed(1) + "pt";
 
-console.log("分桶       题数    A hit@1      B hit@1      Δ hit@1 [95% CI]           判定");
+// ── 两种口径并排 ──
+//   题级（旧）：把 305 道题当 305 个独立样本 ⇒ 同一会话的题被当成互不相关的证据，CI 假窄。
+//   簇级（正确）：按会话整簇重采样 ⇒ 簇内相关性如实进方差。**结论一律以簇级为准。**
+//   两种都打出来不是为了给人挑顺眼的那个，是为了让「差多少」可见。
+console.log("分桶       题数/簇数   A hit@1      B hit@1      Δ hit@1（题级，仅供参考）       Δ hit@1（簇级 = 结论）");
+let anyFlip = false;
 for (const [name, pred] of BUCKETS) {
-  const ra = [], rb = [];
-  for (const k of common) { const x = MA.get(k), y = MB.get(k); if (pred(x) && pred(y)) { ra.push(x); rb.push(y); } }
+  const ra = [], rb = [], pairs = [];
+  for (const k of common) {
+    const x = MA.get(k), y = MB.get(k);
+    if (pred(x) && pred(y)) { ra.push(x); rb.push(y); pairs.push({ target: x.target, a: h1(x), b: h1(y) }); }
+  }
   if (!ra.length) { console.log(name + "     0      （无此题）"); continue; }
   const va = ra.map(h1), vb = rb.map(h1);
-  const d = pairedDiffCI(va, vb);
+  const dq = pairedDiffCI(va, vb);
+  const dc = clusterDiffCI(pairs);
   const meanA = va.reduce((s, x) => s + x, 0) / va.length;
   const meanB = vb.reduce((s, x) => s + x, 0) / vb.length;
-  const sig = !(d.lo <= 0 && d.hi >= 0);
-  const verdict = Math.abs(d.mean) < 1e-9 ? "无变化" : (sig ? (d.mean > 0 ? "★ A 更好" : "★ B 更好") : "不显著");
-  console.log((name + "     " + String(ra.length).padEnd(7) + f(meanA).padEnd(13) + f(meanB).padEnd(13)
-    + (fs2(d.mean) + " [" + fs2(d.lo) + ", " + fs2(d.hi) + "]").padEnd(28) + verdict));
+  // McNemar 只用两个数：b = A对B错，c = B对A错；两张都对/都错的不含「谁更好」的信息
+  let mb = 0, mc = 0;
+  for (let i = 0; i < va.length; i++) { if (va[i] === 1 && vb[i] === 0) mb++; else if (va[i] === 0 && vb[i] === 1) mc++; }
+  const mcn = mcnemar(mb, mc);
+  const sigQ = !(dq.lo <= 0 && dq.hi >= 0);
+  const sigC = !(dc.lo <= 0 && dc.hi >= 0);
+  if (sigQ !== sigC) anyFlip = true;
+  const verdict = Math.abs(dc.mean) < 1e-9 ? "无变化"
+    : (sigC ? (dc.mean > 0 ? "★ A 更好" : "★ B 更好") : "未测出差异");
+  const tie = sigQ !== sigC ? "  ← 题级说显著、簇级说没测出，以簇级为准" : "";
+  console.log((name + "     " + (String(ra.length) + "/" + String(dc.clusters)).padEnd(10) + f(meanA).padEnd(13) + f(meanB).padEnd(13)
+    + (fs2(dq.mean) + " [" + fs2(dq.lo) + "," + fs2(dq.hi) + "]").padEnd(31)
+    + (fs2(dc.mean) + " [" + fs2(dc.lo) + "," + fs2(dc.hi) + "]").padEnd(29) + verdict + tie));
+  console.log("             McNemar: A对B错=" + mb + " · B对A错=" + mc + " · p=" + mcn.p.toFixed(4)
+    + (mcn.p < 0.05 ? "  ★显著" : "  不显著") + (mcn.p < 0.05 && !sigC ? "（与簇级 CI 不一致，需重跑更多题再下结论）" : ""));
+}
+if (anyFlip) {
+  console.log("");
+  console.log("⚠️ 有分桶出现「题级显著、簇级不显著」—— 这是本数据集最容易骗人的形态：");
+  console.log("   305 题只落在 105 个会话上，按题算等于把同一段对话数了 3 遍。结论一律用簇级。");
 }
 
 console.log("");
-console.log("指标细表（A → B）");
+console.log("指标细表（A → B，一律按簇重采样；括号里是簇级 95% CI）");
 for (const [name, pred] of BUCKETS) {
   const ra = [], rb = [];
   for (const k of common) { const x = MA.get(k), y = MB.get(k); if (pred(x) && pred(y)) { ra.push(x); rb.push(y); } }
   if (!ra.length) continue;
   const line = ["hit@1", "hit@10", "MRR"].map((m) => {
     const fn = m === "hit@1" ? h1 : m === "hit@10" ? h10 : mrr;
-    const a = ra.map(fn), b = rb.map(fn);
-    const ma = a.reduce((s, x) => s + x, 0) / a.length, mb = b.reduce((s, x) => s + x, 0) / b.length;
-    const d = pairedDiffCI(a, b);
+    const pairs = ra.map((x, i) => ({ target: x.target, a: fn(x), b: fn(rb[i]) }));
+    const mb = rb.map(fn).reduce((s, x) => s + x, 0) / rb.length;
+    const d = clusterDiffCI(pairs);
     const sig = !(d.lo <= 0 && d.hi >= 0);
-    return m + " " + (mb * 100).toFixed(1) + "% [" + (d.mean >= 0 ? "+" : "") + (d.mean * 100).toFixed(1) + "pt" + (sig ? " ★" : "") + "]";
+    return m + " " + (mb * 100).toFixed(1) + "% [" + (d.mean >= 0 ? "+" : "") + (d.mean * 100).toFixed(1) + "pt"
+      + (sig ? " ★" : "") + " ±" + ((d.hi - d.lo) / 2 * 100).toFixed(1) + "]";
   });
   console.log("  " + name.trim().padEnd(9) + line.join("   "));
 }
