@@ -77,9 +77,17 @@ export function measureFtsSpace(db: Database, file: string): FtsSpaceStats {
   const one = (sql: string): number => {
     try { return Number((db.prepare(sql).get() as { s?: number } | undefined)?.s ?? 0); } catch { return 0; }
   };
+  // [1021 修] 原 SQL 用了 sessions.summary —— 库里没有这一列（真列名是 user_summary / summary_ai），
+  //   SQL 报错被 one() 的 catch 吞成 0 ⇒ contentBytes 恒为 0 ⇒ shouldReclaim 恒 false：
+  //   真实库上"FTS 空间回收"从来没触发过（CLI 实测九个库全是 0.00 倍，正是这个原因）。
+  //   列名错一处就静默失效，所以这里用 merge 到 schema 的 real 列，并在单测里断言 contentBytes>0。
+  // [1021 修 · 第二处静默失效] length(TEXT) 数的是字符不是字节：中文 1 字=3 字节，比值被放大 ~3 倍，
+  //   会把正常库判成病态库（修前 agent1super 3.55 倍会触发回收，实际只有 1.7 倍，见文件顶部病历）。
+  //   统一 length(cast(x AS BLOB)) 数 UTF-8 字节，与病历里的 39.4 MB / 0.86 MB 对齐。
   const contentBytes = one(
-    "SELECT (SELECT SUM(length(coalesce(content,''))) + SUM(length(coalesce(search_text,''))) FROM messages)"
-    + " + (SELECT SUM(length(coalesce(title,''))) + SUM(length(coalesce(summary,''))) FROM sessions) AS s"
+    "SELECT (SELECT sum(length(cast(coalesce(content,'') AS BLOB))) + sum(length(cast(coalesce(search_text,'') AS BLOB))) FROM messages)"
+    + " + (SELECT sum(length(cast(coalesce(title,'') AS BLOB))) + sum(length(cast(coalesce(user_summary,'') AS BLOB)))"
+    + " + sum(length(cast(coalesce(summary_ai,'') AS BLOB))) FROM sessions) AS s"
   );
   const messages = one('SELECT count(*) AS s FROM messages');
   return { fileBytes, contentBytes, messages };

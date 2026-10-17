@@ -19,6 +19,9 @@ import { workspaceKey } from '../shared/workspace.js';
 // 一旦 import 本文件就会被 better-sqlite3 拖住。判据仍只有一份，这里**原样再导出**，
 // 所有老调用点（CLI / MCP / 插件 / hook）一字不改。
 import { GRADES, INJECT_THRESHOLD, DECAY_PER_DAY, isInjectable, liveImportance } from './lesson-gate.js';
+// [1021] 连续强度淘汰判据：**唯一实现**在 core/decay/strength.ts（本文件只做"行 → 信号"的适配，
+// 不重写公式）。注入层判据（isInjectable / liveImportance）保持不动 —— 淘汰闸与注入闸是两件事。
+import { DEFAULT_RECALL_BOOST_DAYS, shouldRetire, strengthOfItem } from '../core/decay/strength.js';
 import type { Grade, Scope, Status, LessonRow } from './lesson-gate.js';
 export { GRADES, INJECT_THRESHOLD, DECAY_PER_DAY, isInjectable, liveImportance };
 export type { Grade, Scope, Status, LessonRow };
@@ -223,6 +226,10 @@ function keepAlive(db: Database.Database, r: LessonRow, now: string): boolean {
   return true;
 }
 
+/** 淘汰判据参数：阈值/衰减率直接来自唯一判据 lesson-gate.ts（不另抄常数），观察窗沿用 INFERRED_GRACE_DAYS。
+ *  strength.ts 用它们把旧线性模型的"出生分"反推成强度天数 S，从而与旧判据逐日等价（见该文件头）。 */
+const STRENGTH_PARAMS = { injectThreshold: INJECT_THRESHOLD, decayPerDay: DECAY_PER_DAY, graceDays: INFERRED_GRACE_DAYS };
+
 export function maintainLessons(db: Database.Database): {
   decayed: number; retired: number; resurrected: number; superseded: number;
   /** 因"反复出现"被拦下、标了 needs_review 的条数 */
@@ -233,6 +240,7 @@ export function maintainLessons(db: Database.Database): {
   const rows = db.prepare('SELECT * FROM lessons').all() as LessonRow[];
   const upd = db.prepare('UPDATE lessons SET status = ?, updated_at = ? WHERE id = ?');
   const now = new Date().toISOString();
+  const nowMs = Date.now();
   let decayed = 0, retired = 0, resurrected = 0;
   let held = 0;
   let probation = 0;
@@ -240,34 +248,45 @@ export function maintainLessons(db: Database.Database): {
   for (const r of rows) {
     // [红队 A-3] **人明确否决的不许被自动复活**：rejected 是终态。
     if (String(r.status) === 'rejected') continue;
-    const live = liveImportance(r);
-    if (live < INJECT_THRESHOLD) {
+
+    const isInferred = String(r.grade) === 'inferred';
+    const hits = Number(r.hits || 0);
+    const ageD = ageDays(r);
+
+    // ── [1021 C1 保留 + 前移] 反复出现的推断经验：**证据本身就该被人看一眼** ──
+    //   原先这段写在"已经要退休"的分支里 ⇒ 强度一旦够高就再也标不到（标记被淘汰判定绑架）。
+    //   现在放在强度判定之前：hits ≥ REPEAT_MARK 一律标记并拦下（次数上限 KEEP_ALIVE_MAX_ROUNDS 不变）。
+    //   边界照旧：只标 needs_review、不改 status ⇒ 仍然进不了注入层（inferred 被闸 1 硬排除）。
+    if (isInferred && r.status !== 'retired' && hits >= REPEAT_MARK && keepAlive(db, r, now)) {
+      held++; heldIds.push(Number(r.id)); continue;
+    }
+
+    // ── [1021] 淘汰判据 = **连续强度** strength < T ──
+    //   取代原来的 live < INJECT_THRESHOLD。S = (出生分 − 阈值)/DECAY_PER_DAY、T = 1/e ⇒
+    //   与旧线性模型**逐日等价**（60/241/422 天的判定由 test/unit/strength.spec.ts 钉死）。
+    //   与旧行为唯一的差别：出生分低于阈值的条目（典型 inferred 1.5）不再"出生即死" ——
+    //   S 反推为负时用观察窗 7 天兜底 ⇒ 先活过一个观察窗；hits/uses 抬高出生分 ⇒ 抬高 S（重放=强化）。
+    //   对 birth 分够高的条目（verified-*），强化已经通过 liveAtBirth 的 bonus 折算进 S；
+    //   对 birth 分不足的 inferred，liveAtBirth 永远够不到阈值（grade 1.5 + bonus 上限 1.0 < 5.5），
+    //   所以另给一条**只对兜底生效**的续命通道 recallBoostDays（每次 hits +30 天，见 strength.ts），
+    //   否则"重放=强化"对 inferred 只是个说法、不产生任何行为差别（实测：20 天前 hits=1 的 inferred 仍被淘汰）。
+    const liveAtBirth = liveImportance(r, nowMs) + ageD * DECAY_PER_DAY;
+    const det = strengthOfItem({
+      liveAtBirth, daysSinceEvidence: ageD, recalls: hits,
+      recallBoostDays: hits * DEFAULT_RECALL_BOOST_DAYS,
+    }, STRENGTH_PARAMS);
+
+    if (shouldRetire(det.strength)) {
       decayed++;
-      // ── [1021 C1] inferred 的上升通道：**反复被采集到的不退休，标成待人工确认** ──
-      //
-      // 病历：采集给助手消息产的候选一律 inferred（1.5 分），而本函数每小时跑一次、
-      //   1.5 < 阈值 5.5 ⇒ **出生即死**。实测 17 条里有 7 条就是这么没的，
-      //   而它们当中可能真有价值 —— 机器不该替人判"这条没用"，它只该说"我不确定"。
-      //
-      // 现在：inferred 且 hits ≥ REPEAT_MARK（=被反复挖到 3 次）⇒ 标 needs_review=1 并**保持原状态**，
-      //   不进回收站。人复核时一眼能看到"这条反复出现过，你来定"。
-      //
-      // 边界守死（三处都不可放宽）：
-      //   · 只对 inferred 生效 —— verified-* 有自己的路径，不走这个例外；
-      //   · 只标 needs_review，**绝不改 status、绝不提分** ⇒ 仍然进不了注入层
-      //     （inferred 被闸 1 硬排除，哪怕 hits 拉满也只有 2.5 分）；
-      //   · 有上限（KEEP_ALIVE_MAX_ROUNDS）：豁免次数记在 source_ref 里，超过 30 轮就不再拦，
-      //     否则一个永远挖得到的垃圾条目会永久占着复核队列。
-      const isInferred = String(r.grade) === 'inferred';
-      const hits = Number(r.hits || 0);
-      if (isInferred && r.status !== 'retired') {
-        // 攒够重复次数 ⇒ 拦下并标记待人工确认
-        if (hits >= REPEAT_MARK && keepAlive(db, r, now)) { held++; heldIds.push(Number(r.id)); continue; }
-        // 还没攒够，但仍在观察窗内 ⇒ 先不判，给它机会再被挖到
-        if (hits < REPEAT_MARK && ageDays(r) < INFERRED_GRACE_DAYS) { probation++; continue; }
-      }
+      // 观察窗：inferred 出生后 7 天内先不判，给它被再次挖到的机会（与旧 C1 的缓刑语义一致）
+      if (isInferred && r.status !== 'retired' && hits < REPEAT_MARK && ageD < INFERRED_GRACE_DAYS) { probation++; continue; }
       if (r.status !== 'retired') { upd.run('retired', now, r.id); retired++; }
-    } else if (r.status === 'retired') { upd.run('verified', now, r.id); resurrected++; }
+    } else if (r.status === 'retired' && !isInferred) {
+      // 复活只给 verified-*：inferred 退休后不该被"强度偶然偏高"抖回来（会与观察窗形成震荡）
+      upd.run('verified', now, r.id); resurrected++;
+    } else if (isInferred && r.status !== 'retired' && hits < REPEAT_MARK && ageD < INFERRED_GRACE_DAYS) {
+      probation++;
+    }
   }
   // [新] 冲突消解：新话压旧话 —— 此前只有"环境事实"抽取有 supersede，决策/经验层完全没有。
   //

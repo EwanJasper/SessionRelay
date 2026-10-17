@@ -10,6 +10,9 @@ import { applyDecay, ageMsOf, type DecayConfig } from '../core/decay/decay.js';
 import { rewriteQuery } from '../core/tokenize/rewrite.js';
 import { expandQueryTags } from '../core/graph/expand.js';
 import type { QueryExpansion, ExpansionTerm } from '../core/graph/expand.js';
+// [1021 · BM25F/BM25+] 打分阶段的两个零成本杠杆。判据与默认值**只在 bm25.ts 一处**（含扫描记录），
+// 这里只接线：不碰 SQL / WHERE / superseded 过滤。
+import { resolveBm25Tuning, fieldWeightedScore, idfOf, bm25PlusBoost, corpusStatsOf } from '../search/bm25.js';
 
 export interface ExtraWhere {
   sql: string;
@@ -36,6 +39,8 @@ export interface SearchHit {
 
 interface UnitHits {
   map: Map<string, { score: number; rid: number }>;
+  /** 本单元命中的**消息条数**（= 词项的文档频率 df，供 BM25+ 算 idf 用；只数现有查询返回的行，不额外查库） */
+  df: number;
 }
 
 function queryUnit(db: DB, expr: string, project: string, extra?: ExtraWhere | null): UnitHits {
@@ -51,7 +56,7 @@ function queryUnit(db: DB, expr: string, project: string, extra?: ExtraWhere | n
     const prev = map.get(r.sid);
     if (!prev || r.sc > prev.score) map.set(r.sid, { score: r.sc, rid: r.rid });
   }
-  return { map };
+  return { map, df: rows.length };
 }
 
 function excerpt(db: DB, rid: number, firstToken: string): string {
@@ -172,6 +177,18 @@ export interface SearchOptions {
   tagInFusion?: boolean;
   /** 扩展明细（可解释）：传一个空对象进来，本次检索把它填满 —— 调用方「打印这个词扩成了哪些词」靠它 */
   tagTrace?: TagTrace | null;
+  /**
+   * [1021 · BM25F] 字段加权：`score = body + w*meta`（meta 面 = 标题+话题）。
+   * true = 用默认权重（bm25.ts 的 BM25F_DEFAULT_META_WEIGHT，bench 扫出来的）；number = 该权重。
+   * 不传 = 关（逐字旧行为）。环境变量 SRELAY_BM25F 等价（opts 优先）。
+   */
+  bm25f?: boolean | number | null;
+  /**
+   * [1021 · BM25+] delta 项：`score += idf·delta`（按命中词项累加）。
+   * true = 默认值（BM25PLUS_DEFAULT_DELTA）；number = 该值。不传 = 关（逐字旧行为）。
+   * 环境变量 SRELAY_BM25PLUS 等价（opts 优先）。
+   */
+  bm25plus?: boolean | number | null;
 }
 
 /** 一次查询扩展的溯源信息（**排查「为什么扩成这些词」的唯一入口**） */
@@ -197,6 +214,8 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   if (units.length === 0) return [];
 
   const unitHits = units.map((u) => queryUnit(db, unitExpr(u), opts.project, opts.extraWhere));
+  // 本轮的打分开关（BM25F / BM25+）。默认 {null,null} = 逐字旧行为；解析与默认值只在 bm25.ts 一处。
+  const bm25 = resolveBm25Tuning(opts);
 
   // ── [1021] 子词回退（治「换说法搜不到」的**第二个机制**）──
   //   实测背景：查询「磁盘空间不足怎么办」找不到标题「我他妈C盘他妈爆炸，就他妈三个G了」的那场。
@@ -298,14 +317,41 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   //   修法：双路都命中 ⇒ 在既有分上**再加** meta 分（权重 META_BOOST）。
   //   ⚠️ 保留「messages 路已有的 snippet/seq」不动 —— 只是加分，不换代表消息。
   //   ⚠️ 这是**默认关**的实验旋钮：先量再接（见 META_BOOST 常量处的说明）。
+  // ── [1021 · BM25F] 字段加权（body 面 = 消息正文，meta 面 = 标题+话题）──
+  //   关（bm25.metaWeight === null）时逐字走旧行为：双路命中加 META_BOOST、meta-only 命中 score*0.5。
+  //   开时统一成 `score = body + w*meta`（meta-only 会话就是 body=0 的特例）——
+  //   这样 w=0.5 恰好与旧的 meta-only 口径一致，w 扫描的起点不会引入「换开关就换聚合方式」的混淆。
   for (const [sid, sc] of metaHits) {
     const existing = hits.find((h) => h.sessionId === sid);
     if (existing) {
-      // 双路命中：加分（META_BOOST=0 时等于旧行为）
-      if (META_BOOST > 0) { existing.score += sc * META_BOOST; existing.viaMeta = true; }
+      if (bm25.metaWeight !== null) {
+        existing.score = fieldWeightedScore(existing.score, sc, bm25.metaWeight);
+        existing.viaMeta = true;
+      } else if (META_BOOST > 0) {
+        existing.score += sc * META_BOOST; existing.viaMeta = true;
+      }
       continue;
     }
-    hits.push({ sessionId: sid, score: sc * 0.5, snippet: '', viaMeta: true, coverage: coverageOf(sid), seq: 0 });
+    hits.push({
+      sessionId: sid,
+      score: bm25.metaWeight !== null ? bm25.metaWeight * sc : sc * 0.5,
+      snippet: '', viaMeta: true, coverage: coverageOf(sid), seq: 0,
+    });
+  }
+
+  // ── [1021 · BM25+] delta 项（下界修正；默认关）──
+  //   数学上 `BM25+ = bm25 + idf·delta`（FTS5 的 bm25 已经是 idf·sat，tf/dl 那半不用重算）。
+  //   idf 用真实 df/N（df = 本单元命中的消息条数，N = 项目消息总数，见 bm25.ts 的 idfOf/corpusStatsOf）。
+  //   ⚠️ 放在覆盖率加权与长度归一**之前**：delta 属于 BM25 分数本身，后面两道是独立的乘性修正，
+  //      否则会变成「delta 也吃长度惩罚」的隐性耦合（长度归一只能有一份，判据见 bm25.ts 顶部）。
+  if (bm25.delta !== null && bm25.delta > 0 && hits.length > 0) {
+    const nDocs = corpusStatsOf(db, opts.project).nDocs;
+    const unitIdf = unitHits.map((uh) => idfOf(nDocs, uh.df));
+    for (const h of hits) {
+      let matchedIdf = 0;
+      for (let i = 0; i < unitHits.length; i++) if (unitHits[i].map.has(h.sessionId)) matchedIdf += unitIdf[i];
+      if (matchedIdf > 0) h.score += bm25PlusBoost(matchedIdf, bm25.delta);
+    }
   }
 
   // [1016 A5] 长度归一化：BM25 的 b 参数思想——长文档天然容易命中更多词，不打折就会霸榜。

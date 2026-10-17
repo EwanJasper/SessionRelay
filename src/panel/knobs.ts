@@ -113,7 +113,9 @@ export const KNOB_SPECS: KnobSpec[] = [
     hint: '守护多久检查一次归档' },
   { path: 'recompute.check_every_min', label: '重算检查间隔（分钟）', type: 'number', min: 1, max: 1440, step: 1,
     hint: '提取规则版本落后时的后台重算节奏（默认 360）' },
-  // ── [1021] 时间衰减（模块 main/core/decay/，默认开）──
+  // ── [1021] 时间衰减（模块 main/core/decay/）──
+// ⚠️ 默认值是**关**（shared/config-merge.ts），D:/agent1super 实测 decay.enabled=false。
+//   这里原写"默认开"与实现对不上 —— 面板显示以**实际值**为准，注释已订正（graph-recall 2026-10-18 报）。
   { path: 'decay.enabled', label: '时间衰减', type: 'boolean',
     hint: '让「最近发生的事」在检索里排得更前。**只乘排序分数、不过滤** —— 老记录仍能搜到，只是排后面；floor 保底 0.25' },
   { path: 'decay.mode', label: '衰减曲线', type: 'string',

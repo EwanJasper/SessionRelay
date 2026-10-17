@@ -15,6 +15,10 @@
 //   ④ 会话状态已是 confirmed（落定过的）
 
 import { isNoteSession } from '../../shared/session-kind.js';
+// [1021 审查 #17 后续] 连续强度判据：**唯一实现**在 core/decay/strength.ts。
+// 本文件不再写任何衰减公式（铁律：判据只许有一份）—— 旧版这里写死了 1 - age/90，
+// 而生产传的窗是 config.archive.hot_days（30），公式里的 90 与真实窗根本不是同一个数。
+import { shouldRetire, strengthOfAge, STRENGTH_RETIRE_THRESHOLD } from '../decay/strength.js';
 
 export interface AgingRow {
   id: string;
@@ -36,27 +40,27 @@ export interface AgingOptions {
   currentVersion: number;
   minDecisions?: number;
   cap?: number;
-  /** 连续强度阈值（0~1）：低于它才考虑归档。见 strengthOf() 的注释 —— 取代原来的布尔状态位。 */
+  /** @deprecated 旧线性强度门（1 − 窗/90）。决策已改用连续强度的常数阈值 T=1/e（见 decay/strength.ts）；
+   *  本字段仅为兼容既有调用方（archive.ts / panel 仍会传）而保留，**不参与判定**。
+   *  窗边界仍落在 minAgeDays 上：strength(minAgeDays) = exp(−minAgeDays/S)，S=minAgeDays ⇒ e^-1 = T。 */
   maxStrength?: number;
 }
 
 /**
- * **连续强度**（0~1，越大越"还被需要"）——取代"布尔状态位"当淘汰判据。
+ * **连续强度**（0~1，越大越"还被需要"）——淘汰判据。核心公式在 core/decay/strength.ts：
+ *   strength = exp(−t/S)（艾宾浩斯保持率）；t = 距最后活动天数，S = 强度天数（本函数取窗 minAgeDays）。
+ * 重放=强化：会话被恢复/追加消息 ⇒ last_event_at 前移 ⇒ t 归零 ⇒ 立刻回血；
+ * 经验层则用 hits/uses 抬高出生分 ⇒ 抬高 S（见 global.ts maintainLessons）。
  *
- * 依据（ADR-003 D1）：MemoryBank 用"强度 + 阈值"剪枝；ACT-R 用 `B = ln(Σ t^-d)`（decay 0.35）；
- * Wixted & Ebbesen 证幂律优于指数。我们不去实现 B 公式（那是给检索用的），而是给**淘汰**一个
- * 连续量：近期活跃 + 派生结论多 = 强度高；又老又没产出 = 强度低。
- * ⚠️ 公式改过一次（记录教训）：第一版给"结论密度"和"对话规模"各 0.3/0.1 权重，结果
- * **结论多的会话反而永远不会被归档** —— 但归档只删**正文**、结论是留着的，所以"结论多"
- * 恰恰是**该归档**的理由（信息已经提炼出来了）。真正决定"正文还要不要"的只有**最近性**：
- * 越近越可能要回原文；越老越只剩结论的价值。
- * 最终公式：`strength = max(0, 1 - ageDays/90)`（0~1），配合 minAgeDays 一起用。
- * 之所以要它：写死 `state==='active'` 这类布尔门的结果是——门一错，计划恒空/恒满，
- * 而且**没人能从数字上看出为什么**（我们的 aging 就在这上面栽过）。连续量可解释、可调、可测。
+ * 为什么不再用"结论多 = 强度高"（记录教训）：归档只删**正文**、结论留着，
+ * 所以"结论多"恰恰是**该归档**的理由；决定"正文还要不要"的只有最近性。
+ * 本函数不再写死 90：分母必须是**调用方真实的窗**（生产是 config.archive.hot_days）。
  */
-export function strengthOf(r: AgingRow, now = Date.now()): number {
+export const DEFAULT_AGING_SPAN_DAYS = 90;
+
+export function strengthOf(r: AgingRow, now = Date.now(), spanDays: number = DEFAULT_AGING_SPAN_DAYS): number {
   const age = ageDays(r.last_event_at, now);
-  return Number(Math.max(0, 1 - age / 90).toFixed(3));
+  return Number(strengthOfAge(age, spanDays).toFixed(3));
 }
 
 function ageDays(at: string | null | undefined, now: number): number {
@@ -76,16 +80,12 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
   const minAge = o.minAgeDays ?? 90;
   const minDec = o.minDecisions ?? 1;
   const cap = o.cap ?? 100;
-  // ── [1021 红队 R15 修复] 默认值**跟着 minAgeDays 走**，不再硬编码 0.25 ──
-  //   原来：`?? 0.25`。而默认 minAgeDays=90 对应 strengthGateOf(90)=0，
-  //   0.25 对应的是 90*(1-0.25)=67.5 天 ⇒ **两个默认值在不同界**。
-  //   注释却写「窗与强度门在数学上边界重合」—— 那句话**只在调用方显式传参时成立**
-  //   （目前唯一生产调用方 archive.ts 确实传了 strengthGateOf(minAgeDays)，所以线上没炸）。
-  //   但 planAging 是**导出的纯函数**：任何新调用方漏传 maxStrength，
-  //   就会得到 67.5 天 vs 90 天两套边界，而且**没有任何断言会红** —— 这正是 1017 前
-  //   「两套判据各说各话」的完整复现条件（红队实测：planAging([60天前], {minAgeDays:60}) 返回 archive=0）。
-  //   修法：默认值由 minAgeDays 现算 ⇒ **在数学上真的重合**，注释才配得上。
-  const maxStrength = o.maxStrength ?? strengthGateOf(minAge);
+  // ── [1021] 窗口即强度时间常数 S，阈值是曲线常数 T=1/e ──
+  //   旧实现有两套"界"：先按 d < minAge 硬门筛，再用强度门（由窗推导）二次筛；而强度公式里
+  //   还写死了 90 —— 生产传 30 时，两个数根本不是同一个界。现在只保留**一个**连续判据：
+  //   strength = exp(−age/S)，S = minAgeDays ⇒ 归档边界仍落在 minAgeDays 天上（strength = e^-1 = T），
+  //   与旧"窗"行为等价，但变成可解释/可调/可测的连续量（红队 R15 那类"两套判据各说各话"不再可能）。
+  //   o.maxStrength 已废弃（见 AgingOptions 注释），仅为兼容既有调用方保留，不参与判定。
   const plan: AgingPlan = { archive: [], kept: [], reasons: {} };
   const cand: AgingRow[] = [];
   for (const r of rows) {
@@ -100,12 +100,14 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
     if (String(r.origin || '') === 'imported' || isNoteSession(r)) { plan.reasons[r.id] = '导入/笔记，不归档'; plan.kept.push(r); continue; }
     if (Number(r.extracted_version ?? -1) !== o.currentVersion) { plan.reasons[r.id] = '规则版本旧，先重算'; plan.kept.push(r); continue; }
     if (decisionCount(r.decisions) < minDec) { plan.reasons[r.id] = '没有派生结论，归档了就真没了'; plan.kept.push(r); continue; }
-    const d = ageDays(r.last_event_at, now);
-    if (d < minAge) { plan.reasons[r.id] = '还不到 ' + minAge + ' 天'; plan.kept.push(r); continue; }
-    const s = strengthOf(r, now);
-    if (s > maxStrength) { plan.reasons[r.id] = '强度 ' + s.toFixed(2) + ' 仍高于阈值 ' + maxStrength; plan.kept.push(r); continue; }
+    // 唯一判据：strength < T（比较只在 shouldRetire 里，见 decay/strength.ts）
+    const s = strengthOf(r, now, minAge);
+    if (!shouldRetire(s)) {
+      plan.reasons[r.id] = '强度 ' + s.toFixed(3) + ' ≥ T' + STRENGTH_RETIRE_THRESHOLD.toFixed(3) + (ageDays(r.last_event_at, now) < minAge ? '（还不到 ' + minAge + ' 天）' : '');
+      plan.kept.push(r); continue;
+    }
     (r as unknown as Record<string, unknown>).strength = s;   // 可解释：报告能打印"为什么归档它"
-    plan.reasons[r.id] = '强度 ' + s.toFixed(2) + ' ≤ ' + maxStrength;
+    plan.reasons[r.id] = '强度 ' + s.toFixed(3) + ' < T' + STRENGTH_RETIRE_THRESHOLD.toFixed(3);
     cand.push(r);
   }
   // 老的先归档，每轮封顶（渐变，不突变）
@@ -119,9 +121,13 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
  *  面板要报"每轮上限"，而它不能 import 那个文件（那里拖着 store/db 与 recompute）。 */
 export const ARCHIVE_CAP_PER_ROUND = 200;
 
-/** 窗 → 强度阈值：strength = 1 − ageDays/90（见 strengthOf 的注释）。
- *  这样"窗"与"强度门"在数学上边界重合 —— 不会出现两套判据各说各话（1017 前的病）。
- *  **唯一实现**：capture/archive.ts 原样再导出，老调用点不变。 */
+/**
+ * 旧线性强度门：1 − 窗/90。**已不参与淘汰判定**（判据改为 strength < T=1/e，见 decay/strength.ts）。
+ * 保留原因（诚实记录）：它仍被 capture/archive.ts 的判据摘要行与 panel/snapshot.ts 的展示字段
+ * 引用，且 test/fork/d26-auto-archive.spec.ts 与 test/unit/panel-snapshot.spec.ts 断言了它的数值。
+ * ⚠️ 已知不一致（留给后续单点修，非本任务写区）：这两处展示的是旧线性门 0.667，而真实阈值是
+ * 1/e≈0.368 —— 打印值与判据不同口径。修法：archive/panel 改引 STRENGTH_RETIRE_THRESHOLD。
+ */
 export function strengthGateOf(minAgeDays: number): number {
   return Number(Math.max(0, Math.min(1, 1 - minAgeDays / 90)).toFixed(3));
 }

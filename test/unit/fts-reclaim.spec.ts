@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { wasteRatio, shouldReclaim, measureFtsSpace } from '../../src/core/maintain/fts.js';
-import { createDb } from '../../src/store/db.js';
+import { createDb, createNoteSession } from '../../src/store/db.js';
 import { dbFile } from '../../src/shared/paths.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -49,6 +49,25 @@ describe('空间回收 · 只读测量不写库', () => {
       expect(st.messages).toBe(0);
       expect(wasteRatio(st)).toBe(0);                    // 内容为 0 时不许除出 Infinity
       expect(shouldReclaim(st)).toBe(false);
+      db.close();
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // 回归：修前 contentBytes 恒为 0（列名 sessions.summary 不存在 + length() 数字符不数字节）——
+  //   "FTS 空间回收"在真实库上从来没触发过。非空库必须能测出内容体积，且按 UTF-8 字节计。
+  it("非空库能测出内容体积（回归：contentBytes 不许恒为 0）", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "srelay-fts2-"));
+    try {
+      fs.mkdirSync(path.dirname(dbFile(dir)), { recursive: true });
+      const db = createDb(dbFile(dir));
+      createNoteSession(db, { projectId: "proj-fts", title: "空间回收回归", content: "这是一条中文笔记，用来验证内容体积按 UTF-8 字节统计，而不是恒为 0。" });
+      const st = measureFtsSpace(db as never, dbFile(dir));
+      expect(st.messages).toBeGreaterThan(0);
+      expect(st.contentBytes).toBeGreaterThan(0);
+      // 中文字符 1 字 = 3 字节：若仍按字符计，同一句话的体积会显著偏小
+      const chars = "这是一条中文笔记，用来验证内容体积按 UTF-8 字节统计，而不是恒为 0。".length;
+      expect(st.contentBytes).toBeGreaterThan(chars * 2);
+      expect(Number.isFinite(wasteRatio(st))).toBe(true);
       db.close();
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });

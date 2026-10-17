@@ -55,6 +55,115 @@ program
   .action(async (f) => { const { cmdRebuild } = await import('../cli/maint.js'); await cmdRebuild(f); });
 
 program
+  .command('maintain')
+  .description('维护（默认只读、默认不删文件）：FTS 空间回收 / 孤儿备份清理 / 守护断线核算')
+  .option('--fts', '按阈值回收 FTS 索引垃圾（文件/内容 > 2 倍才动手）')
+  .option('--force', '配 --fts：无视阈值强制回收')
+  .option('--dry-run', '配 --fts：只测量不回收；配 --reap：只列候选')
+  .option('--reap', '列出孤儿备份/临时文件候选（默认只列不删）')
+  .option('--reap-apply', '配 --reap：真的删除（需主库健康；每删一个写 reap.log 审计）')
+  .option('--age-days <n>', '配 --reap：超过多少天才清（默认 30 天）', '30')
+  .option('--guard', '核算 guard.log 里 instances=0 的持续时长 + 补采判定')
+  .option('--alarm-min <n>', '配 --guard：超过多少分钟算断线（默认 5）', '5')
+  .option('--append', '配 --guard：把断线结论追加进各项目 guard.log')
+  .option('--json', '机器格式')
+  .action(async (opts) => {
+    const { pc } = await import('../cli/ui.js');
+    const { registryCandidates } = await import('../shared/registry.js');
+    const { dbFile } = await import('../shared/paths.js');
+    let roots: string[] = [];
+    try { roots = registryCandidates().map((c) => c.root); } catch { roots = []; }
+    if (roots.length === 0) {
+      try { const { requireRoot } = await import('../cli/ui.js'); roots = [requireRoot()]; }
+      catch { console.error(pc.red('没有已登记项目，也没有可识别的项目根：先在项目里跑 srelay init')); process.exit(2); }
+    }
+    const out: Record<string, unknown> = { roots };
+    const mb = (b: number) => (b / 1048576).toFixed(1) + ' MB';
+
+    if (opts.fts) {
+      const { maintainFts, measureFtsSpace, wasteRatio, shouldReclaim } = await import('../core/maintain/fts.js');
+      const Database = (await import('better-sqlite3')).default;
+      const rows: unknown[] = [];
+      for (const root of roots) {
+        const f = dbFile(root);
+        try {
+          const db = new Database(f, opts.dryRun ? { readonly: true, fileMustExist: true } : { fileMustExist: true });
+          try {
+            db.pragma('busy_timeout = 5000');
+            const st = measureFtsSpace(db as never, f);
+            const withForce = { force: opts.force === true };
+            if (opts.dryRun) {
+              const would = shouldReclaim(st, withForce);
+              rows.push({ root, beforeBytes: st.fileBytes, contentBytes: st.contentBytes, ratio: Number(wasteRatio(st).toFixed(2)), wouldReclaim: would });
+              if (!opts.json) console.log((would ? pc.yellow('●') : pc.dim('○')) + ' ' + root + '  ' + mb(st.fileBytes) + '（内容 ' + mb(st.contentBytes) + '，' + wasteRatio(st).toFixed(2) + ' 倍）' + (would ? ' ⇒ 会回收（干跑，未写库）' : ' ⇒ 体积正常，不动'));
+            } else {
+              const r = maintainFts(db as never, f, withForce);
+              rows.push({ root, beforeBytes: r.beforeBytes, afterBytes: r.afterBytes, reclaimed: r.reclaimed, rebuilt: r.rebuilt, skipped: r.skippedReason ?? null });
+              if (!opts.json) {
+                if (r.reclaimed > 0 || r.rebuilt) console.log(pc.green('✓') + ' ' + root + '  ' + mb(r.beforeBytes) + ' → ' + mb(r.afterBytes) + ' · 回收 ' + mb(r.reclaimed));
+                else console.log(pc.dim('·') + ' ' + root + '  ' + mb(r.beforeBytes) + ' · 未回收：' + (r.skippedReason ?? '原因未知'));
+              }
+            }
+          } finally { db.close(); }
+        } catch (e) {
+          rows.push({ root, error: String((e as Error).message) });
+          if (!opts.json) console.log(pc.red('✗') + ' ' + root + '  失败：' + (e as Error).message);
+        }
+      }
+      out.fts = rows;
+    }
+
+    if (opts.reap || opts.reapApply) {
+      const { reapProjectTmpFiles } = await import('../core/maintain/reap.js');
+      const minAgeDays = Number(opts.ageDays ?? 30);
+      const apply = opts.reapApply === true && opts.dryRun !== true;
+      const rows: unknown[] = [];
+      for (const root of roots) {
+        const r = reapProjectTmpFiles(root, { enabled: apply, dryRun: !apply, minAgeDays });
+        rows.push(r);
+        if (opts.json) continue;
+        const mark = r.deleted.length ? pc.green('✓') : r.candidates.length ? pc.yellow('●') : pc.dim('○');
+        console.log(mark + ' ' + root + '  扫描 ' + r.scanned + ' 文件 · 候选 ' + r.candidates.length + ' · 已删 ' + r.deleted.length
+          + ' · 主库 ' + (r.health.ok ? '健康（' + r.health.detail + '）' : '未过：' + r.health.detail));
+        for (const c of r.candidates) {
+          const done = r.deleted.some((d) => d.file === c.file);
+          console.log('    ' + (done ? '已删 ' : '保留 ') + c.name + '  ' + mb(c.bytes) + ' · ' + c.ageDays + ' 天 · 规则 ' + c.rule);
+        }
+        if (!apply && r.candidates.length) console.log(pc.dim('    （默认不删：加 --reap-apply 才真删；删前再验主库健康并写 reap.log）'));
+        if (apply && r.journalFile) console.log(pc.dim('    审计日志：' + r.journalFile));
+      }
+      out.reap = rows;
+    }
+
+    if (opts.guard) {
+      const { analyzeProjectGuard, formatGapAlert } = await import('../core/maintain/guard-log.js');
+      const alarmMinutes = Number(opts.alarmMin ?? 5);
+      const rows: unknown[] = [];
+      for (const root of roots) {
+        try {
+          const rep = analyzeProjectGuard(root, { alarmMinutes, append: opts.append === true });
+          rows.push({ root, file: rep.file, exists: rep.exists, gaps: rep.analysis.gaps.map((g) => ({ start: g.startMs, end: g.endMs, minutes: g.minutes, alarm: g.alarm })), appended: rep.appended.length });
+          if (opts.json) continue;
+          if (!rep.exists) { console.log(pc.dim('○') + ' ' + root + '  没有 guard.log'); continue; }
+          if (rep.analysis.gaps.length === 0) { console.log(pc.green('✓') + ' ' + root + '  无 instances=0 断线记录'); continue; }
+          for (const b of rep.backfill) console.log((b.gap.alarm ? pc.yellow('●') : pc.dim('·')) + ' ' + root + '  ' + formatGapAlert(b.gap, b.messages, Date.now()));
+          if (rep.appended.length) console.log(pc.dim('    已追加进 guard.log：' + rep.appended.length + ' 行'));
+        } catch (e) {
+          rows.push({ root, error: String((e as Error).message) });
+          if (!opts.json) console.log(pc.red('✗') + ' ' + root + '  断线核算失败：' + (e as Error).message);
+        }
+      }
+      out.guard = rows;
+    }
+
+    if (!opts.fts && !opts.reap && !opts.reapApply && !opts.guard) {
+      console.log(pc.yellow('未指定动作') + '：用 --fts / --reap / --guard 之一。例：srelay maintain --fts --dry-run');
+      process.exit(2);
+    }
+    if (opts.json) console.log(JSON.stringify(out, null, 2));
+  });
+
+program
   .command('forget [id]')
   .description('彻底遗忘：整条会话（含决策）从本库消失、永不复活。省空间用 archive，彻底消失才用它')
   .option('--session <id>', '限定捕获会话（防误删笔记）')

@@ -187,18 +187,67 @@ export function panelLessons(limit = 200): PanelLessons {
 
 // ─────────────────────────── 生命周期 ───────────────────────────
 
+/**
+ * 阶段健康度（[1021] 新增字段，**只加不改**）。
+ *
+ * 病历：面板上 11 个阶段长得一模一样——看不出「昨天跑过」与「三十天没动过」的区别，
+ * 也看不出「跑了但永远产出 0」的（aging 就是：每轮 ok=true，实际计划 0 场）。用户原话
+ * 「看不出哪些功能是开的、哪些是关的、关着的原因是什么」说的就是这一类。
+ *
+ * 判据全部来自**已有记账**（loadLifecycle 的阶段记录），不硬编码、不猜：
+ *   never   = 从没有过运行记录
+ *   overdue = 距上次运行 > 2×自身节奏（节奏来自 STAGES.everySec，不是写死的常量）
+ *   ok      = 其余
+ * why 直接带阶段自己写的 note（例如 aging 的「本轮无会话可归档（…计划 0+0…）」）。
+ */
+export interface PanelStageHealth {
+  id: string; label: string;
+  everySec: number; cadenceText: string;
+  lastAt: string | null; ageMs: number | null;
+  state: 'ok' | 'overdue' | 'never';
+  why: string;
+}
+
 export interface PanelLifecycle {
   ok: boolean; error: string | null;
   version: number | null; rounds: number | null; lastAt: string | null;
   stages: Array<{ id: string; label: string; weight: string; everySec: number; ok: boolean; note: string; at: string | null; ms: number | null; fails: number }>;
+  /** [1021] 每个阶段的健康度（与 stages 同长同序；只加字段，不动 stages 语义） */
+  stageHealth: PanelStageHealth[];
   dueNow: string[];
   heartbeat: Array<{ key: string; at: string; ageMs: number | null }>;
   recent: Array<{ at: string; stage: string; level: string; message: string }>;
 }
 
+/** 秒 → 人话节奏（86400 → 「每天」）。只在面板显示用，不参与任何判据。 */
+function cadenceTextOf(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '不定';
+  if (sec % 86400 === 0) return sec === 86400 ? '每天' : '每 ' + (sec / 86400) + ' 天';
+  if (sec % 3600 === 0) return '每 ' + (sec / 3600) + ' 小时';
+  return '每 ' + Math.max(1, Math.round(sec / 60)) + ' 分钟';
+}
+
+function stageHealthOf(stages: PanelLifecycle['stages'], nowMs = Date.now()): PanelStageHealth[] {
+  return stages.map((s) => {
+    const t = s.at ? Date.parse(s.at) : NaN;
+    const ageMs = Number.isFinite(t) ? nowMs - t : null;
+    const overdue = ageMs !== null && ageMs > Math.max(1, s.everySec) * 2000;
+    const state: PanelStageHealth['state'] = ageMs === null ? 'never' : (overdue ? 'overdue' : 'ok');
+    const why = state === 'never'
+      ? (s.note || '从没有过运行记录（守护没跑到过这个阶段）')
+      : (state === 'overdue'
+        ? '已 ' + Math.floor((ageMs as number) / 3600000) + ' 小时没跑（节奏 ' + cadenceTextOf(s.everySec) + '）' + (s.note ? ' · 上次：' + s.note : '')
+        : (s.note || ''));
+    return {
+      id: s.id, label: s.label, everySec: s.everySec, cadenceText: cadenceTextOf(s.everySec),
+      lastAt: s.at, ageMs, state, why: String(why).slice(0, 400),
+    };
+  });
+}
+
 export function panelLifecycle(): PanelLifecycle {
   const f = globalDbFile();
-  const empty: PanelLifecycle = { ok: false, error: null, version: null, rounds: null, lastAt: null, stages: [], dueNow: [], heartbeat: [], recent: [] };
+  const empty: PanelLifecycle = { ok: false, error: null, version: null, rounds: null, lastAt: null, stages: [], stageHealth: [], dueNow: [], heartbeat: [], recent: [] };
   if (!fs.existsSync(f)) return { ...empty, error: '还没有全局库（生命周期状态存在里面）' };
   const got = withDb(f, (db) => {
     const ldb = db as unknown as LifecycleDb;
@@ -220,7 +269,7 @@ export function panelLifecycle(): PanelLifecycle {
     const ev = db.prepare('SELECT at, stage, level, message FROM health_events ORDER BY id DESC LIMIT 30').all() as Array<{ at: string; stage: string; level: string; message: string }>;
     return {
       ok: true, error: null, version: st.version, rounds: st.rounds, lastAt: st.lastAt,
-      stages, dueNow, heartbeat, recent: ev,
+      stages, stageHealth: stageHealthOf(stages), dueNow, heartbeat, recent: ev,
     } as PanelLifecycle;
   }, () => undefined);
   return got ?? { ...empty, error: '生命周期表读不到（全局库 schema 可能过旧）' };
@@ -266,6 +315,27 @@ export function watchdogOnline(nowMs = Date.now()): { online: boolean; ageMs: nu
 
 // ─────────────────────────── 总览 ───────────────────────────
 
+/**
+ * 老化闸门的**真实原因**（[1021] 新增字段，只加不改）。
+ *
+ * 病历：aging 阶段每轮都 ok=true，但计划恒为 0 场 —— 面板上它与其他阶段长得完全一样，
+ * 用户看到「老化压缩 运行中」却从没见过库里少一条正文。原因只有 planAging 知道（它会给
+ * 每一场会话记一个 reasons[id]：已归档过 / 还不到 30 天 / 正在进行…），所以这里把那些
+ * **真实理由**按项目汇总起来给界面。不硬编码、不猜。
+ */
+export interface PanelAgingGate {
+  /** 参与统计的项目数（能读到库并算出计划的） */
+  projects: number;
+  /** 参与判定的会话总数 */
+  sessions: number;
+  planned: number;
+  kept: number;
+  window: { hotDays: number; workflowDays: number } | null;
+  topReasons: Array<{ reason: string; count: number }>;
+  /** 由上面数字推出来的一句话（界面直接显示，不再自己拼） */
+  verdict: string;
+}
+
 export interface PanelOverview {
   generatedAt: string;
   focus: string | null;
@@ -278,6 +348,8 @@ export interface PanelOverview {
   /** 语义档的**运行期**状态（跨进程读那个状态文件）。为什么面板要显示它：
    *  以前"启用了但装载失败"与"根本没启用"在界面上长得一模一样 —— 用户只会觉得"检索变差了"。 */
   semantic: { runtime: SemanticRuntimeStatus; summary: string; note: string };
+  /** [1021] 老化闸门现状（真实数据；没有可读项目时为 null） */
+  aging: PanelAgingGate | null;
   errors: string[];
   criteria: typeof PANEL_CRITERIA;
   scopeNote: string;
@@ -331,6 +403,37 @@ export function panelOverview(opts: { focus?: string | null } = {}): PanelOvervi
     decisions: a.decisions + p.decisions, unresolved: a.unresolved + p.unresolved,
     archived: a.archived + p.archived, dbBytes: a.dbBytes + p.dbBytes,
   }), { projects: 0, sessions: 0, messages: 0, decisions: 0, unresolved: 0, archived: 0, dbBytes: 0 });
+  // ── [1021] 老化闸门汇总：复用 agingPlanOf（判据只此一份），逐项目只读打开 ──
+  const aging: PanelAgingGate | null = (() => {
+    let proj = 0, sessions = 0, planned = 0, kept = 0;
+    let window: PanelAgingGate['window'] = null;
+    const reasonCount = new Map<string, number>();
+    for (const p of projects) {
+      if (!p.ok) continue;
+      let cfg: RelayConfig;
+      try { cfg = panelLoadConfig(p.root); }
+      catch (e) {
+        errors.push(p.name + '：老化判定用不到配置（按默认值算）—— ' + String((e as Error)?.message ?? e).slice(0, 100));
+        cfg = defaultConfig();
+      }
+      const a = withDb(dbFile(p.root), (db) => agingPlanOf(db, cfg), (msg) => errors.push(p.name + '：老化判定读不到库 —— ' + msg));
+      if (!a) continue;
+      proj++;
+      planned += a.planned; kept += a.kept; sessions += a.planned + a.kept;
+      window = window ?? { hotDays: a.hotDays, workflowDays: a.workflowDays };
+      for (const r of a.topReasons) reasonCount.set(r.reason, (reasonCount.get(r.reason) ?? 0) + r.count);
+    }
+    if (proj === 0) return null;
+    const topReasons = [...reasonCount.entries()]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((x, y) => y.count - x.count).slice(0, 6);
+    const verdict = planned > 0
+      ? '本轮可归档 ' + planned + ' 场正文（共 ' + sessions + ' 场参与判定）'
+      : '本轮 **0 场**可归档（共 ' + sessions + ' 场参与判定）'
+        + (topReasons[0] ? '：主因「' + topReasons[0].reason + '」' + topReasons[0].count + ' 场' : '');
+    return { projects: proj, sessions, planned, kept, window, topReasons, verdict };
+  })();
+
   const lessons = panelLessons();
   if (lessons.error) errors.push('经验层：' + lessons.error);
   const lifecycle = panelLifecycle();
@@ -349,6 +452,7 @@ export function panelOverview(opts: { focus?: string | null } = {}): PanelOvervi
     projects: focus ? projects.filter((p) => p.root === focus) : projects,
     totals,
     lessons, lifecycle,
+    aging,
     watchdog: watchdogOnline(),
     semantic: (() => {
       const runtime = readSemanticStatus();
@@ -401,6 +505,42 @@ export interface PanelCompression {
   } | null;
   layers: CompressionLayer[];
   criteria: typeof PANEL_CRITERIA;
+  /** [1021] 非致命问题（配置读不到、某个通道判不出时）：**不许静默**，原样带给界面 */
+  warnings: string[];
+}
+
+/**
+ * 图层状态必须**按当前配置算**（[1021] 纠错）。
+ *
+ * 病历：L2/L3 的 status 原先写死（L2='on'、L3='off'）。而实测 agent1super 的 config 是
+ * archive.enabled=true、compress.enabled=true —— L3 明明**开着**，面板却显示「未启用」。
+ * 反过来，把 compress.enabled 改成 false 的用户仍然会看到旧文案。两处都错，且没人能发现，
+ * 因为数字（层数）看起来总是一样的。现在 status 由 config 推，notes 保留不变。
+ *
+ * 另外补一条以前完全看不见的事实：compress.enabled=true 但 projects/lessons 两条通道都关时，
+ * **L3 实际不会跑** —— 这时显示「未启用（通道全关）」，而不是骗人地说「运行中」。
+ */
+function layersFor(cfg: RelayConfig, warnings: string[] = []): CompressionLayer[] {
+  const nearDup = cfg.compact?.near_dup !== false;
+  const archiveOn = cfg.archive?.enabled !== false;
+  const compressOn = cfg.compress?.enabled === true;
+  const chProjects = cfg.compress?.projects === true;
+  const chLessons = cfg.compress?.lessons === true;
+  const chAny = chProjects || chLessons;
+  const l3Status: CompressionLayer['status'] = compressOn && chAny ? 'on' : 'off';
+  const copy = LAYERS.map((l) => ({ ...l }));
+  for (const l of copy) {
+    if (l.id === 'L1') l.status = nearDup ? 'on' : 'off';
+    if (l.id === 'L2') l.status = archiveOn ? 'on' : 'off';
+    if (l.id === 'L3') {
+      l.status = l3Status;
+      if (compressOn && !chAny) l.note = '**compress.enabled=true 但两条通道都关**（projects=false · lessons=false）⇒ 实际不会跑。' + l.note;
+      else if (!compressOn) l.note = '**当前配置 compress.enabled=false** ⇒ 不会跑（代码已建成）。' + l.note;
+      else l.note = '当前 compress.enabled=true（通道：项目 ' + (chProjects ? '开' : '关') + ' · 经验 ' + (chLessons ? '开' : '关') + '）。' + l.note;
+    }
+  }
+  if (warnings.length) { /* 占位：未来若某层读配置失败，调用方在 warnings 里说明 */ }
+  return copy;
 }
 
 const LAYERS: CompressionLayer[] = [
@@ -438,11 +578,57 @@ function l0Counts(db: { prepare: (s: string) => { all: () => unknown[] } }): { t
   return { totalDecisions: total, dupRatio: total > 0 ? dup / total : 0 };
 }
 
+/**
+ * 老化计划（**唯一实现**）：面板压缩页与「阶段健康度」都走这里，守护侧走 planAging 本身。
+ *
+ * 返回值就是 PanelCompression['aging'] 的形状；驱动它的是 core/compact/aging.ts 的 planAging，
+ * 本文件不复制任何判据，只做取数与汇总。
+ */
+export function agingPlanOf(db: unknown, cfg: RelayConfig): NonNullable<PanelCompression['aging']> {
+  const d = db as { prepare: (s: string) => { all: () => unknown[] } };
+  const hotDays = cfg.archive?.hot_days ?? 30;
+  const workflowDays = cfg.archive?.workflow_days ?? 7;
+  const rows = d.prepare('SELECT id, origin, state, last_event_at, message_count, extracted_version, decisions, cleanup_at FROM sessions').all() as Array<Record<string, unknown>>;
+  const planFor = (subset: Array<Record<string, unknown>>, minAgeDays: number) => minAgeDays > 0
+    ? planAging(subset as never, { currentVersion: EXTRACT_VERSION, minAgeDays, maxStrength: strengthGateOf(minAgeDays), minDecisions: 0, cap: ARCHIVE_CAP_PER_ROUND })
+    : { archive: subset, kept: [] as Array<Record<string, unknown>>, reasons: {} as Record<string, string> };
+  const wf = rows.filter((r) => String(r.origin || '') === 'workflow');
+  const other = rows.filter((r) => String(r.origin || '') !== 'workflow');
+  const pw = planFor(wf, workflowDays), po = planFor(other, hotDays);
+  const tally = (x: Record<string, string>) => {
+    const m = new Map<string, number>();
+    for (const reason of Object.values(x)) m.set(reason, (m.get(reason) ?? 0) + 1);
+    return [...m.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 8);
+  };
+  const buckets = [{ label: '≥0.9（新，绝不动）', lo: 0.9 }, { label: '0.6~0.9', lo: 0.6 }, { label: '0.3~0.6', lo: 0.3 }, { label: '<0.3（老，可归档）', lo: -1 }];
+  const strengthBuckets = buckets.map((b, i) => ({
+    label: b.label,
+    count: rows.filter((r) => {
+      const s = strengthOf(r as never);
+      return i === 0 ? s >= b.lo : (i === buckets.length - 1 ? s < buckets[i - 1].lo : (s >= b.lo && s < buckets[i - 1].lo));
+    }).length,
+  }));
+  return {
+    hotDays, workflowDays, cap: ARCHIVE_CAP_PER_ROUND,
+    hotGate: strengthGateOf(hotDays), workflowGate: strengthGateOf(workflowDays),
+    planned: pw.archive.length + po.archive.length,
+    plannedWorkflow: pw.archive.length, plannedHot: po.archive.length,
+    kept: (rows.length - pw.archive.length - po.archive.length),
+    topReasons: tally({ ...pw.reasons, ...po.reasons }),
+    strengthBuckets,
+  };
+}
+
 export function panelCompression(root: string, opts: { deep?: boolean } = {}): PanelCompression {
   const deep = opts.deep === true;
+  // 配置先读：layers 的 on/off 与老化窗都来自它。读失败**不静默**（进 warnings），继续用默认值算其余部分。
+  const warnings: string[] = [];
+  let cfg: RelayConfig;
+  try { cfg = panelLoadConfig(root); }
+  catch (e) { warnings.push('配置读不到，按默认值展示：' + String((e as Error)?.message ?? e).slice(0, 120)); cfg = defaultConfig(); }
   const out: PanelCompression = {
     root, generatedAt: new Date().toISOString(), ok: false, error: null, deep,
-    l0: null, l2: null, aging: null, layers: LAYERS, criteria: PANEL_CRITERIA,
+    l0: null, l2: null, aging: null, layers: layersFor(cfg, warnings), criteria: PANEL_CRITERIA, warnings,
   };
   const f = dbFile(root);
   if (!fs.existsSync(f)) { out.error = '这个项目还没有库文件'; return out; }
@@ -480,42 +666,197 @@ export function panelCompression(root: string, opts: { deep?: boolean } = {}): P
       rounds: Number(sum?.rounds ?? 0), archived: Number(sum?.a ?? 0), skipped: Number(sum?.k ?? 0),
       bytesFreed: Number(sum?.b ?? 0), lastAt: sum?.last ?? null, latest,
     };
-    // ── 老化计划（只读，与守护同一个 planAging）──
-    const cfg = panelLoadConfig(root);
-    const hotDays = cfg.archive?.hot_days ?? 30;
-    const workflowDays = cfg.archive?.workflow_days ?? 7;
-    const rows = db.prepare('SELECT id, origin, state, last_event_at, message_count, extracted_version, decisions, cleanup_at FROM sessions').all() as Array<Record<string, unknown>>;
-    const planFor = (subset: Array<Record<string, unknown>>, minAgeDays: number) => minAgeDays > 0
-      ? planAging(subset as never, { currentVersion: EXTRACT_VERSION, minAgeDays, maxStrength: strengthGateOf(minAgeDays), minDecisions: 0, cap: ARCHIVE_CAP_PER_ROUND })
-      : { archive: subset, kept: [] as Array<Record<string, unknown>>, reasons: {} as Record<string, string> };
-    const wf = rows.filter((r) => String(r.origin || '') === 'workflow');
-    const other = rows.filter((r) => String(r.origin || '') !== 'workflow');
-    const pw = planFor(wf, workflowDays), po = planFor(other, hotDays);
-    const tally = (x: Record<string, string>) => {
-      const m = new Map<string, number>();
-      for (const reason of Object.values(x)) m.set(reason, (m.get(reason) ?? 0) + 1);
-      return [...m.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 8);
-    };
-    const buckets = [{ label: '≥0.9（新，绝不动）', lo: 0.9 }, { label: '0.6~0.9', lo: 0.6 }, { label: '0.3~0.6', lo: 0.3 }, { label: '<0.3（老，可归档）', lo: -1 }];
-    const strengthBuckets = buckets.map((b, i) => ({
-      label: b.label,
-      count: rows.filter((r) => {
-        const s = strengthOf(r as never);
-        return i === 0 ? s >= b.lo : (i === buckets.length - 1 ? s < buckets[i - 1].lo : (s >= b.lo && s < buckets[i - 1].lo));
-      }).length,
-    }));
-    out.aging = {
-      hotDays, workflowDays, cap: ARCHIVE_CAP_PER_ROUND,
-      hotGate: strengthGateOf(hotDays), workflowGate: strengthGateOf(workflowDays),
-      planned: pw.archive.length + po.archive.length,
-      plannedWorkflow: pw.archive.length, plannedHot: po.archive.length,
-      kept: (rows.length - pw.archive.length - po.archive.length),
-      topReasons: tally({ ...pw.reasons, ...po.reasons }),
-      strengthBuckets,
-    };
+    // ── 老化计划（只读；判据在 core/compact/aging.ts，取数在 agingPlanOf）──
+    out.aging = agingPlanOf(db, cfg);
     return true;
   }, (msg) => { out.error = msg; });
   out.ok = got === true;
+  return out;
+}
+
+// ─────────────────────────── [1021] 行为开关总览 ───────────────────────────
+//
+// 用户原话：「补齐前端缺失的和错误的启用说明旋钮信息等等」——毛病不是数字缺失，而是
+// **看不出哪些功能是开的、哪些是关的、关着的原因是什么**。实测三例：decay.enabled=false、
+// semantic.enabled=false、compress.lessons=false，而面板上它们与「开着」长得一模一样。
+//
+// 为什么这份清单在核心库：它就是「配置键 → 行为后果」的唯一口径。放前端就一定会与
+// config-merge 的默认值分叉（本项目反复吃这个亏）。本文件**只加字段**、不改既有字段语义。
+//
+// 取值层沿用既有机制：knobStates(cfg, raw, env) 已经实现了「环境变量 > config.json > 默认值」，
+// 这里直接复用，不另写一套优先级（判据只许有一份）。
+// 不在 KNOB_SPECS 里、但仍影响行为的键（compress.projects/lessons、compact.near_dup、
+// lesson.harvest*、domain）从合并后的 cfg 直接读 —— 缺省时显式标 source='default'。
+
+export interface PanelSwitch {
+  /** config.json 里的点分路径 */
+  path: string;
+  label: string;
+  kind: 'boolean' | 'enum' | 'number' | 'string';
+  /** 当前生效值 */
+  value: unknown;
+  /** 人话值：开 / 关 / 枚举说明 / 数字+单位 / （未设置） */
+  valueText: string;
+  source: 'env' | 'config' | 'default';
+  /** true=当前生效；false=关着；null=不是开关（是个数值/模式） */
+  active: boolean | null;
+  /** 开着意味着什么（一句话） */
+  onMeaning: string;
+  /** 关着会怎样（一句话） */
+  offMeaning: string;
+  /** 由**当前配置**推出的补充（例如「enabled 但两条通道都关」），空串 = 没有要补的 */
+  note: string;
+}
+
+interface SwitchSpec {
+  path: string; label: string; kind: PanelSwitch['kind'];
+  /** 数字类单位（天/分钟） */
+  unit?: string;
+  on: string; off: string;
+}
+
+/** 清单顺序即展示顺序：越靠前越常改 */
+const SWITCH_SPECS: SwitchSpec[] = [
+  { path: 'capture.mode', label: '采集强度', kind: 'enum',
+    on: 'full/meta：客户端的新对话会被收进库里（full 存正文，检索能命中原话；meta 只存骨架，省空间但搜不到原话）',
+    off: 'off：完全停采 —— 任何客户端的新对话都不再入库（面板里数字会停住不动）' },
+  { path: 'archive.enabled', label: '正文归档（L2 蒸发）', kind: 'boolean',
+    on: '守护按窗口把老会话的**正文**蒸发掉，结论/话题/摘要骨架保留、可审计（原文仍在客户端，可重放）',
+    off: '正文永不蒸发，库随会话数线性变大（实测正文占库 94~97%）；结论不受影响' },
+  { path: 'archive.hot_days', label: '普通会话热窗', kind: 'number', unit: '天',
+    on: '比 N 天更新的正文绝不碰；**超过 N 天才可能被归档**',
+    off: '设得很大（如 365）等于不让普通会话归档' },
+  { path: 'archive.workflow_days', label: '施工日志热窗', kind: 'number', unit: '天',
+    on: 'origin=workflow 的会话用更短的窗（它们不进简报，正文留着没用）',
+    off: '调大 = 施工日志正文也长期保留（库会明显变大）' },
+  { path: 'decay.enabled', label: '时间衰减', kind: 'boolean',
+    on: '检索排序乘年龄因子：近期的事排前面；**只乘分数不过滤**，老记录仍能搜到（floor 保底）',
+    off: '排序完全不看时间，只按字面相关度 —— 三个月前的旧结论与昨天的新结论同权' },
+  { path: 'semantic.enabled', label: '语义检索', kind: 'boolean',
+    on: '检索先跑字面（FTS），再补一路向量命中（需本地模型；装载失败会在总览的「语义检索状态」里现形）',
+    off: '只走字面检索（jieba + bm25），零模型、零额外延迟 —— 换了说法可能搜不到' },
+  { path: 'compress.enabled', label: '模型压缩（L3）', kind: 'boolean',
+    on: '生命周期里允许跑 L3（多条结论/经验合成上级条目；原文永不删、可回滚）；**还要求下面的两条通道至少开一条**',
+    off: 'L3 从不运行，压缩页的 L3 显示未启用' },
+  { path: 'compress.projects', label: 'L3 通道：项目记忆', kind: 'boolean',
+    on: '把项目记忆里的结论簇做模型压缩（compress.projects=true）',
+    off: '项目侧完全跳过 L3（即使 compress.enabled=true）' },
+  { path: 'compress.lessons', label: 'L3 通道：跨项目经验', kind: 'boolean',
+    on: '把跨项目经验做模型压缩（compress.lessons=true）',
+    off: '经验层永不压缩 —— 这是**经验条数不会因为压缩而变少**的直接原因' },
+  { path: 'compact.near_dup', label: '跨会话近重复合并（L1b）', kind: 'boolean',
+    on: '同一批近重复结论只留一条代表（低可信来源不许当代表），写回有审计、可回滚',
+    off: '近重复不合并：库里会残留跨会话的重复条目（只在呈现层折叠，数据不合并）' },
+  { path: 'lesson.harvest', label: '经验采集（harvest）', kind: 'boolean',
+    on: '生命周期每 6 小时从项目记忆里刨出一批候选经验，进「观察窗」等判决',
+    off: 'harvest 阶段整体跳过 —— 经验池不会再长新条目（存量仍按规则衰减/退休）' },
+  { path: 'search.tokenizer', label: '中文分词器', kind: 'enum',
+    on: 'jieba：词典分词，中文召回更准（换完必须重算索引，否则新旧词元对不上）',
+    off: 'bigram：二字滑窗，无需词典、更快，但短词噪声更多（换完同样必须重算）' },
+  { path: 'search.auto_days', label: '自动检索回溯', kind: 'number', unit: '天',
+    on: '简报/自动召回最多往回看 N 天',
+    off: '设 0 = 不自动回溯，只有显式搜索才看历史' },
+  { path: 'domain', label: '领域共享（domain 作用域）', kind: 'string',
+    on: '非空：写经验时带上这个领域名 —— 同领域的多个项目能互相看见 scope=domain 的经验（如 writing=agent1super+小说项目）',
+    off: '空：不做领域共享，经验只在 global / 当前项目两个作用域里流动（scope=domain 的经验两个入口都看不见）' },
+];
+
+/** 枚举值 → 人话（只影响显示） */
+const SWITCH_ENUM_TEXT: Record<string, Record<string, string>> = {
+  'capture.mode': { full: 'full（存正文，检索最好）', meta: 'meta（只存骨架，省空间）', off: 'off（完全停采）' },
+  'search.tokenizer': { jieba: 'jieba（词典分词，更准）', bigram: 'bigram（二字滑窗，更快）' },
+};
+
+function switchValueText(spec: SwitchSpec, value: unknown): string {
+  if (spec.kind === 'boolean') return value === true ? '开' : (value === false ? '关' : '—');
+  if (spec.kind === 'enum') {
+    const m = SWITCH_ENUM_TEXT[spec.path];
+    const key = String(value ?? '');
+    return m && m[key] ? m[key] : (key || '—');
+  }
+  if (spec.kind === 'number') {
+    return typeof value === 'number' && Number.isFinite(value) ? (value + (spec.unit ?? '')) : '—';
+  }
+  const s = String(value ?? '').trim();
+  return s === '' ? '（未设置）' : s;
+}
+
+/** 由 config 推出开关清单。**纯读**：不写库、不发请求 */
+function buildSwitches(
+  cfg: RelayConfig,
+  raw: Record<string, unknown> | null,
+  env: Record<string, string | undefined>,
+  knobByPath: Map<string, KnobState>,
+): PanelSwitch[] {
+  const cfgRec = cfg as unknown as Record<string, unknown>;
+  const get = (p: string): unknown => {
+    const k = knobByPath.get(p);
+    if (k) return k.value;
+    const parts = p.split('.');
+    let cur: unknown = cfgRec;
+    for (const part of parts) {
+      if (cur === null || typeof cur !== 'object') return undefined;
+      cur = (cur as Record<string, unknown>)[part];
+    }
+    return cur;
+  };
+  const sourceOf = (p: string): PanelSwitch['source'] => {
+    const k = knobByPath.get(p);
+    if (k) return k.source;
+    if (p === 'domain' && env.SRELAY_DOMAIN) return 'env';
+    const parts = p.split('.');
+    let cur: unknown = raw;
+    for (const part of parts) {
+      if (cur === null || typeof cur !== 'object') return 'default';
+      cur = (cur as Record<string, unknown>)[part];
+    }
+    return cur === undefined ? 'default' : 'config';
+  };
+  const out: PanelSwitch[] = [];
+  for (const spec of SWITCH_SPECS) {
+    let value: unknown;
+    let source: PanelSwitch['source'];
+    if (spec.path === 'domain') {
+      const envVal = String(env.SRELAY_DOMAIN ?? '').trim();
+      const cfgVal = String((cfgRec.domain as string) ?? '').trim();
+      value = envVal || cfgVal;
+      source = envVal ? 'env' : (cfgVal ? 'config' : 'default');
+    } else {
+      value = get(spec.path);
+      source = sourceOf(spec.path);
+      // 缺省值兜底：这些键在 config-merge 里有默认值，但老库/手写配置可能没写
+      if (value === undefined) {
+        if (spec.path === 'compact.near_dup') value = true;
+        else if (spec.path === 'lesson.harvest') value = true;
+        else if (spec.path === 'compress.projects' || spec.path === 'compress.lessons') value = false;
+        else if (spec.path === 'capture.mode') value = 'full';
+      }
+    }
+    // 「开/关」的判定：布尔看值；模式类看是否等于 off；数值/枚举不是开关（active=null）
+    let active: boolean | null = null;
+    if (spec.kind === 'boolean') active = value === true;
+    else if (spec.path === 'capture.mode') active = String(value ?? '') !== 'off';
+    // 由当前配置推出的补充（不查库、不猜）：这些正是「开着却没在起作用」的典型
+    let note = '';
+    if (spec.path === 'compress.enabled' && value === true) {
+      const pj = get('compress.projects') === true;
+      const le = get('compress.lessons') === true;
+      note = '通道：项目 ' + (pj ? '开' : '关') + ' · 经验 ' + (le ? '开' : '关')
+        + (pj || le ? '' : ' —— 两条都关 ⇒ 实际不会跑');
+    }
+    if (spec.path === 'compress.lessons' && get('compress.lessons') !== true && get('compress.enabled') === true) {
+      note = 'compress.enabled=true 但本条关着 ⇒ 经验层目前**没有**被模型压缩过';
+    }
+    if (spec.path === 'domain' && source === 'env') note = '被环境变量 SRELAY_DOMAIN 覆盖（config.json 里的值不生效）';
+    if (spec.path === 'archive.hot_days' && typeof value === 'number') {
+      note = '对应强度门 ' + strengthGateOf(value) + '（strength = 1 − 年龄/90，与窗边界数学重合）';
+    }
+    out.push({
+      path: spec.path, label: spec.label, kind: spec.kind,
+      value: value ?? null, valueText: switchValueText(spec, value), source, active,
+      onMeaning: spec.on, offMeaning: spec.off, note,
+    });
+  }
   return out;
 }
 
@@ -525,6 +866,8 @@ export interface PanelConfigView {
   root: string; configFile: string; hasFile: boolean;
   knobs: KnobState[]; errors: string[];
   schemaVersion: string;
+  /** [1021] 行为开关总览：当前值 + 开着意味着什么 + 关着会怎样（只加字段） */
+  switches: PanelSwitch[];
 }
 
 function readRawConfig(root: string): Record<string, unknown> | null {
@@ -542,13 +885,17 @@ export function panelConfigView(root: string): PanelConfigView {
   catch (e) { errors.push(String((e as Error)?.message ?? e)); cfg = defaultConfig(); }
   const raw = readRawConfig(root);
   if (!raw && fs.existsSync(configFile(root))) errors.push('config.json 存在但解析失败（上面那条错误就是原因）');
+  const env = process.env as Record<string, string | undefined>;
+  const knobs = knobStates(cfg, raw, env);
   return {
     root,
     configFile: configFile(root),
     hasFile: fs.existsSync(configFile(root)),
-    knobs: knobStates(cfg, raw, process.env as Record<string, string | undefined>),
+    knobs,
     errors,
     schemaVersion: String(cfg.version ?? ''),
+    // 开关总览与 knobs 共用同一份 knobStates（取值优先级只有一份实现）
+    switches: buildSwitches(cfg, raw, env, new Map(knobs.map((k) => [k.path, k]))),
   };
 }
 

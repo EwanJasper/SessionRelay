@@ -1,0 +1,205 @@
+{
+  "at": "2026-10-17T20:30:30.065Z",
+  "dbPath": "D:/dsh插件  记忆/tmp/graph-bench-snapshot.sqlite",
+  "limit": 10,
+  "n": 24,
+  "perSession": 1,
+  "note": "人工造的换说法题（paraphrase）。期望命中由人读内容判定，非规则生成。arm P=单目标 X=跨会话。",
+  "items": [
+    {
+      "arm": "P",
+      "query": "C盘快满了怎么清理的",
+      "target": "0f482250fa809f52",
+      "targets": [
+        "0f482250fa809f52"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "可视化界面那个脚本是哪个文件，只允许改一处",
+      "target": "4edb2e852e6805f5",
+      "targets": [
+        "4edb2e852e6805f5"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "让人逐条判读准确率那次评审",
+      "target": "20da588beef538de",
+      "targets": [
+        "20da588beef538de"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "把某条结论固定住一直显示的功能",
+      "target": "fd7a268a26d34847",
+      "targets": [
+        "fd7a268a26d34847"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "每开一个会话就起一个服务且不回收的毛病",
+      "target": "646f6bd8b9b63e88",
+      "targets": [
+        "646f6bd8b9b63e88"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "用挑刺的方式看这两批改动对不对",
+      "target": "faef416a2315a39a",
+      "targets": [
+        "faef416a2315a39a"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "两个互不知情的评审分别看同一份代码",
+      "target": "d550fa3108d9a88e",
+      "targets": [
+        "d550fa3108d9a88e"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "红队B那个子代理派去干什么",
+      "target": "7cd6e66f654e1567",
+      "targets": [
+        "7cd6e66f654e1567"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "接着上一份交接往下做别从头来",
+      "target": "5407c1efae4428dd",
+      "targets": [
+        "5407c1efae4428dd"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "先别动手，把主交接文件通读一遍",
+      "target": "732adf1bc9055e9d",
+      "targets": [
+        "732adf1bc9055e9d"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "目录名中间两个空格这事强调过吗",
+      "target": "22ea720ad2fe7300",
+      "targets": [
+        "22ea720ad2fe7300"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "手机连电脑后共享网络不管用怎么调",
+      "target": "c483a0acd7cdefc5",
+      "targets": [
+        "c483a0acd7cdefc5"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "如果快离开世界会留下什么，结合整个工作区说说",
+      "target": "a54eac68b51a1c03",
+      "targets": [
+        "a54eac68b51a1c03"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "AI 微调的交接文档是唯一入口那份",
+      "target": "734f3cc50b8c2fe2",
+      "targets": [
+        "734f3cc50b8c2fe2"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "本地大模型部署可行性那个调研接到哪了",
+      "target": "cd61ddb51cc5fd3d",
+      "targets": [
+        "cd61ddb51cc5fd3d"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "folia qq 发现页交接文件续作",
+      "target": "0eed0a09f936bde0",
+      "targets": [
+        "0eed0a09f936bde0"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "command 这个模型端点图片不响应但平台显示正常",
+      "target": "a08110930a5d22ad",
+      "targets": [
+        "a08110930a5d22ad"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "语音把安装清单识别成了列车车票那次澄清",
+      "target": "061b3409dd467317",
+      "targets": [
+        "061b3409dd467317"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "核实我们这套零接触上下文接续框架是否真达到效果",
+      "target": "68e7553a361907e7",
+      "targets": [
+        "68e7553a361907e7"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "modmind 那个 stdio 程序路径在哪",
+      "target": "4ab918bd6310aaa8",
+      "targets": [
+        "4ab918bd6310aaa8"
+      ]
+    },
+    {
+      "arm": "X",
+      "query": "新对话入口交接文件，哪些开局按它续作",
+      "target": "5407c1efae4428dd",
+      "targets": [
+        "5407c1efae4428dd",
+        "a6095702661ffbc5"
+      ]
+    },
+    {
+      "arm": "X",
+      "query": "十月十五号主交接文件，哪些会话读过",
+      "target": "732adf1bc9055e9d",
+      "targets": [
+        "732adf1bc9055e9d",
+        "ee28bbcac74d7410"
+      ]
+    },
+    {
+      "arm": "X",
+      "query": "给 ZCode 的问题清单，在哪些会话处理过",
+      "target": "646f6bd8b9b63e88",
+      "targets": [
+        "646f6bd8b9b63e88",
+        "d5c9843eb13e5388"
+      ]
+    },
+    {
+      "arm": "P",
+      "query": "十月十七号那天关于交接续作讨论了什么",
+      "target": "5407c1efae4428dd",
+      "targets": [
+        "5407c1efae4428dd"
+      ]
+    }
+  ]
+}

@@ -29,6 +29,9 @@ import { harvestLessons } from '../extract/lesson-harvest.js';
 import { resolveWorkspaceId, resolveDomain } from '../../shared/workspace.js';
 import { cleanDerivedColumns } from '../extract/derived-cleanup.js';
 import { measureFtsSpace, shouldReclaim, maintainFts } from '../maintain/fts.js';
+// [1021 空间自愈] 孤儿备份清理规则 + 守护断线核算（两者都默认只读/默认不删，见各自文件顶部病历）
+import { reapAllProjects } from '../maintain/reap.js';
+import { analyzeProjectGuard } from '../maintain/guard-log.js';
 import { buildTagGraph } from '../graph/tags.js';
 import { autoArchiveProject, autoArchivePolicyOf } from '../../capture/archive.js';
 import { integrityOf, repairProject } from './repair.js';
@@ -168,6 +171,28 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     if (bad.length) { try { if (global) logHealthEvent(global, 'guard', 'warn', '完整性异常：' + bad.join(' / ')); } catch { /* 记账失败不阻塞 */ } }
     return bad.length ? '异常 ' + bad.length + ' 个：' + bad.join(' / ') : roots.length + ' 个库全部完整';
   });
+
+  // ── [1021 空间自愈] 守护断线核算（只加不改：不动上面的体检分支，也不动 guard.log 的写入方）──
+  //   病历：guard.log 只记瞬时 instances，不记"断了多久"；02:00 那一刻 0 实例、后来自己回来了，
+  //   中间丢了多长没人知道。这里把 instances=0 的连续样本合成区间，超阈值的回写一行到 guard.log，
+  //   并附"补采"判定（断线窗口内入库的消息条数）。阈值/报警文案都在 core/maintain/guard-log.ts。
+  if (todue.some((s) => s.id === 'guard')) {
+    try {
+      const alarmMinutes = Number(process.env.SRELAY_GUARD_ALARM_MIN ?? 5);
+      let appended = 0;
+      for (const r of roots) {
+        try {
+          const rep = analyzeProjectGuard(r, { alarmMinutes, nowMs: now, append: true });
+          for (const line of rep.appended) { appended++; log('  ' + base(r) + ' 断线：' + line); }
+        } catch (e) {
+          log('  ' + base(r) + ' 断线核算失败（不阻塞）：' + (e as Error).message);
+        }
+      }
+      if (appended === 0) log('  守护断线核算：无新增超阈值断线（阈值 ' + alarmMinutes + ' 分钟；guard.log 各自 .sessionrelay/ 下）');
+    } catch (e) {
+      log('  守护断线核算失败（不阻塞）：' + (e as Error).message);
+    }
+  }
 
   // ── ② 自愈：只修坏的 ──
   if (todue.some((s) => s.id === 'repair')) await runOne(specOf('repair'), async () => {
@@ -354,6 +379,31 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
       if (ftsFail) parts.push('空间回收失败 ' + ftsFail + ' 个库：' + ftsRes.filter((x) => x.err).map((x) => base(x.root) + '=' + x.err).join('; '));
       return parts.join(' · ');
   });
+
+  // ── [1021 空间自愈] 孤儿备份/临时文件清理（只加不改：接在上面 cleanup 分支之后）──
+  //   病历：三份 .damaged-* 灾难备份占 88 MB 躺了 2 天，没有任何机制会清。用户说过「备份先留着」
+  //   ⇒ **默认 enabled=false，连候选都只读不删**；只有 SRELAY_REAP_TMP=1 才真删，
+  //   且删前必须主库健康（integrity_check + messages>0），每删一个写一行 .sessionrelay/reap.log。
+  if (todue.some((s) => s.id === 'cleanup')) {
+    try {
+      const enabled = process.env.SRELAY_REAP_TMP === '1';
+      const minAgeDays = Number(process.env.SRELAY_REAP_AGE_DAYS ?? 30);
+      const rr = reapAllProjects(roots, { enabled, minAgeDays, now });
+      const cand = rr.reduce((a, x) => a + x.candidates.length, 0);
+      const del = rr.reduce((a, x) => a + x.deleted.length, 0);
+      const freed = rr.reduce((a, x) => a + x.deleted.reduce((b, c) => b + c.bytes, 0), 0);
+      if (cand > 0 || del > 0) {
+        log('  孤儿备份清理：候选 ' + cand + ' 个 · 已删 ' + del + ' 个（' + (freed / 1048576).toFixed(1) + ' MB）'
+          + (enabled ? '' : ' · 开关未开（SRELAY_REAP_TMP=1 才真删；备份按用户要求先留着）'));
+      }
+      // 只把"该不该删"层面的异常报出来（太新/开关未开是设计行为，不刷屏）
+      for (const x of rr) for (const s of x.skipped) {
+        if (/删除失败|主库健康检查未过|健康/.test(s.reason)) log('  ' + base(x.root) + ' 跳过清理：' + s.reason);
+      }
+    } catch (e) {
+      log('  孤儿备份清理失败（不阻塞）：' + (e as Error).message);
+    }
+  }
 
   // ── [1021] 标签图谱重建（light）──
   //   为什么进生命周期：`scripts/graph-tag-build.mjs` 是手动脚本，而 `core/graph/expand.ts`

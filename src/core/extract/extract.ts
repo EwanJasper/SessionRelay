@@ -18,7 +18,14 @@ export interface ExtractedMeta {
   files: string[];
   topics: string[];
   decisions: Array<{ text: string; seq: number; msgId?: string; at?: string; kind?: 'decision' | 'negative' }>;
-  questions: Array<{ q: string; seq: number; msgId?: string; at?: string; unresolved: boolean }>;
+  questions: Array<{
+    q: string; seq: number; msgId?: string; at?: string; unresolved: boolean;
+    /** [方案 B] 观察期标记：抽到时还不到 7 天 ⇒ 先不展示（unresolved=false），只进观察区 */
+    probation?: boolean;
+    /** [方案 B] 这次判决的理由（'answered' / 'fragment:xxx' / 'probation' / 'session-cap' …）——
+     *  容错不许静默：被拦掉的每一条都要说得出为什么，别让"少了几条"变成查不出的黑箱 */
+    gate?: string;
+  }>;
   codeBlockCount: number;
   keyExchanges: Array<{ userText: string; aiText: string; userSeq: number; reason: string }>;
 }
@@ -284,6 +291,20 @@ function nounChoiceFalsePositive(text: string): boolean {
   return !NOUN_CHOICE_VERB.test(rest);
 }
 
+/**
+ * 括号配对守卫（开括号数 === 闭括号数）。
+ * **唯一实现**：决策的 plausibleDecision 与未决的残片守卫都用这一份 ——
+ * 同一条判据在两处各写一遍，结果就是"改了一处、另一处继续按旧口径放行"。
+ * 字符集与 fork 0924 的行内版本逐字一致（含原版把 】 重复列了两次这一事实），
+ * 刻意**不**纳入 [ ] 与 <>：它们在代码/箭头文本里天然不平衡，会误杀正文。
+ */
+export function bracketsBalanced(raw: string): boolean {
+  const t = String(raw ?? '');
+  const opens = (t.match(/[（(「『【]/g) ?? []).length;
+  const closes = (t.match(/[）)】」』】]/g) ?? []).length;
+  return opens === closes;
+}
+
 // [fork 0922] 决策合理性守卫：正则只管"句首有触发词"，不管句子长什么样——
 // 实测垃圾三来源：看板表格行（| 分隔）、Markdown 粗体残片（**）、消息内嵌 JSON 转义串。
 // 在抽取端拒收，比事后清洗数据治本。
@@ -296,8 +317,7 @@ function plausibleDecision(text: string): boolean {
   if (/"(?:confirmed|title|session_id)"\s*:/.test(t) || /\}\s*,\s*\{/.test(t)) return false; // 内嵌 JSON 残片
   if (/^[）)】」"'、，。]/.test(t)) return false; // [fork 0924] 以闭括号/标点开头=句子中段截出的残片
   if (/\*\*/.test(t)) return false; // [fork 0924] 任意位置的粗体残片（mid-text ** 也是格式污染）
-  const pairs = (t.match(/[（(「『【]/g) ?? []).length - (t.match(/[）)】」』】]/g) ?? []).length;
-  if (pairs !== 0) return false; // [fork 0924] 括号不配对=腰斩碎片
+  if (!bracketsBalanced(t)) return false; // [fork 0924] 括号不配对=腰斩碎片（判据见 bracketsBalanced）
   // [fork 1015] 内嵌 JSON 残片：原守卫只认 confirmed/title/session_id 三个键名，
   // 实测漏了 `"done": true`、`"evidence": "..."` 这类（Phase 3 修复B 顺带扩族）
   if (/"[A-Za-z_]\w*"\s*:/.test(t)) return false;
@@ -648,9 +668,122 @@ export function wasAnswered(msgs: Msg[], askIdx: number, q: string): boolean {
   return false;
 }
 
-export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
+// ── [1021 方案 B · 未决段降级] 三道闸 ────────────────────────────────────────
+// 依据 docs/research/2026-10-18-U-A未决段处置调研.md §4「方案 B（推荐）」。
+// 调研件原本主张把这三件事放在**渲染层**；这里落在**抽取层**——同样三条判据，但：
+//   ① 存量库按版本重算即可生效；② key_questions 本身不再进垃圾；
+//   ③ 判据可单测（渲染层那两份副本没法单测，只能靠对拍）。
+// 三件事各自独立、各自可单测：
+//   ① 残片守卫   —— 截断/不完整/空壳的候选不标未决（理由是枚举出来的结构特征）
+//   ② 同会话唯一 —— 同一会话最多留 UNRESOLVED_PER_SESSION 条展示态未决
+//   ③ 7 天观察期 —— 抽到时不足 7 天 ⇒ 先不展示（probation）；满了 7 天仍未被回答 ⇒
+//                   正常展示并标 aging（"挂了 7 天还没闭合"）
+//
+// ⚠️ 观察期的代价（必须写明白，不许静默）：一条**真的**未决，若所在会话此后没有新消息、
+//    也不再触发重算，它会停在观察区（unresolved=false）。本文件没有"定时升级"的能力，
+//    升级只靠两条既有路径：会话新增消息后的增量/确认抽取、EXTRACT_VERSION 递增后的全量重算。
+//    所以这次改动**必须同时递增 EXTRACT_VERSION**（version.ts，不在本文件作用域）。
+
+/** 观察期（天）：新抽到的未决先只进观察区 */
+export const UNRESOLVED_PROBATION_DAYS = 7;
+/** 同会话最多几条展示态未决（方案 B 的「同会话唯一」） */
+export const UNRESOLVED_PER_SESSION = 1;
+
+/** 疑问核心词表：Q_HINT 判"像不像一个问题"，这里判"有没有实义疑问" */
+const Q_CORE = /(什么|哪|如何|怎么|为什么|是否|多少|谁|哪里|要不要|还是|多久)/;
+/** ASR 重复里**不算垃圾**的常见叠词/强调（白名单只拦"召回召回""不要不要"这种机械重吐） */
+const ASR_REPEAT_WHITELIST = /^(非常|特别|真的|确实|很多|好多|各种|各样|慢慢|渐渐|常常|经常|刚刚|马上|多多|好好|天天|年年|人人|个个|处处|时时|事事|种种|层层|步步|反复)$/;
+
+export interface UnresolvedGateOptions {
+  /** 判定"现在"（单测注入；生产不传 = 真实时间） */
+  now?: Date;
+  probationDays?: number;
+  perSession?: number;
+}
+
+/**
+ * 残片守卫：这条候选问题是不是"截断的 / 不完整的 / 空壳的"。
+ * 返回 null = 不是残片；返回字符串 = 拒收理由。
+ * **每条判据都是可枚举的结构特征**（前缀形态 / 配对 / 句尾形态 / 长度），
+ * 不是"看起来像"——这是它能被单测钉死的前提。
+ *
+ * 真实样本（agent1super 库 185 条候选，改前逐条看过）：
+ *   later with frustration: "之前他妈上下我不就叫你提PR吗？  → head-ascii-prose + unbalanced-quote
+ *   `12. `之前他妈上下我不就叫你提PR吗？                    → head-list-marker
+ *   （顺序不同是否算漂移？                                  → head-open-bracket
+ *   `os.homedir()` 大小写/符号链接有坑吗？                   → **保留**（行首反引号包代码是合法引用）
+ */
+/** 纯行首列表编号（"4. xxx" / "2) xxx"）——**剥掉再判**，不是拦。
+ *  病历（lead 复核，2026-10-18）：`head-list-marker` 原来直接拒收，把
+ *  「4. 空态「还没有书」还在吗（书丢了没）？」「2. 后面最终形态怎么说？」这类
+ *  **编号是列表残余、正文是完整真问题**的条目一起杀了。编号是**前置条件**，不是内容证据。
+ *  ⚠️ 小数点不算编号：「12.5 秒够吗？」必须原样保留（`\.` 要求后面是空白或中文）。 */
+const LIST_MARKER_PLAIN = /^\d+(?:[、)]|\.(?=\s|[\u4e00-\u9fff]))\s*/;
+/** markdown 转义过的编号（"\u0060 12. \u0060 xxx"）——**保留原判（拦）**。
+ *  为什么两种待遇：反引号包编号是"从代码块/转义文本里捡出来的"残片，正文同样不可靠。
+ *  实测样本 `12. `之前他妈上下我不就叫你提PR吗？ —— 剥掉编号后**没有任何后续判据能抓住它**
+ *  （content 是中文、无重复词、长度够），剥了就等于把一条 ASR 垃圾放进来。见 unresolved-gate.spec。 */
+const LIST_MARKER_ESCAPED = /^\u0060\s*\d+[.、)]/;
+
+export function unresolvedFragmentReason(q: string): string | null {
+  const raw = String(q ?? '').trim();
+  if (!raw) return 'empty';
+  // 字面 \n（markdown / JSON 转义换行）——多行残片。**先判**：它比任何行首形态都更无歧义
+  if (raw.includes('\\n') || raw.includes('\r')) return 'escaped-newline';
+  // ① markdown 转义编号：仍拦（理由见 LIST_MARKER_ESCAPED）
+  if (LIST_MARKER_ESCAPED.test(raw)) return 'head-list-marker-escaped';
+  // ② 纯编号：**剥掉，用剥后的正文重跑下面所有判据**；整条只有编号（剥完为空）才拦
+  const stripped = raw.replace(LIST_MARKER_PLAIN, '').trim();
+  if (!stripped) return 'head-list-marker';
+  const t = stripped;
+  // 行首小写英文散文残片（"later with frustration: …"）；大写开头（"Why …"）是真问句，不拦
+  if (/^[a-z]{2,}[\s\u0060]/.test(t)) return 'head-ascii-prose';
+  // 行首是闭引号/闭括号/句读 = 从句子中段截出来的
+  if (/^[”’"'）。，、；：!?…》」』]/.test(t)) return 'head-closing-punct';
+  // 行首开括号 = 括号里的补注被单独切出来
+  if (/^[（(【\[]/.test(t)) return 'head-open-bracket';
+  // 代码 / 表格 / 流程图残片
+  if ((t.match(/\|/g) ?? []).length >= 2 || t.includes('-->') || /\u0060{3}|~~~/.test(t) || /\)\s*=>\s*\{/.test(t)) return 'code-or-table';
+  // 引号 / 括号不配对 = 腰斩（与决策侧共用同一份判据）
+  if (!quotesBalanced(t)) return 'unbalanced-quote';
+  if (!bracketsBalanced(t)) return 'unbalanced-bracket';
+  // 句尾落在连接词/介词上 = 话没说完
+  if (/(?:和|与|或|及|但|而|因为|所以|然后|而且|以及|跟|把|被|给|让|使|就|才)[？?。]?$/.test(t)) return 'dangling-conjunction';
+  // 去掉语气词后短到没有实义（"你清楚了吗？""还是别的？"）。
+  // 阈值 5 是量过的："之后哪些要呢？"剩 5 字（真问题，保留）／"还是别的？"剩 3 字（残片，拦）
+  if (t.replace(/[的了吗呢吧啊呀哦哈嘛？?。！!，,、\s]/g, '').length < 5) return 'too-short';
+  // 延后型空壳：只说了"以后再说/待定"，且不含任何疑问核心
+  if (/^(?:这个|那个|这事|这件事|它)?\s*(?:以后|后续|之后|回头|晚点|再说|再定|待定|到时候)/.test(t) && !Q_CORE.test(t)) return 'deferral-shell';
+  // 口述重复：同一 2~3 字被连吐两遍（"…调召回召回"）——ASR 特征。
+  // 白名单放过常见的强调/叠词（"非常非常""慢慢"这类是正常汉语），只拦非成语式的机械重复。
+  const rep = /([\u4e00-\u9fff]{2,3})\1/.exec(t);
+  if (rep && !ASR_REPEAT_WHITELIST.test(rep[1])) return 'asr-repeat';
+  return null;
+}
+
+/** 问题列表：数组本体 + 判决计数（不在下标里，不污染 JSON.stringify 的结果） */
+export type QuestionList = ExtractedMeta['questions'] & { gated?: Record<string, number> };
+
+/** 展示态未决的排序键：有疑问核心优先 → 实词多者优先 → 长度 → 更晚的（方案 B：留最新的）。
+ *  实词数排在长度前面是量出来的：同一条消息切出"你目前主要在用哪个框架？"与"llama.cpp 还是
+ *  别的？"两句时，只按长度会留下后面那个**碎片**——实词数（你/目前/主要/框架 vs llama/cpp/别的）
+ *  更能代表"这句话有没有信息"。 */
+function questionRank(q: { q: string; seq: number }): number {
+  return (Q_CORE.test(q.q) ? 1_000_000 : 0)
+    + contentWords(q.q).size * 1_000
+    + Math.min(q.q.length, 90) * 10
+    + Math.min(Number(q.seq) || 0, 9);
+}
+
+export function extractQuestions(msgs: Msg[], opts: UnresolvedGateOptions = {}): QuestionList {
   const total = msgs.length;
+  const nowMs = (opts.now ?? new Date()).getTime();
+  const probationDays = opts.probationDays ?? UNRESOLVED_PROBATION_DAYS;
+  const perSession = Math.max(1, Math.floor(opts.perSession ?? UNRESOLVED_PER_SESSION));
   const out: ExtractedMeta['questions'] = [];
+  /** 判决计数：被拦掉的每一条都记在理由下（容错不许静默） */
+  const gated: Record<string, number> = {};
+  const note = (r: string) => { gated[r] = (gated[r] ?? 0) + 1; };
   // [fork 1015] 同会话内近似去重。
   // 病历：真实库实测 music player 的未决问题里 **30.9%** 是近似重复（97 条里 30 条）、
   // 全部问题 19.6% 重复；agent1super 分别为 1.1% / 3.5%。
@@ -660,12 +793,8 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
   // 又不会把两个不同的短问题合并（短问题 28 字已覆盖全文）。
   const seenQ = new Set<string>();
   const qKey = (s: string): string => s.replace(/[\s，。！？、,.!?;；:：]/g, '').slice(0, 28);
-  // [1021 红队 R2 修复] 原来是 `msgs.forEach(...)` + 循环内 `if (out.length >= 10) return;`。
-  //   **`forEach` 回调里的 `return` 只退出这一条消息的回调，不退出循环** ⇒ 10 条上限形同虚设。
-  //   实测（红队探针）：30 条用户提问 → 返回 30 条。库里已有 11/620 场超过 10 条，最高 35 条。
-  //   同文件其余三个抽取器（决策/文件/话题）都用 `for...of` + `return out`，只有这里写成 forEach。
-  //   改成 for 循环后 `return out` 才真的结束整个函数。
-  for (let idx = 0; idx < msgs.length; idx++) {
+  let full = false;   // 到 10 条上限后停止收集，但**仍要往下跑完三道闸**
+  for (let idx = 0; idx < msgs.length && !full; idx++) {
     const m = msgs[idx];
     if (m.role !== 'user') continue;
     for (const s of sentences(m.content)) {
@@ -681,20 +810,55 @@ export function extractQuestions(msgs: Msg[]): ExtractedMeta['questions'] {
       const k2 = qKey(qText);
       if (!k2 || seenQ.has(k2)) continue; // 同会话内已收过近似问题
       seenQ.add(k2);
+
+      // ── 三道闸的判决 ──
+      // 年龄：at 是这条消息自己的时间（不是会话创建时间）。取不到时间 ⇒ ageDays=null ⇒
+      // **不启用观察期**（不能证明它"新"就不惩罚；与"宁可不杀"一致）。
+      const at = m.createdAt ?? undefined;
+      const atMs = at ? Date.parse(at) : NaN;
+      const ageDays = Number.isFinite(atMs) ? (nowMs - atMs) / 86400_000 : null;
+      // "候选未决"仍然是原来的两维（位置 ∨ 未决词），第三维「被回答了吗」负责复核
+      const candidate = tailAsked || UNRESOLVED_HINT.test(s);
+      const answered = candidate ? wasAnswered(msgs, idx, s) : false;
+      let unresolved = false;
+      let probation = false;
+      let gate: string = 'not-candidate';
+      if (candidate && !answered) {
+        const frag = unresolvedFragmentReason(qText);
+        if (frag) { gate = 'fragment:' + frag; note(gate); }                 // ① 残片守卫
+        else if (ageDays !== null && ageDays < probationDays) {              // ③ 观察期
+          probation = true; gate = 'probation'; note(gate);
+        } else {
+          unresolved = true;                                                 // 真正展示
+          gate = ageDays === null ? 'unresolved(no-timestamp)' : 'unresolved(aged)';
+        }
+      } else if (answered) { gate = 'answered'; note(gate); }
+
       out.push({
-        q: qText,
-        seq: m.seqNum,
-        msgId: m.id,
-        at: m.createdAt ?? undefined,
-        // [1017 夜 · U-A 真根治] 加第三维：**这句后来被回答了吗**。
-        // 原判据（位置 ∨ 关键词）实测与「未答」不相关（7/7 都被答过，其后 305~524 条 assistant）。
-        // 现在：位置/关键词只决定「候选」，是否真未决由 wasAnswered 复核。
-        unresolved: (tailAsked || UNRESOLVED_HINT.test(s)) && !wasAnswered(msgs, idx, s),
+        q: qText, seq: m.seqNum, msgId: m.id, at, unresolved,
+        ...(probation ? { probation: true } : {}),
+        ...(gate === 'not-candidate' ? {} : { gate }),
       });
-      if (out.length >= 10) return out;   // 现在真的结束整个函数（见上方 R2 修复注释）
+      if (out.length >= 10) { full = true; break; }
     }
   }
-  return out;
+
+  // ── ② 同会话唯一（方案 B）：展示态未决超过 perSession 条时，留下信息量最大的那条 ──
+  // 依据：调研件 §2.2 实测，简报里 3 个名额常常来自**同一个会话**（"同一个会话说 3 遍"）。
+  // 被挤掉的不是删掉，只把 unresolved 置 false 并记下理由 session-cap。
+  const showable = out.map((q, i) => ({ q, i })).filter((x) => x.q.unresolved);
+  if (showable.length > perSession) {
+    const keep = new Set([...showable].sort((a, b) => questionRank(b.q) - questionRank(a.q)).slice(0, perSession).map((x) => x.i));
+    for (const x of showable) {
+      if (keep.has(x.i)) continue;
+      out[x.i].unresolved = false;
+      out[x.i].gate = 'session-cap';
+      note('session-cap');
+    }
+  }
+
+  if (Object.keys(gated).length > 0) (out as QuestionList).gated = gated;
+  return out as QuestionList;
 }
 
 // ── code_changes：围栏代码块计数（轻量代理指标） ──

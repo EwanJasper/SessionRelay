@@ -239,6 +239,46 @@ function binom2(k: number, n: number): number {
   return Math.min(1, s2);
 }
 
+// ───────────────────────── 统计工具（1018 · 可证伪仪器）─────────────────────────
+// 铁律：**没有 CI 的数字不许写成结论**。点估计在 n=41 时标准误约 7.6pt，
+// 两个 40% vs 47% 的差完全在噪声里 —— 不给 CI 就是在制造假结论。
+
+/** 百分位（线性插值）。分位数一律用这一份实现，别在别处再写一种口径。 */
+function pct(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return NaN;
+  const i = (sortedAsc.length - 1) * p;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? sortedAsc[lo] : sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (i - lo);
+}
+
+/**
+ * 配对 bootstrap 置信区间（10000 次重采样，95%）。
+ * 输入是**每题一个 0/1（或连续值）**，重采样的是**题**而不是汇总百分比 ——
+ * 后者会把"题面难度分布"这个方差来源整段抹掉。
+ * 固定种子：同一批题二次跑必须给出同一个 CI，否则它自己就成了噪声源。
+ */
+function bootstrapCI(vals: number[], iters = 10000, seed = 0x5eed): { mean: number; lo: number; hi: number } {
+  const n = vals.length;
+  if (n === 0) return { mean: NaN, lo: NaN, hi: NaN };
+  const mean = vals.reduce((a, b) => a + b, 0) / n;
+  let s = seed >>> 0;
+  const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  const means: number[] = new Array(iters);
+  for (let t = 0; t < iters; t++) {
+    let sum = 0;
+    for (let k = 0; k < n; k++) sum += vals[Math.floor(rnd() * n)];
+    means[t] = sum / n;
+  }
+  means.sort((a, b) => a - b);
+  return { mean, lo: pct(means, 0.025), hi: pct(means, 0.975) };
+}
+
+/** 两个独立组的天花板差 + CI 是否重叠 → 直接一句话判定，省得人肉比区间。 */
+function fmtCI(c: { mean: number; lo: number; hi: number }, isPct = true): string {
+  const f = (x: number) => isPct ? (x * 100).toFixed(1) + "%" : x.toFixed(1);
+  return f(c.mean) + " [" + f(c.lo) + ", " + f(c.hi) + "]";
+}
+
 /** 配对 McNemar：以 lex（词法基线）为基准，统计新臂「救回 / 打掉」各有几条（只看 hit@1） */
 function mcnemarByArm(rows: Array<{ arm: string; lex: number } & Record<string, number>>, key: string): Map<string, { b: number; c: number }> {
   const out = new Map<string, { b: number; c: number }>();
@@ -269,7 +309,15 @@ let probeN = 0, fuseDiff = 0, gateOpen = 0;
 interface Acc { n: number; h1: number; h3: number; h10: number; satTop1: number }
 const mk = (): Acc => ({ n: 0, h1: 0, h3: 0, h10: 0, satTop1: 0 });
 // 词法臂 K/S/M；语义臂 Ks/Ss/Ms —— **同一个目标会话、同一批题面**，两臂配对可比
-const acc: Record<string, Acc> = { K: mk(), S: mk(), M: mk(), Ks: mk(), Ss: mk(), Ms: mk(), Ke: mk(), Se: mk(), Me: mk() };
+// [1018] 惰性创建：手写题集用的臂名（P/X/T）不在预置表里，访问时补一个空累加器。
+// 不惰性就会 `undefined.n` 崩掉 —— 而崩掉时前面已跑完的题全白跑，最容易误判成「脚本坏了」。
+const accRaw: Record<string, Acc> = { K: mk(), S: mk(), M: mk(), Ks: mk(), Ss: mk(), Ms: mk(), Ke: mk(), Se: mk(), Me: mk() };
+const acc = new Proxy(accRaw, {
+  get(t, k: string) { if (typeof k === 'string' && !t[k]) t[k] = mk(); return t[k]; },
+  has(t, k: string) { return typeof k === 'string' ? k in t : false; },
+});
+/** 已出现过的臂名（报告按这个遍历，不写死 K/S/M） */
+const armNames = (): string[] => Object.keys(accRaw).filter((k) => accRaw[k].n > 0);
 /** 扩展臂的阶段计数与样例（截图留存用：什么词扩成了什么词，出问题时唯一能查的东西） */
 const expStats = { n: 0, seeded: 0, expanded: 0, terms: 0, pathHits: 0, ms: 0, baseMs: 0, sample: [] as Array<{ q: string; seeds: string[]; terms: string[] }> };
 /** 逐题结果（落盘用）：两臂的命中名次都记，扫描完可以算配对 McNemar，而不是只看汇总百分比 */
@@ -281,11 +329,21 @@ const msgCount = new Map<string, number>();
   const all = db.prepare('SELECT id, message_count AS c FROM sessions').all() as Array<{ id: string; c: number }>;
   for (const r of all) msgCount.set(r.id, Number(r.c || 0));
 }
+// [1018 · literal/semantic 分桶] 判据：**整个 query 串**能否在 target 会话的消息里 LIKE 命中。
+// 为什么用整串而不是分词后任一词命中：分词后几乎必然命中（会话很长），那等于把所有题都判成 literal。
+// 整串命中 ⇒ 检索器只要做「原文子串匹配」就能答对 ⇒ 这道题的分数不反映「换个说法还能不能召回」。
+const litStmt = db.prepare('SELECT 1 FROM messages WHERE session_id = ? AND content LIKE ? LIMIT 1');
+const isLiteral = (q: string, target: string): boolean => {
+  try { return !!litStmt.get(target, '%' + q + '%'); } catch { return false; }
+};
+const latMs: number[] = [];
 for (const it of items) {
   let ids: string[] = [];
   const t0 = Date.now();
   try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId); } catch { continue; }
-  expStats.baseMs += Date.now() - t0;
+  const msThis = Date.now() - t0;
+  latMs.push(msThis);
+  expStats.baseMs += msThis;
   // ── 标签扩展臂：同一题、同一目标，只是在旧行为之上多开一条扩展路（单变量） ──
   let expIds: string[] = [];
   if (EXPAND) {
@@ -343,19 +401,70 @@ for (const it of items) {
   const li = tally(acc[it.arm], ids);
   const si = semReady ? tally(acc[it.arm + 's'], semIds) : -1;
   const ei = EXPAND ? tally(acc[it.arm + 'e'], expIds) : -1;
-  if (semReady || EXPAND) rows.push({ arm: it.arm, query: it.query, target: it.target, lex: li, sem: si, exp: ei });
+  // lit/ms 一律记，与 sem/exp 是否开启无关（分桶报告要用）
+  rows.push({ arm: it.arm, query: it.query, target: it.target, lex: li, sem: si, exp: ei,
+    lit: isLiteral(it.query, it.target), ms: msThis });
 }
 
 const fusionLabel = FUSION === undefined ? '产品默认(条件)' : (FUSION ? '强制on' : 'off');
 console.log('库: ' + dbPath + '  改写: ' + (REWRITE ? 'on' : 'off') + '  融合: ' + fusionLabel + '  长度归一: ' + (LENGTHNORM ? 'on' : 'off'));
 console.log('臂   样本    hit@1        hit@3        hit@10      巨霸top1');
-for (const k of ['K', 'S', 'M', 'Ks', 'Ss', 'Ms', 'Ke', 'Se', 'Me']) {
+for (const k of armNames()) {
   const a = acc[k];
   if (a.n === 0) continue;
   const p = (x: number) => a.n ? ((x / a.n) * 100).toFixed(1) + '%' : '-';
   console.log(k.padEnd(5) + String(a.n).padEnd(8) + p(a.h1).padEnd(13) + p(a.h3).padEnd(13) + p(a.h10).padEnd(13) + p(a.satTop1));
 }
 if (!SEMANTIC) console.log('（语义臂未开：加 --semantic 1 才会跑；三臂 K/S/M 是纯词法基线）');
+// ═══════════════ [1018 新增] literal/semantic 分桶 + bootstrap CI + 延迟分位 ═══════════════
+// 为什么必须分桶：抽检发现 35% 的 query 是 target 会话原文的**逐字摘抄**，LIKE 就能命中。
+// 那部分题把总分抬高了，却测不出「换个说法还能不能召回」—— 后者才是真正的诉求。
+// ⇒ 同一批题切两条曲线：literal（原文能直接命中）/ semantic（换个说法才需要真本事）。
+if (rows.length > 0) {
+  const buckets: Array<[string, (r: any) => boolean]> = [
+    ['literal ', (r) => r.lit === true],
+    ['semantic', (r) => r.lit === false],
+  ];
+  console.log('');
+  console.log('分桶（判据：整个 query 能否在 target 会话里 LIKE 命中）');
+  const h1v = (r: any) => (r.lex === 0 ? 1 : 0);
+  const h10v = (r: any) => (r.lex >= 0 ? 1 : 0);
+  const mrrv = (r: any) => (r.lex >= 0 ? 1 / (r.lex + 1) : 0);
+  const ciLine = (label: string, list: any[], key: string) => {
+    const v = list.map((r) => key === 'h1' ? h1v(r) : key === 'h10' ? h10v(r) : mrrv(r));
+    const c = bootstrapCI(v);
+    return fmtCI(c, true);
+  };
+  console.log('桶        题数  hit@1 [95%CI]'.padEnd(48) + 'hit@10 [95%CI]'.padEnd(34) + 'MRR [95%CI]');
+  for (const [name, pred] of buckets) {
+    const list = rows.filter(pred);
+    if (list.length === 0) { console.log(name + '      0     （本批无此题）'); continue; }
+    console.log((name + '    ' + String(list.length).padEnd(6) + ciLine(name, list, 'h1')).padEnd(48)
+      + ciLine(name, list, 'h10').padEnd(34) + ciLine(name, list, 'mrr'));
+  }
+  const nLit = rows.filter((r: any) => r.lit === true).length;
+  console.log('  ⇒ literal 占比 ' + (nLit / rows.length * 100).toFixed(1) + '%（' + nLit + '/' + rows.length + '）'
+    + (nLit / rows.length > 0.25 ? '  ⚠️ 超过 25%：总分会被原文摘抄抬高，看结论请以 semantic 桶为准' : ''));
+  console.log('');
+  console.log('逐臂 × 分桶（hit@1，带 95% CI）');
+  for (const arm of armNames()) {
+    const seg: string[] = [];
+    for (const [name, pred] of buckets) {
+      const list = rows.filter((r: any) => r.arm === arm && pred(r));
+      if (list.length === 0) continue;
+      const c = bootstrapCI(list.map(h1v));
+      seg.push(name.trim() + ' n=' + list.length + ' ' + fmtCI(c, true));
+    }
+    if (seg.length) console.log('  ' + arm + '  ' + seg.join('   |   '));
+  }
+  // 延迟分位（只算基线搜索那一路，不含融合探针与语义臂 —— 那两条会把它抬虚）
+  if (latMs.length > 0) {
+    const s = [...latMs].sort((a, b) => a - b);
+    console.log('');
+    console.log('延迟（基线搜索路，' + latMs.length + ' 次）：P50 ' + pct(s, 0.50).toFixed(1) + 'ms · P95 '
+      + pct(s, 0.95).toFixed(1) + 'ms · P99 ' + pct(s, 0.99).toFixed(1) + 'ms · max ' + s[s.length - 1].toFixed(0) + 'ms');
+  }
+}
 // 分辨率声明（调研件 §4.4）：没有这句话，扫描一定会把噪声当结论
 if (semReady) {
   const n = rows.length;
