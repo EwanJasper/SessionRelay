@@ -285,6 +285,59 @@ sequenceDiagram
     AI-->>小王: 带出处的完整回答
 ```
 
+## 可选：交接技能（推荐但不是必需）
+
+本仓库附带 **`handoff-atlas`** 技能 —— 它教 AI **什么时候该写交接件、怎么写**，
+并把「交接件 / 全资源地图 / 状态栈排障」三件事合成一条流水线。
+
+### 需要它吗？
+
+**不需要。** SessionRelay 的核心（记忆采集、检索、MCP 工具、自动简报）**不依赖任何技能**，
+装完 `srelay init` 就能用。
+
+装它是为了这个场景：
+
+| 场景 | 不装 | 装了 |
+| ---- | ---- | ---- |
+| 每次换会话 | AI 只拿到自动简报 | AI 知道**什么时候该主动写交接件**、写到哪个文件、要写哪些节 |
+| 长项目接手 | 得自己整理入口 | 技能会生成入口交接触 + 勘误 + 锚点审计 |
+| 上下文快满 | 容易丢失在飞的东西 | 收尾三件（落盘审计 / 索引追加 / 记忆库同步）成流程 |
+
+**判据一句话**（技能里的原话）：
+> 「下一个人（或下一条命）不读这份文档就会走弯路」才写交接件；
+> 只是「记录一下我做了啥」——那是 relay 自动采集与看板的活。
+
+### 怎么装
+
+技能就是几个 Markdown + 脚本，**复制到你的 agent 技能目录**即可：
+
+```bash
+# 从本仓库克隆（或直接下 zip）
+git clone https://github.com/rui08984-dot/SessionRelay.git
+cd SessionRelay
+
+# 装到全局技能目录（路径按你的 agent 而定，下面是常见约定）
+cp -r skills/handoff-atlas ~/.agents/skills/        # 通用
+cp -r skills/handoff-atlas ~/.zcode/skills/         # ZCode
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item -Recurse skills\handoff-atlas "$HOME\.agents\skills\"
+```
+
+装完重启对应 agent 即可。技能目录里各文件的作用：
+
+| 文件 | 作用 |
+| ---- | ---- |
+| `SKILL.md` | 主技能说明（触发条件 + 什么时候才该写） |
+| `references/state-stack-ops.md` | 状态栈四层与排障口令 |
+| `scripts/gen_atlas.py` | 生成本项目的全资源文件地图 |
+| `scripts/anchor_audit.mjs` | 交接件锚点审计（检查引用的路径/命令是否还存在） |
+
+> ⚠️ `gen_atlas.py` 与 `anchor_audit.mjs` 是**可选**工具，不装技能也能单独跑。
+
 ## 快速开始
 
 要求 **Node ≥ 22**（Windows / macOS / Linux）：
@@ -499,6 +552,8 @@ module.exports = {
 `--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · DSH / Cursor 官方适配 · HOP 协议第三方推广
 
 ## 文档
+
+- [默认配置说明](docs/默认配置.md) —— 出厂默认值与每个开关的真实理由
 
 - **[用户手册](docs/user-guide.md)**——从安装到团队交接的完整指南（所有用户必读）
 - [导入导出实操指南](docs/import-export-guide.md)——项目交接 / 新人入职 / 安全导入 / 跨项目迁移 / 定期归档，五个场景完整命令
