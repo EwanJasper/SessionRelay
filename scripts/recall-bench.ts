@@ -37,6 +37,8 @@ const arg = (n: string, d: string) => { const i = argv.indexOf('--' + n); return
 const N = Number(arg('n', '150'));
 const LIMIT = Number(arg('limit', '10'));
 const REWRITE = arg('rewrite', '1') !== '0';
+// [1026] 剔问句外壳后重搜（默认开）。给 A/B 用：--coreonly 0 逐字回到加这条路之前的行为。
+const COREONLY = arg('coreonly', '1') !== '0';
 // ⚠️ [1017 夜 纠正] 这里原先默认 '0' ⇒ 传下去的 fusion 是 **false**，即"逐字关掉融合"。
 // 但**产品默认是 undefined（主路不硬时才融合）**（engine.ts:253-257）——
 // 于是基准默认量的是"关掉融合"的旧行为，而不是用户在用的那套（口径 bug，与 lengthNorm 那次同型）。
@@ -340,7 +342,7 @@ const latMs: number[] = [];
 for (const it of items) {
   let ids: string[] = [];
   const t0 = Date.now();
-  try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId); } catch { continue; }
+  try { ids = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM, coreOnly: COREONLY } as never).map((h) => h.sessionId); } catch { continue; }
   const msThis = Date.now() - t0;
   latMs.push(msThis);
   expStats.baseMs += msThis;
@@ -351,7 +353,7 @@ for (const it of items) {
     try {
       const tr: { seeds?: Array<{ tag: string }>; terms?: Array<{ name: string }>; pathHits?: number } = {};
       expIds = searchSessions(db, {
-        project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM,
+        project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: FUSION, lengthNorm: LENGTHNORM, coreOnly: COREONLY,
         tagExpand: true, tagReserve: TAG_RESERVE, tagHops: TAG_HOPS, tagMaxTerms: TAG_TERMS,
         tagInFusion: TAG_FUSION ? true : undefined, tagTrace: tr,
       } as never).map((h) => h.sessionId);
@@ -386,7 +388,7 @@ for (const it of items) {
     try {
       const forced = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: true, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId);
       if (forced.join(',') !== ids.join(',')) fuseDiff++;
-      const off = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: false, lengthNorm: LENGTHNORM } as never).map((h) => h.sessionId);
+      const off = searchSessions(db, { project: PID, query: it.query, limit: LIMIT, rewrite: REWRITE, fusion: false, lengthNorm: LENGTHNORM, coreOnly: COREONLY } as never).map((h) => h.sessionId);
       if (off.join(',') !== ids.join(',')) gateOpen++;
     } catch { /* 探测失败不计 */ }
   }
@@ -497,7 +499,7 @@ if (EXPAND && rows.length > 0) {
 }
 const jf = arg('json', '');
 if (jf) fs.writeFileSync(jf, JSON.stringify({
-  at: new Date().toISOString(), dbPath, rewrite: REWRITE, limit: LIMIT, acc,
+  at: new Date().toISOString(), dbPath, rewrite: REWRITE, coreOnly: COREONLY, limit: LIMIT, acc,
   knobs: { semantic: SEMANTIC, threshold: THRESHOLD, reserve: RESERVE, topk: TOPK, dtype: DTYPE || null, fusion: fusionArg || 'default', lengthnorm: LENGTHNORM,
     expand: EXPAND, tagreserve: TAG_RESERVE, taghops: TAG_HOPS, tagterms: TAG_TERMS, tagfusion: TAG_FUSION },
   expStats, semReady, semWhy, rows,

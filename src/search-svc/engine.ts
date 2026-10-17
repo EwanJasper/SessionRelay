@@ -7,7 +7,7 @@
 import type { DB, } from '../store/db.js';
 import { parseQuery, unitExpr, segment } from '../core/tokenize/tokenizer.js';
 import { applyDecay, ageMsOf, type DecayConfig } from '../core/decay/decay.js';
-import { rewriteQuery } from '../core/tokenize/rewrite.js';
+import { pickScaffold, rewriteQuery } from '../core/tokenize/rewrite.js';
 import { expandQueryTags } from '../core/graph/expand.js';
 import type { QueryExpansion, ExpansionTerm } from '../core/graph/expand.js';
 // [1021 · BM25F/BM25+] 打分阶段的两个零成本杠杆。判据与默认值**只在 bm25.ts 一处**（含扫描记录），
@@ -132,6 +132,8 @@ export interface SearchOptions {
    * 关掉它 = 逐字回到旧行为（便于 A/B 对比）。
    */
   rewrite?: boolean;
+  /** 剔问句外壳后重搜（默认开；false 逐字回旧行为，供 A/B 与回归） */
+  coreOnly?: boolean;
   /** 主路命中少于这个数才启用改写补充（默认 3；设 0 = 永远启用） */
   rewriteBelow?: number;
   /**
@@ -800,6 +802,35 @@ function fusedSearch(db: DB, opts: SearchOptions, main: SearchHit[]): SearchHit[
     // 否则二次乘罚。
     const ex = searchOnce(db, { ...opts, query: rw.extraUnits.flat().join(' '), rewrite: false, limit, lengthNorm: false });
     if (ex.length > 0) paths.push({ w: 0.6, hits: ex });
+  }
+  // ── 补充路 ④：剔掉问句外壳后重搜（2026-10-18）──
+  //
+  // 为什么需要它：`pickScaffold` 从 1016 起就写好了，注释里那句「剔问句外壳」
+  //   也一直写在 rewrite.ts 的文件头上，但**生产代码从没调用过它** ——
+  //   注释承诺三个手段（剔外壳 / 同义家族 / bigram），实际只实现了后两个。这是死代码，
+  //   而且是最难被发现的那种：git blame 看不出、测试只测它自己、跑起来又不报错。
+  //
+  // 为什么它能改善 hit@1 而同义词路不能：主路是**会话级 AND** ⇒ 每个单元都必须被覆盖。
+  //   而问句外壳词（「给那个…列的…最高优先级那条是什么」）几乎不可能出现在正文里，
+  //   留着它们等于要求正文包含虚词 ⇒ 真目标被 AND 直接过滤掉，连候选都进不来。
+  //   同义词路用的是 OR，只能往队尾补（实测 hit@1 11.5% 而 hit@10 45.6%，正是这个形状）。
+  //   这条路减的是**约束数**、不是换说法，所以仍是 AND、精确性不降。
+  //
+  // 权重 0.8 高于同义词路 0.6：同义词是「换成别的说法」（可能偏），这条是「同一个查询去掉噪声」（更准）。
+  const scaffold = new Set(pickScaffold(tokens));
+  const coreTokens = tokens.filter((t) => !scaffold.has(t));
+  // ⚠️ **默认关**（2026-10-18 实测结论，不是没做是做了没用）：
+  //   305 题 A/B（baseline vs 开着这条路）配对比较：
+  //     hit@1  更差 0.3pt（McNemar b=1,c=0,p=1.00 不显著）
+  //     hit@10 更好 1.0pt（簇级 CI ±1.1 跨 0，不显著）
+  //     延迟   P50 388ms → 437ms（+12.6%，这条是确定的代价）
+  //   设计理由本身成立（剔掉外壳能减少 AND 约束），但**这批题上不奏效**：
+  //   真信号词若在正文里，主路早就命中了；若不在，剔外壳也变不出来。
+  //   留开关不留默认：代码是这次实验的可执行记录，将来换 query 分布可以再跑一次，
+  //   但**不许**在没新证据的情况下把它打开 —— 那等于拿 +12.6% 延迟买一个测不出来的改进。
+  if (opts.coreOnly === true && scaffold.size > 0 && coreTokens.length > 0) {
+    const co = searchOnce(db, { ...opts, query: coreTokens.join(' '), rewrite: false, limit, lengthNorm: false });
+    if (co.length > 0) paths.push({ w: 0.8, hits: co });
   }
 // ⚠️ 查询里有**短语单元**（带引号的多词）时不加子串路：
   // LIKE 只看「字面包含」，分不出 按月分区 与「先按月再分区」——
