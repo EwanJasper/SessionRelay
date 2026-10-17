@@ -230,7 +230,13 @@ export function queryBriefData(root, limit = 200) {
  *    全部数字见 docs/1015-深夜-最近在动-信号体检.md。
  * 绝不抛：这是 prompt 组装路径上的函数。返回 [] = 无数据/不可用。
  */
-export function queryRecentFiles(root, { days = 7, top = 3, maxSessions = 300 } = {}) {
+// ⚠️ [第三轮复审 09:1x] `now` 参数是给**对拍**用的：
+//   核心 CLI 与插件 SQL 两路各算各的 `Date.now()`，而 CLI 要 spawn 子进程（实测 ~190ms），
+//   两侧 cutoff 天然差这 190ms。库指纹此时**逐字相同**（守卫不会 SKIP），
+//   于是一个 `last_event_at` 正好落在缝里的会话会被判成「两份实现已漂」——
+//   守卫把「库变了」和「钟走了」当成一回事。
+//   ⇒ 传入**同一个** `now` 让两侧用同一瞬间算窗口；不传时行为与从前完全一致。
+export function queryRecentFiles(root, { days = 7, top = 3, maxSessions = 300, now = Date.now() } = {}) {
   if (!root || typeof root !== 'string') return []
   if (!DatabaseSync) return []
   const file = path.join(root, RELAY_DIR, DB_FILE)
@@ -238,7 +244,7 @@ export function queryRecentFiles(root, { days = 7, top = 3, maxSessions = 300 } 
   let db = null
   try {
     db = openDb(file)
-    const cutoff = new Date(Date.now() - days * 86400000).toISOString()
+    const cutoff = new Date(now - days * 86400000).toISOString()
     // [B3] 一次性探针会话（0~2 条消息、无决策无问题、非手动/导入）不进这个信号。
     // ⚠️ 这一段的判据与核心库 `core/SessionRelay/src/store/db.ts` 的 PROBE_SQL **同规**：
     //    两个运行时不能共用模块，所以守门 H 段拿真实库对拍两侧输出（改一边不改另一边会立刻变红）。
