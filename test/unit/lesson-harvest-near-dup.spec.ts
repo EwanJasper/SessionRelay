@@ -119,6 +119,58 @@ describe('经验采集 · 近重复只标注不丢弃', () => {
   });
 });
 
+describe('分级自动：能自证的自动过，不能自证的才找人', () => {
+  /** 铺一条已存在的经验，并把 hits 预置成指定值 */
+  function seedExisting(gdb: ReturnType<typeof openGlobal>, text: string, grade: string, hits: number) {
+    const ins = addLesson(gdb as never, {
+      text, quote: text, sourceRef: 'seed:s1', route: grade === 'verified-user' ? 'user-message' : 'none',
+      grade, scope: 'global', status: 'draft',
+    } as never);
+    gdb.prepare('UPDATE lessons SET hits = ? WHERE id = ?').run(hits, ins.id);
+    return ins;
+  }
+
+  it('用户原话反复出现 ≥3 次 ⇒ 自动升 verified（不用人点头）', () => {
+    const gdb = openGlobal();
+    const text = harvestCandidates([{ role: 'user', content: MSG, seqNum: 1, sessionId: 's1' }])[0]!.text;
+    const ins = seedExisting(gdb, text, 'verified-user', 2);   // 再来一次就满 3
+
+    const pdb = seedProject(path.join(tmp, 'autoA'), MSG);
+    const rep = harvestLessons(gdb as never, pdb as never, 'ws-auto', { days: 7 });
+
+    expect(rep.autoPromoted).toBe(1);
+    const row = gdb.prepare('SELECT status, grade, hits FROM lessons WHERE id = ?').get(ins.id) as
+      { status?: string; grade?: string; hits?: number };
+    expect(row.status).toBe('verified');
+    expect(row.grade).toBe('verified-user');
+    expect(Number(row.hits)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('只出现过一次的用户原话仍是 draft（一次不算证据）', () => {
+    const gdb = openGlobal();
+    const text = harvestCandidates([{ role: 'user', content: MSG, seqNum: 1, sessionId: 's1' }])[0]!.text;
+    const ins = seedExisting(gdb, text, 'verified-user', 0);
+
+    const pdb = seedProject(path.join(tmp, 'autoB'), MSG);
+    const rep = harvestLessons(gdb as never, pdb as never, 'ws-auto2', { days: 7 });
+
+    expect(rep.autoPromoted).toBe(0);
+    expect((gdb.prepare('SELECT status FROM lessons WHERE id = ?').get(ins.id) as { status?: string }).status).toBe('draft');
+  });
+
+  it('inferred 永远不自动升（哪怕 hits 拉满）', () => {
+    const gdb = openGlobal();
+    const text = harvestCandidates([{ role: 'user', content: MSG, seqNum: 1, sessionId: 's1' }])[0]!.text;
+    const ins = seedExisting(gdb, text, 'inferred', 10);
+
+    const pdb = seedProject(path.join(tmp, 'autoC'), MSG);
+    const rep = harvestLessons(gdb as never, pdb as never, 'ws-auto3', { days: 7 });
+
+    expect(rep.autoPromoted).toBe(0);
+    expect((gdb.prepare('SELECT status FROM lessons WHERE id = ?').get(ins.id) as { status?: string }).status).toBe('draft');
+  });
+});
+
 describe('经验维护 · [红队 S2] 反悔次数必须能累加', () => {
   it('source_ref 很长时 ×N 也不能被截断吃掉（否则 30 轮上限永不触发）', () => {
     const gdb = openGlobal();

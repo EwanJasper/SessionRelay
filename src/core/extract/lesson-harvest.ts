@@ -9,7 +9,7 @@
 // 为什么不做成守护自动跑：抽错一句话就会污染**所有项目**的注入。让它是个显式命令，
 // 人（或排程）决定什么时候跑、跑完要不要收。
 import { addLesson, visibleWhere } from '../../store/global.js';
-import { isNearDuplicate } from '../compact/dedup.js';
+import { isNearDuplicate, isNearDuplicateKey, nearDupKey } from '../compact/dedup.js';
 
 const PATTERNS = [
   '踩坑', '血的教训', '教训是', '下次一定', '以后再', '以后要', '千万别', '别再', '不要再',
@@ -82,6 +82,10 @@ export interface HarvestReport {
   repeated: number;
   /** 疑似与库内某条同义的候选数（**只标注，不丢弃**；见近重复那段） */
   nearDup: number;
+  /** 本轮自动升格为 verified 的条数（只有"用户原话反复出现够次数"这一条路，有上限） */
+  autoPromoted: number;
+  /** 因单轮写入上限被推迟到下一轮的候选数 */
+  capped: number;
   /** 取样（前 20 条新候选；dry-run 与事件日志用） */
   samples: Harvested[];
 }
@@ -170,10 +174,16 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   const fresh: Harvested[] = [];
   /** 新候选文字 → 库里那条高度相似的原文（**只用于标注**，不用于丢弃） */
   const nearLike = new Map<string, string>();
+  // [红队 M3] 预计算判据键：库内每条**只分词一次**。
+  //   原来每比较一对就把两边各分词一次 —— 3000 条库 × 9 候选 = 27000 对 = 54000 次分词
+  //   （实测 582ms，会拖慢 weight='light' 的宿主阶段）。现在库内 3000 次 + 候选 9 次。
+  //   判据仍然只有一份：isNearDuplicate 与 isNearDuplicateKey 走同一组键函数。
+  const existingKeys = existingTexts.map((t) => ({ t, k: nearDupKey(t) }));
   for (const c of cands) {
     if (existing.has(c.text)) { hitTexts.add(c.text); continue; }
-    for (const t of existingTexts) {
-      if (isNearDuplicate(t, c.text, NEAR_DUP_THRESHOLD).dup) { nearLike.set(c.text, t); break; }
+    const ck = nearDupKey(c.text);
+    for (const e of existingKeys) {
+      if (isNearDuplicateKey(e.k, ck, NEAR_DUP_THRESHOLD)) { nearLike.set(c.text, e.t); break; }
     }
     fresh.push(c);   // 无论如何都保留 —— 判据不可靠时，不许静默丢数据
   }
@@ -190,12 +200,41 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   //   口径仍然是那句：**机器不确定时标记不确定，而不是替人下结论**。
   const HITS_CAP = 20;
   let repeated = 0;
+
+  // ── [1021 分级自动] 能自证的自动过，不能自证的才找人 ─────────────────────────
+  //
+  // 分工（这条边界是设计决策，别随手放宽）：
+  //   · verified-tool / verified-file —— 有可复现的证据。addLesson 的默认值本来就会给
+  //     verified（`status = input.status ?? (grade !== 'inferred' && sourceRef ? 'verified' : 'draft')`），
+  //     所以这条路**天生就是自动的**，不需要额外代码。
+  //   · verified-user —— 人说的话，但"说过一次"不等于"这条重要"。门槛设成
+  //     **同一句原话横跨多轮采集反复出现 ≥ USER_PROMOTE_MARK 次**才自动升格；
+  //     只出现一次仍然留 draft 等复核。反复出现恰恰说明是反复踩的坑。
+  //   · inferred —— **永远要人**。它是机器从上下文猜的，猜错会污染所有项目每次对话的 prompt。
+  // 兜底：单轮自动升格上限 AUTO_PROMOTE_CAP 条。超了就留 draft —— 防止某次抽取把几十条
+  //   一起升上去，把"分级自动"悄悄变成"全自动"（那正是用户明确否掉的那个方案）。
+  const USER_PROMOTE_MARK = 3;
+  const AUTO_PROMOTE_CAP = 5;
+  /** 单轮写入上限：一次最多灌这么多草稿进复核队列，超出部分留到下一轮 */
+  const WRITE_CAP = 20;
+  let autoPromoted = 0;
+  let capped = 0;
   if (!opts.dry) {
     if (hitTexts.size) {
       // 写侧同样按可见性收窄，否则会 bump 到别的项目的同名行
       const bump = gdb.prepare('UPDATE lessons SET hits = MIN(hits + 1, ?), updated_at = ? WHERE text = ? AND (' + vis.sql + ')');
       const nowIso = new Date().toISOString();
       for (const t of hitTexts) { bump.run?.(HITS_CAP, nowIso, t, ...(vis.params as never[])); repeated++; }
+      // 涨完 hits 再判：够次数且是用户原话且还是草稿 ⇒ 自动升 verified
+      const promote = gdb.prepare(
+        "UPDATE lessons SET status = 'verified', updated_at = ?"
+        + " WHERE text = ? AND status = 'draft' AND grade = 'verified-user' AND hits >= ? AND (" + vis.sql + ')'
+      );
+      for (const t of hitTexts) {
+        if (autoPromoted >= AUTO_PROMOTE_CAP) break;
+        const r = promote.run?.(nowIso, t, USER_PROMOTE_MARK, ...(vis.params as never[]));
+        if (Number((r as { changes?: number } | undefined)?.changes ?? 0) > 0) autoPromoted++;
+      }
     }
     // 近重复：给**库里那条旧经验**打待复核，不碰 status、不碰分数
     if (nearLike.size) {
@@ -207,12 +246,14 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
 
   const report: HarvestReport = {
     scanned: msgs.length, found: cands.length, fresh: fresh.length, written: 0, notDraft: [],
-    repeated, nearDup: nearLike.size,
+    repeated, nearDup: nearLike.size, autoPromoted, capped,
     samples: fresh.slice(0, 20),
   };
   if (opts.dry || !fresh.length) return report;
 
   for (const c of fresh) {
+    // 单轮写入上限（红队 M5）：一次灌几百条草稿进复核队列，人根本看不过来
+    if (report.written >= WRITE_CAP) { capped++; continue; }
     const input = {
       text: c.text, quote: c.quote,
       // 近重复只做标注：让人在复核时看到"这条和库里某条可能是同一件事"，
@@ -227,7 +268,9 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
       scope: (opts.domain ? 'domain' : 'project') as 'domain' | 'project',
       workspaceId,
       ...(opts.domain ? { domain: opts.domain } : {}),
-      // 显式 draft：自动提取 ≠ 人工确认（三者：抽取/confirm/评级，各自独立）
+      // 显式 status（不吃 addLesson 的默认值）：采集是"程序在攒"，程序一律显式传。
+      // 见上面 ⑥ 的分级规则：这里新出现的条目**一律 draft**（连 verified-user 也是），
+      // 只有"同一句反复出现够次数"才由上面的 promote 路径升格 —— 首次出现不算证据。
       status: 'draft' as const,
     };
     const r = addLesson(gdb as never, input);

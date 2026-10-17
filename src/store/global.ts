@@ -403,9 +403,16 @@ export interface PickOptions {
   workspaceId?: string; domain?: string; query?: string; top?: number; maxChars?: number;
 }
 
+/** 注入预算可用环境变量调，不用改代码：SRELAY_INJECT_TOP / SRELAY_INJECT_BUDGET（总字数） */
+function envNum(name: string, dflt: number): number {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : dflt;
+}
+
 export function pickForInjection(db: Database.Database, o: PickOptions = {}): LessonRow[] {
-  const top = o.top ?? 3;
-  const maxChars = o.maxChars ?? 200;
+  const top = o.top ?? envNum('SRELAY_INJECT_TOP', 3);
+  // maxChars 是**总预算**（几条加起来），不是每条上限。
+  const maxChars = o.maxChars ?? envNum('SRELAY_INJECT_BUDGET', 240);
   const w = visibleWhere(o);
   const rows = (db.prepare(
     "SELECT * FROM lessons WHERE " + w.sql
@@ -433,11 +440,14 @@ export function pickForInjection(db: Database.Database, o: PickOptions = {}): Le
   const out: LessonRow[] = [];
   let used = 0;
   for (const r of ranked) {
+    if (out.length >= top) break;
     const len = String(r.text).length;
-    if (used + len > maxChars && out.length > 0) break;
+    // 预算装不下就**跳过这一条、继续看下一条**（原来是 break 直接收摊）。
+    // 差别：一条长经验不该把后面短而更相关的经验一起挡掉 —— 预算应该买"最多条有用信息"，
+    // 不是"最早遇到的那几条"。排序仍然是相关性优先，所以先到先得更相关，跳过不吃亏。
+    if (used + len > maxChars) continue;
     out.push(r);
     used += len;
-    if (out.length >= top) break;
   }
   return out;
 }// ─────────────────────── 冲突消解：新话压旧话（判据唯一一份）───────────────────────

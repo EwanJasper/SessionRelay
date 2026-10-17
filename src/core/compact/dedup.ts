@@ -30,17 +30,48 @@ export interface MergeGroup<T extends CompactItem> {
 
 const polarity = (t: string) => /不|别|勿|避免|禁止|弃用|废弃|取消|关闭|禁用|停止|没有/.test(String(t || ''));
 
+/**
+ * 判据键：把"分词 + 极性 + 长度"预计算一次，供**批量比较**复用。
+ *
+ * 为什么要它（红队 M3 实测）：原来 isNearDuplicate 每比较一对就把两边**各分词一次**。
+ * 采集那边是 库内条数 × 候选数 对比较 —— 3000×9 = 27000 对 = 54000 次分词，实测 582ms
+ * （拖慢 weight=light 的宿主阶段）。改成"每边只分词一次"后是 3009 次，降一个数量级。
+ *
+ * **判据只有一份**：isNearDuplicate 现在也走同一组键函数，不存在第二套规则。
+ */
+export interface NearDupKey {
+  /** 极性（有否定词 = true）。极性不同的两条不判重 —— 可能是真冲突 */
+  pol: boolean;
+  /** 归一化后的长度 */
+  len: number;
+  /** 主题词集合 */
+  tokens: Set<string>;
+}
+
+export function nearDupKey(text: string): NearDupKey {
+  const s = String(text || '').trim();
+  return { pol: polarity(s), len: s.length, tokens: s ? subjectTokens(s) : new Set<string>() };
+}
+
+/** 用预计算键做判重（与 isNearDuplicate 完全同判据，只是不重复分词） */
+export function isNearDuplicateKey(a: NearDupKey, b: NearDupKey, threshold = 0.8): boolean {
+  if (!a.len || !b.len) return false;
+  if (a.pol !== b.pol) return false;
+  const shorter = Math.min(a.len, b.len), longer = Math.max(a.len, b.len);
+  if (longer > shorter * 2.2) return false;                 // 长度差太多：一条是另一条的展开
+  const min = Math.min(a.tokens.size, b.tokens.size) || 1;
+  let shared = 0;
+  for (const t of a.tokens) if (b.tokens.has(t)) shared++;
+  return shared / min >= threshold;
+}
+
 /** 两条是不是"近重复"：极性相同 + 重叠系数 ≥ 阈值（默认 0.8，实测能吃掉 1/3 而不误杀） */
 export function isNearDuplicate(a: string, b: string, threshold = 0.8): { dup: boolean; shared: string[] } {
-  const sa = String(a || '').trim(), sb = String(b || '').trim();
-  if (!sa || !sb) return { dup: false, shared: [] };
-  if (polarity(sa) !== polarity(sb)) return { dup: false, shared: [] };       // 极性不同 = 可能真冲突，交给 needs_review，不在这里合并
-  const shorter = Math.min(sa.length, sb.length), longer = Math.max(sa.length, sb.length);
-  if (longer > shorter * 2.2) return { dup: false, shared: [] };             // 长度差太多：一条是另一条的展开，不是重复
-  const ta = subjectTokens(sa), tb = subjectTokens(sb);
-  const shared = [...ta].filter((t) => tb.has(t));
-  const min = Math.min(ta.size, tb.size) || 1;
-  return { dup: shared.length / min >= threshold, shared: shared.slice(0, 6) };
+  const ka = nearDupKey(a), kb = nearDupKey(b);
+  const dup = isNearDuplicateKey(ka, kb, threshold);
+  if (!dup) return { dup: false, shared: [] };
+  const shared = [...ka.tokens].filter((t) => kb.tokens.has(t));
+  return { dup: true, shared: shared.slice(0, 6) };
 }
 
 /**
