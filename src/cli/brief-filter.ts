@@ -48,3 +48,40 @@ export function passesUnresolvedFilters(q: string): boolean {
 /** 简报名额（与 DSH 插件 / ZCode hook 的 UNR_SLOTS 同值）。
  *  [1017 夜 U-A] 3 → 1：实测注入 3 条里 2 条是残片、且 3 条全来自同一个老会话。 */
 export const UNR_SLOTS = 1;
+
+// ══════ 七条规范过滤器：**只做参照，不参与本库渲染**（1017 夜 09:3x）══════
+// 为什么要加这个：七条规范过滤器此前**只存在于两份客户端副本**
+// （`plugins/dsh/src/brief-filters.mjs` 与 `~/.zcode/.../brief-filters.mjs`），
+// 核心仓一份都没有 ⇒ 守门只能比「两侧一致」，证不了「两侧都对」。
+// 而未决段四条能收进内核，是因为核心 CLI 自己在用；这七条它不用，所以一直没被收编。
+//
+// ⚠️ **本段刻意不接入本库的渲染路径**，只作独立第三方参照，让守门能升级成三方对拍。
+//   接入与否是架构决策（要动核心 CLI 的行为），不在这里擅自决定 ——
+//   三条路与代价见 `docs/1018-七条规范过滤器-无第三方-结构原因.md`。
+//
+// 判据源：从客户端那份搬过来的**同源副本**（不是重打一遍字面量）。
+export const BRIEF_TEXT_MAX = 220;
+export const BRIEF_CANONICAL_FILTERS: RegExp[] = [
+  // 1. 系统注入与提醒残片（防注入块从某条路漏进 decisions 列）
+  /(?:<system-reminder>|TodoWrite|task-notification|sessionrelay-brief)/i,
+  // 2. 审稿/红队报告与统计残片——这类词只可能出现在「讨论怎么写代码」的会话里
+  /(?:候选信号|覆盖率|精度门禁|实测两库|负对照|分组精度|点名表扬|独立\s*PR)/,
+  // 3. 单字母代数占位符与反例引述（`决定用 X` 这种举例，不是真拍板）
+  /(?:决定|改为|改用|换成|采用|选择)[^a-zA-Z0-9\u4e00-\u9fa5]{0,3}[XYABxyab](?:[^a-zA-Z0-9_]|$)/,
+  // 4. 认识论转折评述句（`, 但…往往是` 这种复盘规律的句式）
+  /[，,]\s*(?:但|而|不过)[^。！？!?\n]{0,12}(?:往往是|通常是|最值钱的)/,
+  // 5. 书信/PR 评论转述（`按你在 Notes 里提议` / `期待第一批`）
+  /(?:按你在.*里提议|期待第[一二三1-3]批)/,
+  // 6. 极短无意义残片或纯路径碎片
+  /^[\s\p{P}\d]{0,6}$/u,
+  // 7. 先闭后开的撕裂直引号（`决定用 X"，但…往往是"试过 X` 的引号极性特征）
+  /^[^"]*"[，,。；;]/,
+];
+
+/** 与客户端 `passesBriefFilters` 同判据。false = 该拦。 */
+export function passesBriefFilters(text: string): boolean {
+  const t = String(text ?? '').trim();
+  if (t.length < BRIEF_TEXT_MIN || t.length > BRIEF_TEXT_MAX) return false;
+  for (const re of BRIEF_CANONICAL_FILTERS) { re.lastIndex = 0; if (re.test(t)) return false; }
+  return true;
+}

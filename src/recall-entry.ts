@@ -37,6 +37,11 @@ export { planAging } from './core/compact/aging.js';
 // 目前用的是同判据副本（不同仓库无法共用模块）。两边由 tools/check-brief-filters.mjs §⑥ 做
 // **行为对拍**（同一批样本判决必须完全一致）。终态是那两处也 import 这里 —— 见交接的后续任务。
 export { passesUnresolvedFilters, unresolvedContentChars, UNRESOLVED_CONTENT_MIN, UNR_SLOTS } from './cli/brief-filter.js';
+// [1017 夜 09:3x] 七条规范过滤器作**独立第三方参照**导出。
+//   本库渲染路径**不调用**它们（核心 CLI 不用这套判据），
+//   导出的唯一目的是让守门能做三方对拍 —— 在此之前两份客户端副本「同改」无人能发现。
+//   是否接入本库渲染是架构决策，见 docs/1018-七条规范过滤器-无第三方-结构原因.md。
+export { passesBriefFilters, BRIEF_CANONICAL_FILTERS, BRIEF_TEXT_MAX } from './cli/brief-filter.js';
 
 // ── 生命周期内核 API（ADR-002：宿主 hooks/workers 与 CLI 读同一份实现）──
 export { runLifecycle, lifecycleStatus } from './core/lifecycle/runner.js';
