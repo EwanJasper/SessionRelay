@@ -301,6 +301,12 @@ function plausibleDecision(text: string): boolean {
   // [fork 1015] 内嵌 JSON 残片：原守卫只认 confirmed/title/session_id 三个键名，
   // 实测漏了 `"done": true`、`"evidence": "..."` 这类（Phase 3 修复B 顺带扩族）
   if (/"[A-Za-z_]\w*"\s*:/.test(t)) return false;
+  // [1020] 决策动词后**紧跟逗号**=从句子中段截出的残片。
+  //   形状：原句是「…所以选择，xxx」这种带语境的句子，提取器只截到动词+逗号，
+  //   于是产出「决定，因为两条路的工作量差一个数量级」「选择，17 t/s 是真实天花板」这类。
+  //   实测 agent1super 库 864 条里命中 **19 条，逐条看过 19/19 全是垃圾**（零误伤）。
+  //   注意这条是**抽取端**判据（不进库），与简报端第 9~11 条互补：那条管已入库的，这条不产生。
+  if (/^(决定|改用|换成|采用|选择|调整为|修改为)[，,]/.test(t)) return false;
   return true;
 }
 
