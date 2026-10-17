@@ -183,6 +183,46 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
 
   const unitHits = units.map((u) => queryUnit(db, unitExpr(u), opts.project, opts.extraWhere));
 
+  // ── [1021] 子词回退（治「换说法搜不到」的**第二个机制**）──
+  //   实测背景：查询「磁盘空间不足怎么办」找不到标题「我他妈C盘他妈爆炸，就他妈三个G了」的那场。
+  //   逐词拆开看（目标会话内实测）：
+  //     「空间」   → 命中 1 条消息  ✓ 找得到
+  //     「磁盘空间」→ 命中 0 条      ✗ 分词器把「空间」吞进了「磁盘空间」
+  //     「不足」   → 命中 0 条      ✗
+  //   ⇒ 三个单元**全部零命中** ⇒ 掉进 OR 兜底 ⇒ 被「怎么/办」这类虚词匹配的垃圾淹没。
+  //   **目标本来能被「空间」找到，但那个词从来没被查过** —— 这不是语义问题，是分词粒度问题。
+  //   修法（经典 IR 的 backoff）：**整个 AND 结果为空**时（不是「某单元零命中」——
+  //     实测「磁盘空间/不足/怎么办」三个单元**各自都有几十条命中**，只是三者交集为空），
+  //     把长中文单元拆成 2 字滑窗，命中的子词并进 OR 兜底池。
+  //   ⚠️ 触发条件必须是「AND 为空」：这样正常情况下**一个字都不会多查**，零回归。
+  //   只拆长度 ≥3 的纯中文串（「磁盘空间」→ 磁盘/盘空/空间）；长度 2 拆了只剩单字，噪声太大不做。
+  const backoffHits: Array<Map<string, { score: number; rid: number }>> = [];
+  const AND_EMPTY = (() => {
+    if (units.length === 0) return true;
+    let cur: Set<string> | null = null;
+    for (const uh of unitHits) {
+      const keys: Set<string> = new Set<string>(Array.from(uh.map.keys()) as string[]);
+      if (cur === null) { cur = keys; } else {
+        const prev: Set<string> = cur;
+        cur = new Set<string>(Array.from(prev).filter((k: string) => keys.has(k)));
+      }
+      if (cur.size === 0) return true;
+    }
+    return (cur?.size ?? 0) === 0;
+  })();
+  if (TOKEN_BACKOFF && AND_EMPTY) {
+    for (const u of units) {
+      const cjk = u.join('');
+      if (!/^[\u4e00-\u9fff]{3,}$/.test(cjk)) continue;    // 只拆纯中文长串
+      const subs = new Set<string>();
+      for (let k = 0; k + 2 <= cjk.length; k++) subs.add(cjk.slice(k, k + 2));
+      for (const sub of subs) {
+        const h = queryUnit(db, unitExpr([sub]), opts.project, opts.extraWhere);
+        if (h.map.size > 0) backoffHits.push(h.map as never);
+      }
+    }
+  }
+
   // 会话级 AND：所有单元都被覆盖（跨消息）；零命中 → OR 兜底
   let sids: string[] = [];
   const andMap = new Map<string, number>();
@@ -203,6 +243,10 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
     viaFallback = true;
     const union = new Map<string, number>();
     for (const uh of unitHits) for (const [sid, v] of uh.map) union.set(sid, (union.get(sid) ?? 0) + v.score);
+    // [1021] 子词回退池也并进来（见上方 TOKEN_BACKOFF 说明）。
+    //   注意用**较低的权重**（×0.6）：整词命中永远优先于拆出来的子词，
+    //   否则「空间」会把所有含「空间」的会话都顶上来，压过真正按整词命中的那些。
+    for (const m of backoffHits) for (const [sid, v] of m) union.set(sid, (union.get(sid) ?? 0) + v.score * 0.6);
     sids = [...union.keys()];
     for (const sid of sids) andMap.set(sid, union.get(sid)!);
   }
@@ -497,6 +541,26 @@ export const LEN_PENALTY_PIVOT = 300;
  * · 成本：**零模型、零额外查询**，就是一次数组遍历 + 两次乘法。
  * ⇒ 合计「救回 3 / 打掉 0 且零回归」，所以默认开。数值小但方向一致、无伤害。
  */
+/**
+ * 子词回退开关（1021 新增，默认开）。
+ *
+ * 治的是**分词粒度**问题，不是语义：中文分词会把「空间」吞进「磁盘空间」，
+ * 于是查询里那个真正能命中的词**从来没被查过**。
+ * 只在某单元**整词零命中**时才拆 2 字滑窗 —— 整词命中过的原样不动，所以零回归。
+ * `SRELAY_TOKEN_BACKOFF=1` 可开，便于 A/B。
+ *
+ * ── 实测结论：**默认关**（负结果，2021 手写换说法 23 题）──
+ *   开了与不开 **完全一样**（6/23 → 6/23，命中集合逐条相同）。
+ *   排查后确认**不是回退没触发**，而是触发了也没用：
+ *     以「磁盘空间不足怎么办」→ 目标「我他妈C盘他妈爆炸」为例，
+ *     回退确实把「磁盘空间」拆出「空间」并查了（316 条消息命中），
+ *     但**目标会话靠「空间」单独搜也进不了前 10**（实测「空间」的 top-10 里没有它）——
+ *     那场只有**一处**顺带提到「空间」，在长对话里按 BM25 排不上来。
+ *   ⇒ 这是**真实的检索难度**，不是分词粒度问题；再拆下去也救不回来。
+ *   保留代码（默认关）是因为它对**短查询 + 长整词**的场景理论上仍成立，只是本库数据验证不到。
+ */
+const TOKEN_BACKOFF = process.env.SRELAY_TOKEN_BACKOFF === '1';
+
 const COVERAGE_BOOST = (() => {
   const v = Number(process.env.SRELAY_COVERAGE_BOOST ?? 1.0);
   return Number.isFinite(v) && v >= 0 ? v : 0;
