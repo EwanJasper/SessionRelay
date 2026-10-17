@@ -51,8 +51,7 @@ import { fileURLToPath } from 'node:url'
 // 历史上两侧手抄导致过滤器漂移（DSH 多一条而 ZCode 没有，用户日常在 ZCode 侧干活）。
 import { passesBriefFilters } from './src/brief-filters.mjs'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
-import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool,
-         relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool, lessonsTool } from './src/tools.js'
+import { searchTool, showTool, rememberTool, projectTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
 import { queryBriefData, sqlChannelAvailable, queryRecentFiles, foldPresentation } from './src/brief-sql.mjs'
 import { registerHooks } from './src/hooks.mjs'
@@ -748,11 +747,10 @@ export function apply(ctx) {
   } catch { /* 非 DSH 环境：简报已注册，工具缺席 */ }
   if (typeof defineTool !== 'function') return
 
-  // [1021 满血版] 13 个，与 MCP 侧（srelay serve）能力对齐 ——
-  //   同一个产品的两面不该能力不一样。新增的 6 个只是把 CLI **已有**的命令包成工具，
-  //   没另写内核逻辑（判据仍只有一份）。
-  const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool,
-                    relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool, lessonsTool]
+  // [1026 工具面精简] 14 → 4。合并判断依据见 src/tools.js 末尾那段注释。
+  //   旧工具的实现仍在 tools.js 里（被 legacySpec 扣下来供路由），只是不再注册给模型 ——
+  //   模型看到的工具面小了，能力一条没少。
+  const allTools = [searchTool, showTool, rememberTool, projectTool]
   for (const t of allTools) {
     try { ctx.tools.register(t) } catch { /* 单个失败不拖垮其他 */ }
   }

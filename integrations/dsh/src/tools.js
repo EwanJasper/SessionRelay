@@ -9,7 +9,29 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { defineTool } from './define-tool.js'
+import { defineTool as defineToolRaw } from './define-tool.js'
+
+/**
+ * 原始 spec 收集器。
+ *
+ * 为什么需要它：工具要精简（14 → 4），新工具吃 `kind` 路由到旧实现。
+ *   复制一份实现是最坏的做法（判据/逻辑立刻变成两份，改一处漏一处）。
+ *   而 `defineTool()` 在 DSH 宿主里会**归一化**返回对象，归一化后的形态不保证还带 execute ——
+ *   依赖它等于把命交给宿主内部实现。
+ *   所以在**进 defineTool 之前**先把 spec 原样扣下来：那份 spec 就是纯函数对象，永远是同一形状。
+ *   ⇒ 新工具调 `legacySpec('srelay_decisions').execute(args, exec)`，走的是和旧工具**完全同一条**代码。
+ */
+const SPECS = new Map()
+
+function defineTool(spec) {
+  if (spec && typeof spec.name === 'string') SPECS.set(spec.name, spec)
+  return defineToolRaw(spec)
+}
+
+/** 取某个旧工具的原始 spec（不存在 → undefined）。仅供合并后的新工具复用，不要往外传。 */
+export function legacySpec(name) {
+  return SPECS.get(name)
+}
 import { execSrelay, clip } from './cli.js'
 import { getActiveProject, proposeProject, confirmProject, cancelProposal } from './state.js'
 
@@ -74,12 +96,21 @@ const resultSchema = {
  */
 export const searchTool = defineTool({
   name: 'srelay_search',
-  description: '按关键词检索当前项目的历史会话与上下文讨论（支持中文全文与多词过滤）。当需要了解过往相关背景、曾讨论过的设计思路时使用。',
+  description: '记忆检索的唯一入口（一个工具六种视角，用 kind 选）。'
+    + 'kind=sessions（默认）：按关键词检索历史会话与讨论——想了解过往背景、曾讨论过的设计思路时用它。'
+    + 'kind=decisions：列本项目已确认决策（含被否掉的路），动手前先确认「是不是已经定过」。'
+    + 'kind=unresolved：列提出过但还没解决的问题。'
+    + 'kind=lessons：查跨项目经验库（自动注入那 3 条之外的深挖入口）。'
+    + 'kind=history：查某个文件被哪些会话讨论过（改文件前先看来历）。'
+    + 'kind=related：给一个会话 ID，找主题相关的其他会话。',
   parameters: {
-    query: { type: 'string', required: true, description: '检索关键词（支持多词空格分隔，如 "PostgreSQL 迁移"）' },
-    limit: { type: 'number', description: '最多返回条数，默认 10' },
-    topic: { type: 'string', description: '按特定话题过滤（可选）' },
-    tag: { type: 'string', description: '按特定标签过滤（可选）' },
+    kind: { type: 'string', description: 'sessions（默认）/ decisions / unresolved / lessons / history / related' },
+    query: { type: 'string', description: '检索关键词（kind=sessions / lessons 用；多词空格分隔，如 "PostgreSQL 迁移"）' },
+    limit: { type: 'number', description: '最多返回条数（各 kind 默认值不同）' },
+    topic: { type: 'string', description: '按特定话题过滤（kind=sessions）' },
+    tag: { type: 'string', description: '按特定标签过滤（kind=sessions）' },
+    filePath: { type: 'string', description: '文件路径（kind=history 必填；可只给文件名，如 "engine.ts"）' },
+    sessionIdPrefix: { type: 'string', description: '会话 ID 前缀（kind=related 必填）' },
   },
   output: {
     schema: resultSchema,
@@ -97,8 +128,34 @@ export const searchTool = defineTool({
   // 修法沿用同文件里 srelay_init 已经有的判据顺序（architecture 技能的「复用规范 helper」）：
   //   **显式 projectPath 参数 > agent 的 cwd（与简报同源）> 绑定/环境变量兜底**。
   async execute(args, exec) {
+    // [1026 工具面精简] 14 个工具 → 4 个：这一个吃 kind，把 6 种「查」合成一个入口。
+    //   为什么不是复制实现：判据只许有一份。这里路由到 legacySpec 扣下来的**原始 spec**，
+    //   走的是和旧工具逐字相同的那条 execute —— 合并只改「怎么找」，不改「查到什么」。
+    const kind = String(args?.kind ?? 'sessions').trim().toLowerCase() || 'sessions'
+    if (kind !== 'sessions') {
+      const ROUTE = {
+        decisions: 'srelay_decisions',
+        unresolved: 'srelay_unresolved',
+        lessons: 'srelay_lessons',
+        history: 'srelay_history',
+        related: 'srelay_related',
+      }
+      const target = ROUTE[kind]
+      if (!target) {
+        return {
+          ok: false, payload: '',
+          error: '未知 kind "' + kind + '"：只认 sessions / ' + Object.keys(ROUTE).join(' / '),
+        }
+      }
+      const spec = legacySpec(target)
+      if (!spec || typeof spec.execute !== 'function') {
+        return { ok: false, payload: '', error: '内部错误：kind=' + kind + ' 的实现缺失（' + target + '）' }
+      }
+      return spec.execute(args, exec)
+    }
+
     const q = String(args?.query ?? '').trim()
-    if (!q) return { ok: false, payload: '', error: 'query 关键词不能为空' }
+    if (!q) return { ok: false, payload: '', error: 'query 关键词不能为空（kind=sessions 必填；列决策/未决/经验请传 kind）' }
 
     const cliArgs = ['search', q]
     const limit = Number(args.limit)
@@ -507,3 +564,87 @@ export const pinTool = describeTextTool({
   buildArgs: (a) => (a.unpin ? ['unpin', String(a.text)] : ['pin', String(a.text)]),
   emptyHint: '没有匹配的决策条目。',
 })
+// ─────────────────── 工具面精简：14 → 4（2026-10-18） ───────────────────
+//
+// 为什么合并：14 个工具的**描述本身就吃掉大量上下文**，而模型每次只能选一个动作。
+//   合并的判断依据不是「功能像」而是「**同一个问题**」：
+//     · 六个「查」都是「我想知道点什么」→ 一个 search，用 kind 分视角；
+//     · 「记一条」和「把某条顶上去」都是「我想让这件事以后被看见」→ 一个 remember；
+//     · 建库/切库/看规模都是「这个项目」。
+//   判断依据**不是**「参数差不多」—— 参数像而用途不同的硬合并，只会让人记不住该传哪个。
+//
+// 实现一律路由到 legacySpec（旧工具的原始 spec），**不复制任何一段逻辑**：
+//   合并改的是「怎么找到能力」，不是「能力本身」。旧工具的实现留着，只是不再注册给模型。
+
+/** 记一条结论，或把某条顶上去 —— 两件事的共同点是「让以后看得见」。 */
+export const rememberTool = defineTool({
+  name: 'srelay_remember',
+  description: '把结论落进记忆库，二选一：'
+    + '给 summary → 记为「已确认决策」（此后所有会话的简报与检索都会带上它）；'
+    + '给 text → 置顶/取消置顶包含该片段的决策（置顶的不受 48h 简报时间窗限制）。',
+  parameters: {
+    summary: { type: 'string', description: '已确定的技术决策 / 方案结论 / 备忘总结（记录用）' },
+    tag: { type: 'string', description: '分类标签，逗号分隔（记录用，如 "architecture,database"）' },
+    sessionId: { type: 'string', description: '关联会话 ID 前缀（记录用；缺省关联最近 1 天内的活跃会话）' },
+    text: { type: 'string', description: '要匹配的决策文本片段，子串匹配（置顶用）' },
+    unpin: { type: 'boolean', description: 'true = 取消置顶' },
+  },
+  output: {
+    schema: resultSchema,
+    render: (_args, value) => [{
+      type: 'text',
+      text: value.ok ? value.payload : `记忆写入失败：${value.error}`,
+    }],
+  },
+  async execute(args, exec) {
+    const summary = String(args?.summary ?? '').trim()
+    if (summary) return legacySpec('srelay_record').execute(args, exec)
+    const text = String(args?.text ?? '').trim()
+    if (text) return legacySpec('srelay_pin').execute(args, exec)
+    return {
+      ok: false, payload: '',
+      error: 'summary 和 text 都没给：记录一条结论给 summary，置顶某条给 text',
+    }
+  },
+})
+
+/** 这个项目的记忆库：建、切、看。 */
+export const projectTool = defineTool({
+  name: 'srelay_project',
+  description: '项目记忆库的管理入口（action 选动作）。'
+    + 'init：为当前项目建库（可逆，只建 .sessionrelay 目录）；'
+    + 'bind：**提议**切换到另一个项目（两段式，本轮只提议、不生效）；'
+    + 'confirm / cancel：用户明确同意/反悔后，确认或撤销上面那条提议；'
+    + 'stats：看这个库的规模与健康（会话/决策/未决/归档/体积/守护是否在跑）。',
+  parameters: {
+    action: { type: 'string', required: true, description: 'init / bind / confirm / cancel / stats' },
+    projectPath: { type: 'string', description: '目标项目绝对路径（action=init / bind 用）' },
+  },
+  output: {
+    schema: resultSchema,
+    render: (_args, value) => [{
+      type: 'text',
+      text: value.ok ? value.payload : `项目操作失败：${value.error}`,
+    }],
+  },
+  async execute(args, exec) {
+    const action = String(args?.action ?? '').trim().toLowerCase()
+    const ROUTE = {
+      init: 'srelay_init',
+      bind: 'srelay_bind_project',
+      confirm: 'srelay_confirm_bind_project',
+      cancel: 'srelay_cancel_bind_project',
+      stats: 'srelay_stats',
+    }
+    const target = ROUTE[action]
+    if (!target) {
+      return { ok: false, payload: '', error: '未知 action "' + action + '"：只认 ' + Object.keys(ROUTE).join(' / ') }
+    }
+    const spec = legacySpec(target)
+    if (!spec || typeof spec.execute !== 'function') {
+      return { ok: false, payload: '', error: '内部错误：action=' + action + ' 的实现缺失（' + target + '）' }
+    }
+    return spec.execute(args, exec)
+  },
+})
+
