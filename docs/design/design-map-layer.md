@@ -138,7 +138,47 @@ export function renderMapMermaid(root: string, humanRows: string[][], opts?: { p
 | `map export [--mmd\|--md\|--d2] [--out <path>] [--to <仓库内路径>]` | 出图/快照 |
 | `map import --from progress.md [--page p]` | 现有看板行 → 单层地图初稿（一次性迁移入口；已存在地图则拒绝） |
 
-退出码：成功 0；`NOT_FOUND/INVALID_ARGUMENT/REFUSED/CONFLICT` 等 1；`BUSY` 2（可重试）。stderr 一行「错误码：说明（建议动作）」，`--json` 给 `{ok,error:{code,message,hint}}`。
+退出码：三分法见 §4.1（0 成功 / 1 改输入 / 2 可重试）。stderr 一行「错误码：说明（建议动作）」，`--json` 给 `{ok,error:{code,message,hint}}`。
+
+## 4.1 patch 的 data 形状（冻结 · T1/T2 照此实现）
+
+每条操作的 `data` 就是**一个页面片段**，键取自 `{title, kind, context, layers, groups, lanes, nodes, edges, laneOrder}`：
+
+- **declare**：要新建的对象；**已存在的 id 一律拒绝**（REFUSED）。同批内可以先声明边再声明端点，由最终图校验兜底。
+- **update**：按 id 定位后改字段。**边的身份 = from+to**（没有独立 edge id）；边补丁可带 `{from,to,label?,newFrom?,newTo?}`；`null` 清除可选字段（label/detail/evidence/group/lane）；`context` 与 `sources` 是**整体替换**；泳道顺序用 `laneOrder`（必须包含全部泳道各一次）。
+- **remove**：只给身份选择器 `{nodes:[{id}], groups:[{id}], lanes:[{id}], layers:[{id}], edges:[{from,to}]}`；删层/组不静默搬移成员（有成员即 REFUSED）。
+- 未知键、控制字符、超长 → REFUSED（§2 不变式 6/7）。
+- 上限 100 条操作；全部操作在草稿上顺序执行 → 校验**最终图** → 一次落盘（拒绝时文件字节不变）。
+
+**`map import --from progress.md` 的初稿形状**：单层 `{id:"plan", name:"计划（自 progress.md 导入）", rank:0}`；每行 → 节点 `{id:"n<行序>", label:行名原文, layer:"plan", status:✅→done / 🔄→doing / ⛔→blocked / ⬜→todo, detail:明细列}`；**不生成任何边**（依赖列是人话，不猜）。地图已存在 → REFUSED（绝不覆盖）。
+
+**export / import 语义**：`map export --mmd|--md|--d2 [--out <path>]` 出图或文本（默认 stdout）；`map export --json --to <仓库内相对路径>` 写地图 JSON **快照**（供提交进仓库）；`map import --from <file.json>` 从快照恢复（目标已存在 → REFUSED）。
+
+**退出码**：0 成功；**1** = {NOT_FOUND, INVALID_ARGUMENT, REFUSED, CONFLICT, INVALID_STORE}；**2** = {BUSY, LOCK_UNAVAILABLE, SAVE_FAILED}（可重试，值得重跑）。
+
+**init 默认标题**：`map init` 省略 `--title` 时取**项目根目录名**（`initMap(root, title)` 的 title 仍必填，由 CLI 兜默认）。
+
+## 4.2 补充裁定（冻结 · T2/T3 照此实现）
+
+- **单操作糖的 `--file` 装的就是"页面片段本身"**（等价于 `operations[0].data`），不是 `{op,data}` 信封。允许 `-` 从 stdin 读。
+- **`read --resource changes` 与 `map check` 同源同结构**（都调 `checkSources`）；`check` 额外负责退出码与人类可读摘要。
+- **分页与投影**：`--limit` 默认 30、上限 100；`--cursor` 是**不透明游标**（内含 offset + 发号时的 revision），图在两次读之间变了 → `CONFLICT`（提示重新从头读），游标本身格式非法 → `INVALID_ARGUMENT`；`--fields` 只作用于 list 类 resource（nodes/edges/layers/pages），**identity 与边的两端字段永远保留**。
+- **`--to` 必须与 `--json` 同用**，否则 `INVALID_ARGUMENT`（`--to` 只用于"把 JSON 快照写进仓库"）。
+- **没有"删页"动词**（与"绝不覆盖人写内容"同一条纪律）：页的建立由 `apply` 的 declare 完成，页的删除是**用户手动删文件**；工具不会替你删。
+- **`apply` 可以用 declare 建页**（与上游 mmap_declare 一致）：页文件不存在时按声明创建，**title 缺省 = 页 id**（默认页 id 为 `map`）；`expectedRevision:"absent"` 要求文件必须不存在。
+
+## 4.3 内核语义裁定（Lead 终审 · 已按此实现）
+
+1. **declare 带标量（title/kind/context）= 设置**，不是"已存在即拒"（"拒绝已存在的 id"只约束有 id 的对象）；因此**一条 declare 片段就能建页**，`expectedRevision:"absent"` 才有意义。页文件不存在时 title 缺省 = 页 id（默认页 = `map`）。
+2. 页文件**扁平**：`<root>/.sessionrelay/map/<page>.json`（无子目录）；`.hash-cache.json` 与 `<page>.json.lock` 同目录共存，`listPages` 按 id 语法过滤。
+3. **删"有成员的"层/组/泳道一律 REFUSED**（不静默搬移成员；泳道同理）。
+4. **目标不存在 → `NOT_FOUND`**（update/remove 找不到节点/边/层/组/泳道；hint 提示"要新建用 declare"）；**已存在的 id 再 declare、以及不变式违反 → `REFUSED`**。两者都是退出码 1，但**语义必须分开**：东西不在就是不在，不是"被拒"。
+5. `laneOrder` 按**应用本片段之后**的泳道集合判定（不是整批之后）。
+6. 必填字段给 `null` → REFUSED；**空串允许**（只拒控制字符/超长）。看板投影里 **evidence trim 后为空 = "无证据"**。
+7. rank **不要求层间唯一**（只要求 0..99 整数）；同 rank 两层之间不能建边（严格向下），无环性不受影响。
+8. 控制字符：**放行 tab/换行，拒绝 CR** —— CR 会让同一逻辑内容在 Windows/Linux 算出不同 sha256，制造 expectedRevision 假冲突。
+9. 规范化序列化：层按 (rank,id)、组/节点按 id、边按 (from,to) 排序；**泳道保持声明顺序**；groups/lanes 为空则不写键，layers/nodes/edges 恒写。手改缩进/键序 → revision 不变。
+10. `listPages` 遇坏页**整体失败并指名文件**（不静默少报）；"地图错误不许拖挂看板"由 bridge 负责兜住。
 
 ## 5. 看板投影（bridge，唯一投影规则）
 

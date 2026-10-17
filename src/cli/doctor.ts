@@ -14,6 +14,8 @@ import { registryCandidates } from '../shared/registry.js';
 import { watchServiceStatus } from './watch.js';
 import { detectSources } from './init.js';
 import { pc } from './ui.js';
+import { listPages } from '../map/index.js';
+import { checkSources } from '../map/stale.js';
 
 type Level = 'ok' | 'warn' | 'err';
 interface Check { name: string; level: Level; detail: string; fix?: string }
@@ -280,6 +282,43 @@ export async function cmdDoctor(): Promise<void> {
             '给任务行的状态列加上 ✅/🔄/⛔/⬜（解析器只认这几个 emoji 开头的状态）'));
       }
     } catch (e) { checks.push(c('看板 progress.md', 'warn', (e as Error).message)); }
+
+    // ①.6 地图层（.sessionrelay/map/）：看板"依赖图"的结构真值
+    // 为什么单列一项：progress.md 的依赖列是人话（"上方全部 ✅ 项"、路径、"—"），
+    //   出图只能拿名字去模糊匹配——实测 board.mmd 出来 27 个节点、**0 条边**。
+    //   地图层把"层带 + 有向边"变成可校验的数据（边必须严格跨层向下 ⇒ 天生无环），
+    //   看板的 auto:map 行与依赖图都由它投影。它坏掉或落后时看板上没有任何异样，所以必须在这里说出来。
+    try {
+      const pages = listPages(root);
+      if (!pages.ok) {
+        checks.push(c('地图层', 'warn', '地图读不出来：' + pages.error.message,
+          pages.error.hint ?? '看看 .sessionrelay/map/*.json 是不是被手改坏了（严格读：类型不对即拒，不静默丢字段）'));
+      } else if (pages.value.length === 0) {
+        checks.push(c('地图层', 'ok', '未建地图（可选）',
+          '想要结构真值：srelay map init，再照 skills/map 的纪律维护；没有地图时看板照旧只认人写的行'));
+      } else {
+        const nodeCount = pages.value.reduce((n, p) => n + p.nodes, 0);
+        const edgeCount = pages.value.reduce((n, p) => n + p.edges, 0);
+        // 源码指纹对账：**只报数，不改图**（账本不是法官）——打回只发生在看板的展示层
+        let stale = 0;
+        let unknown = 0;
+        for (const p of pages.value) {
+          const r = checkSources(root, p.id);
+          if (!r.ok) continue;
+          for (const n of r.value.nodes) {
+            if (n.state === 'changed') stale += 1;
+            else if (n.state === 'unknown') unknown += 1;
+          }
+        }
+        const bits = [pages.value.length + ' 页 / ' + nodeCount + ' 节点 / ' + edgeCount + ' 边'];
+        if (stale > 0) bits.push(stale + ' 个节点源码已变（看板显示「⛔ 待复验」）');
+        if (unknown > 0) bits.push(unknown + ' 个节点指纹未知（缺文件/超 8MiB/项目外）');
+        checks.push(c('地图层', stale > 0 || unknown > 0 ? 'warn' : 'ok', bits.join(' · '),
+          stale > 0 || unknown > 0
+            ? 'srelay map check 看是哪些文件；复验通过后把新 sha256 写回 sources[].sha256（或先把状态改回 doing）'
+            : undefined));
+      }
+    } catch (e) { checks.push(c('地图层', 'warn', (e as Error).message)); }
 
     // ② 提取版本：库落后于当前规则 → 历史数据还是旧规则算的
     try {
