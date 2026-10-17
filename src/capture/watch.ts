@@ -16,7 +16,7 @@ import { loadConfig } from '../shared/config.js';
 import { projectIdOf, dbFile, statsFile, watchLogPath } from '../shared/paths.js';
 import { rotateLogFile } from '../shared/logrotate.js';
 import { StatsCounter } from '../core/stats/counter.js';
-import { acquireLock, touchLock, releaseLock, isDaemonAlive, HEARTBEAT_MS } from '../shared/lock.js';
+import { acquireLock, touchLock, releaseLock, isDaemonAlive, LOCK_TOUCH_MS, REGISTRY_HEARTBEAT_MS } from '../shared/lock.js';
 import { runLifecycle } from '../core/lifecycle/runner.js';
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
@@ -177,7 +177,8 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     timers.push(orphanTimer);
   }
 
-  const heartbeat = setInterval(() => touchLock(root), 15_000);
+  // [1021] 文件锁 15s 一拍（与注册表心跳 60s **不是同一个节奏** —— 上一版混用过，见 shared/lock.ts）
+  const heartbeat = setInterval(() => touchLock(root), LOCK_TOUCH_MS);
   timers.push(heartbeat);
   const db = openExisting(dbFile(root));
   dbRef = db;                                   // [R9] 交给账本，失败时由 cleanup 关闭
@@ -391,7 +392,7 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
       } catch { /* 心跳失败不影响采集 */ }
     };
     hb();
-    setInterval(hb, HEARTBEAT_MS);   // [1021] 与判活阈值共用同一份常量（见 shared/lock.ts）
+    setInterval(hb, REGISTRY_HEARTBEAT_MS);   // [1021] 注册表心跳：60s 一拍，3 拍过期（见 shared/lock.ts）
   }
 
   // [fork 1011] 启动即轮转一次：双写让每个收编项目的 watch.log 都会增长，

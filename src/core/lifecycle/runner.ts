@@ -19,6 +19,7 @@ import { createDb, type DB } from '../../store/db.js';
 import { loadConfig } from '../../shared/config.js';
 import { registryCandidates } from '../../shared/registry.js';
 import { openGlobal, maintainLessons } from '../../store/global.js';
+import { registryHeartbeatFresh } from '../../shared/lock.js';
 import type Database from 'better-sqlite3';
 import { runSync } from '../../capture/sync.js';
 import { recomputeExtractions } from '../../capture/recompute.js';
@@ -176,7 +177,12 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     // 单一写入方：采集守护（srelay watch）在线时就别自己再 sync —— 两个写入方同写一个库
     // 的结果是 SQLITE_BUSY + "为什么这轮失败了下一轮又好了"的间歇性故障（1017 实测）。
     const hbAge = global ? heartbeatAgeMs(global, 'watch') : null;
-    if (hbAge != null && hbAge < 15 * 60_000) return '采集守护在线（心跳 ' + Math.round(hbAge / 1000) + 's 前），本轮交给它';
+    // ── [1021 红队复核后修**第三套阈值**] 这里原来写死 `hbAge < 15 * 60_000`，
+    //   而 panel/snapshot.ts 读的是另一个常量 ⇒ 红队实测同一份输入（心跳 246s）得出**相反结论**：
+    //     面板 = 离线 / 这里 = 「守护在线，本轮交给它」
+    //   ⇒ **守护真死后的 3~15 分钟窗口里谁都不去采集**，是最坏的一类分叉（不是报错，是静默不干活）。
+    //   现在统一读 `registryHeartbeatFresh()` —— 判据是**函数**，两边不可能再各写一套比较式。
+    if (registryHeartbeatFresh(hbAge)) return '采集守护在线（心跳 ' + Math.round((hbAge as number) / 1000) + 's 前），本轮交给它';
     const diag = global ? '（守护心跳 ' + (hbAge == null ? '缺失' : Math.round(hbAge / 1000) + 's 前') + '）' : '（全局库不可用：' + (globalOpenError ?? '未知') + '）';
     const ok: string[] = []; const bad: string[] = [];
     for (const root of roots) {

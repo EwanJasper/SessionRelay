@@ -106,6 +106,15 @@ export async function cmdBrief(opts: { limit?: number; days?: number; top?: numb
     for (const r of pay.recentFiles) console.log(pc.dim(`  🗂 ${r.file}（${r.sessions} 场）`));
     for (const d of pay.decisions.slice(0, 5)) console.log(`  ${pc.dim(d.at?.slice(0, 10) ?? '')} ${d.kind === 'negative' ? pc.red('✗') : pc.green('✓')} ${d.text.slice(0, 60)}`);
     for (const u of pay.unresolved.slice(0, UNR_SLOTS)) console.log(`  ${pc.yellow('◻')} ${u.q.slice(0, 60)}`);
+    // ── [1021 修「面板说可注入 10 条，但 srelay brief 一条经验都不显示」] ──
+    //   `collectExperiences()` 一直是**取到了的**（`--json` 里实测 3 条），
+    //   但人话输出**从来没有渲染过这一段** —— 于是用户敲 `srelay brief` 看到的是「没有经验」，
+    //   而面板同一时刻显示「可注入: 10 条」。两个面各说一套，最容易被判成「功能坏了」。
+    //   这里补上：只在**真取到**时打印（空就不占行，别每天多一行「经验 0 条」的噪音）。
+    if (pay.experiences.length > 0) {
+      console.log(pc.dim('  经验 ' + pay.experiences.length + ' 条（会自动注入新对话）：'));
+      for (const e of pay.experiences) console.log(pc.dim('  · ' + String(e.text).slice(0, 72)));
+    }
   } finally {
     db.close();
   }
