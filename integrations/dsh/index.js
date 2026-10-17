@@ -315,11 +315,29 @@ function sqlItems(root) {
 // 实测两个真实项目读一次 0.3–1.0ms（文件都 <60KB）。
 const KANBAN_ROW_CAP = 72
 const KANBAN_MAX_ROWS = 2
+// ── 地图摘要一行（[1021 P3b] 用户拍板）──
+// 地图的「下一步」已经写进 progress.md 的 auto:map 行，但简报只取**前 2 个** 🔄/⛔ 行 ——
+// 人写的两条占满名额，地图的 next 永远看不见 ⇒ 这套自动化在你**不开口**的时候是隐形的。
+// 这里只读守护每轮落下的 brief.txt，**不做任何判断**（判断只在 core 的 mapBriefLine 一处）。
+const MAP_BRIEF_CAP = 240   // 防呆：文件被手改坏成一大段时整行不渲染
+function mapBriefText(root) {
+  try {
+    const p = path.join(root, '.sessionrelay', 'map', 'brief.txt')
+    if (!fs.existsSync(p)) return ''
+    const s = fs.readFileSync(p, 'utf8').trim()
+    if (!s || s.length > MAP_BRIEF_CAP) return ''
+    return s
+  } catch { return '' }
+}
 function kanbanText(root) {
   try {
+    // [红队 🟡] 地图行必须在读 progress.md **之前**算好。
+    //   原来放在下面（progress.md 存在才走到），于是同一个项目 ZCode 有 🗺 行、DSH 没有。
+    //   地图和看板是两件独立的附属信息：一个缺席不该连坐另一个。
+    const mapLine = mapBriefText(root)
     const p = path.join(root, 'progress.md')
-    if (!fs.existsSync(p)) return ''
-    if (fs.statSync(p).size > 1024 * 1024) return ''   // 与 ZCode 侧同规：>1MB 跳过
+    if (!fs.existsSync(p)) return mapLine   // 没有看板但有地图：只渲染地图那一行
+    if (fs.statSync(p).size > 1024 * 1024) return mapLine   // >1MB 跳过看板解析，但地图行照旧
     const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/)
     const rows = lines
       .map((l) => l.split('|').map((s) => s.trim()))
@@ -332,8 +350,9 @@ function kanbanText(root) {
         const detail = clean(c[4])
         return detail ? `${head} — ${clipAt(detail, KANBAN_ROW_CAP)}` : head
       })
-    if (!rows.length) return ''
-    return '📋 看板（progress.md，进行中/阻塞）：\n' + rows.map((x) => '- ' + x).join('\n')
+    if (!rows.length) return mapLine   // 没有看板行但有地图行：只渲染地图那一行
+    const board = '📋 看板（progress.md，进行中/阻塞）：\n' + rows.map((x) => '- ' + x).join('\n')
+    return mapLine ? mapLine + '\n' + board : board
   } catch { return '' }   // 绝不因为看板读失败而让整条简报消失
 }
 

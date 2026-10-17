@@ -166,10 +166,17 @@ function withKanbanLock<T>(file: string, fn: () => T, staleMs = 10_000): { ok: t
 function writeMapBrief(root: string): void {
   try {
     const dir = path.join(root, '.sessionrelay', 'map')
+    const file = path.join(dir, 'brief.txt')
     const line = mapBriefLine(root)
-    if (!line) return   // 没有地图就不落文件，适配器也就整行不渲染
+    // [红队 🔴 陈旧幽灵] 地图**没了**（删了/坏了）必须把旧文件删掉。
+    //   原来 `if (!line) return` 留着旧文件 → 实测：删 map.json 再 sync，auto:map 变 0 行，
+    //   但 brief.txt 原样保留 ⇒ 三端**继续显示已删地图与旧 next**，失败看起来像成功。
+    //   这与 auto:map 的行为必须一致：两个来源说的是同一件事，就不能一个消失一个留着。
+    if (!line) { try { fs.unlinkSync(file) } catch { /* 本来就没有 */ } return }
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'brief.txt'), line + '\n', 'utf8')
+    // [红队 🟡] 只写**第一行**：判据原来只有长度，多行内容会被三处适配器原样注入
+    //   （实测塞进伪造的「⚠ 待复验 9」）。单行是这份文件的契约，在这里就钉死。
+    fs.writeFileSync(file, String(line).split(/\r?\n/)[0] + '\n', 'utf8')
   } catch { /* 附属信息，失败不连坐看板 */ }
 }
 
