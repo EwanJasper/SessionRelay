@@ -115,6 +115,11 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   const global = openGlobalLedger();
   let state: LifecycleState = global ? loadLifecycle(global) : { version: 1, rounds: 0, lastAt: null, stages: {} };
   state.rounds = (state.rounds || 0) + 1;
+  // ⚠️ [1021 后端红队 #3] `lastAt` **从来没被赋值过**。于是面板同一张卡上出现：
+  //   「已执行 196 次」+「最近运行：—」—— 两个数互相矛盾，而 `stages` 段里明明有 43 秒前的时间。
+  //   根因就在这一行缺失：只加了 rounds，没写 lastAt，saveLifecycle 把 null 原样写库。
+  //   这里补上。注意用**本轮开始时间**（at），不是结束时间 —— 语义是「这一轮是什么时候跑的」。
+  state.lastAt = at;
 
   const pool = opts.lightOnly ? STAGES.filter((s) => s.weight === 'light') : STAGES;
   const due = opts.force || opts.only?.length

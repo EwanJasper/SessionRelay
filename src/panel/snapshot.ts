@@ -66,14 +66,31 @@ export interface PanelProject {
   archiveEnabled: boolean | null;
 }
 
-function countJsonItems(db: ReadonlyDb, column: string): number {
+/**
+ * 数 JSON 列里的条目数。
+ *
+ * ⚠️ [1021 后端红队 #1/#2 修] 原来这里只数「JSON 数组有几个元素」，不看**语义**：
+ *   · `key_questions` 数了**全部问题**（含已回答/已解决的）⇒ 面板 686，而真实未决只有 55；
+ *   · `decisions` 数了**原始条目**，绕过去重与 workflow 排除 ⇒ 面板 728，而真实 460。
+ *   同一时刻同一个事实，面板 / SQL / CLI / 简报给出 686/55/4/1 和 728/460/7 四个数。
+ *
+ * 修法：把「什么算一条」交给调用方显式说明（filterExpr），不再由这里猜。
+ *   `key_questions` 传 `$.unresolved` 过滤；`decisions` 传文本去重 + origin 排除。
+ *   判据仍然只有一份 —— 都在下面的 SQL 片段里，看得见、可 review。
+ */
+function countJsonItems(db: ReadonlyDb, column: string, filterExpr?: string): number {
   // 先在子查询里滤掉非法 JSON：SQLite 的 json_each 遇到坏文本会直接抛，不能让它炸整张卡
-  const sql = 'SELECT count(*) AS c FROM (SELECT ' + column + ' AS v FROM sessions'
-    + ' WHERE ' + column + ' IS NOT NULL AND json_valid(' + column + ') AND length(' + column + ') > 2) t, json_each(t.v)';
+  const base = 'SELECT ' + column + ' AS v FROM sessions'
+    + ' WHERE ' + column + ' IS NOT NULL AND json_valid(' + column + ') AND length(' + column + ') > 2';
+  if (!filterExpr) {
+    const sql = 'SELECT count(*) AS c FROM (' + base + ') t, json_each(t.v)';
+    const row = db.prepare(sql).get() as { c?: number } | undefined;
+    return Number(row?.c ?? 0);
+  }
+  const sql = 'SELECT count(*) AS c FROM (' + base + ') t, json_each(t.v) je WHERE ' + filterExpr;
   const row = db.prepare(sql).get() as { c?: number } | undefined;
   return Number(row?.c ?? 0);
 }
-
 function bytesOf(file: string): number {
   let n = 0;
   for (const f of [file, file + '-wal', file + '-shm']) {
@@ -102,8 +119,18 @@ export function panelProjectCard(root: string, extra: { daemonAlive?: boolean; l
     out.archived = Number((one('SELECT count(*) AS c FROM sessions WHERE cleanup_at IS NOT NULL') as { c?: number })?.c ?? 0);
     const t = one('SELECT max(last_event_at) AS m FROM sessions') as { m?: string | null } | undefined;
     out.lastEventAt = t && t.m ? String(t.m) : null;
-    out.decisions = countJsonItems(db, 'decisions');
-    out.unresolved = countJsonItems(db, 'key_questions');
+    // [1021 后端红队 #1/#2] 两个数改成**有语义的计数**，与读路径对齐。
+    //   原来：decisions 数原始条目（含 workflow、含重复）⇒ 728，真实 460；
+    //         unresolved 数**全部** key_questions（含已回答）⇒ 686，真实 55。
+    //   同一时刻同一事实，四个入口给出 686/55/4/1 —— 这就是「面板在撒谎」的具体形态。
+    //   决策：按 text 去重 + 排除 workflow 出处（与 db.ts 读路径同口径）。
+    const decSql = "SELECT count(DISTINCT json_extract(je.value,'$.text')) AS c FROM"
+      + " (SELECT decisions AS v FROM sessions WHERE decisions IS NOT NULL"
+      + "  AND json_valid(decisions) AND length(decisions) > 2) t, json_each(t.v) je"
+      + " WHERE COALESCE(json_extract(je.value,'$.origin'),'') <> 'workflow'";
+    out.decisions = Number((db.prepare(decSql).get() as { c?: number } | undefined)?.c ?? 0);
+    //   未决：只数 `$.unresolved` 为真的。
+    out.unresolved = countJsonItems(db, 'key_questions', "COALESCE(json_extract(je.value,'$.unresolved'),0) <> 0");
     out.ok = true;
     return out;
   }, (msg) => { out.error = msg; }) ?? out;
