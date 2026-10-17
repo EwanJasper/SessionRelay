@@ -371,3 +371,114 @@ export const cancelBindTool = defineTool({
     return { ok: true, payload: '已取消待确认的项目绑定提议。', error: '' }
   },
 })
+
+// ══════════════════════ [1021 满血版] 补齐 MCP 已有的能力 ══════════════════════
+//
+// 病历：MCP 侧（srelay serve）暴露 13 个工具，而 DSH 插件只有 7 个 ——
+//   同一个产品，两个面能力不一样。用户在 ZCode 能做的事，在 DSH 做不了，反之亦然。
+//   本轮把 CLI **已经有**的能力全部包成 DSH 工具（不为它们新写内核逻辑，只是换个入口）。
+//
+// 全部走 execSrelay（与 search/show 同一条子进程路径），所以：
+//   · projectPath 解析、cwd 回退、错误包装、输出裁剪 —— 全部复用，不另立判据；
+//   · 内核变了这里不用跟着改。
+
+/** 纯文本类 CLI 工具的统一包装：参数数组 → CLI → 文本 */
+function describeTextTool({ name, description, parameters, buildArgs, emptyHint }) {
+  return defineTool({
+    name,
+    description,
+    parameters,
+    output: {
+      schema: resultSchema,
+      render: (_args, value) => [{ type: 'text', text: value.ok ? value.payload : `执行失败：${value.error}` }],
+    },
+    async execute(args, exec) {
+      const cwd = resolveToolRoot(args, exec)
+      const res = await execSrelay(buildArgs(args), { cwd })
+      if (!res.ok) return { ok: false, payload: '', error: res.stderr || '执行异常' }
+      const output = (res.stdout || '').trim()
+      return { ok: true, payload: clip(output || emptyHint), error: '' }
+    },
+  })
+}
+
+/** 以会话为锚推荐相关历史会话（算法发现，非显式关联）。治「记不清关键词、换个说法就搜不到」 */
+export const relatedTool = describeTextTool({
+  name: 'srelay_related',
+  description: '给定一个会话 ID，推荐与它主题相关的**其他**历史会话（算法发现：向量相似 + 话题/文件重叠）。何时用：正在看某个会话想知道「还有哪些相关讨论」、记不清关键词搜不到时**以会话为锚**找线索。推荐仅为导航，内容以 srelay_show 为准。',
+  parameters: {
+    sessionIdPrefix: { type: 'string', required: true, description: '锚会话 ID（支持前缀）' },
+    limit: { type: 'number', description: '最多推荐几条，默认 5' },
+  },
+  buildArgs: (a) => {
+    const out = ['related', String(a.sessionIdPrefix)]
+    const n = Number(a.limit)
+    if (Number.isFinite(n) && n > 0) out.push('--limit', String(n))
+    return out
+  },
+  emptyHint: '没有找到相关会话（可能是该会话太新或话题过于独特）。',
+})
+
+/** 某文件被哪些会话讨论过（跨 agent 的溯源） */
+export const historyTool = describeTextTool({
+  name: 'srelay_history',
+  description: '查某个文件路径被哪些会话讨论过、说了什么。何时用：改一个文件前想先看「这个文件历史上被哪些讨论碰过」、接手陌生代码想知道来历。',
+  parameters: {
+    filePath: { type: 'string', required: true, description: '文件路径（可只给文件名，如 "engine.ts"）' },
+  },
+  buildArgs: (a) => ['history', String(a.filePath)],
+  emptyHint: '没有会话讨论过这个文件。',
+})
+
+/** 列出所有已确认决策（含被否掉的路） */
+export const decisionsTool = describeTextTool({
+  name: 'srelay_decisions',
+  description: '列出本项目**全部**已确认技术决策（含被否掉的方案，标 kind=negative）。何时用：动手前确认「这件事以前是不是已经定过」、避免重复提议一条已被否决的路。只想看最近几条用 srelay_search(kind=decisions)。',
+  parameters: {
+    limit: { type: 'number', description: '最多几条，默认 30' },
+  },
+  buildArgs: (a) => {
+    const out = ['decisions']
+    const n = Number(a.limit)
+    if (Number.isFinite(n) && n > 0) out.push('--limit', String(n))
+    return out
+  },
+  emptyHint: '本项目还没有已确认的决策。',
+})
+
+/** 列出未解决问题 */
+export const unresolvedTool = describeTextTool({
+  name: 'srelay_unresolved',
+  description: '列出本项目提出过但**尚未解决**的问题。何时用：接手项目想知道「有什么坑还没填」、避免把已提过的疑问当新问题重问一遍。',
+  parameters: {
+    limit: { type: 'number', description: '最多几条，默认 20' },
+  },
+  buildArgs: (a) => {
+    const out = ['unresolved']
+    const n = Number(a.limit)
+    if (Number.isFinite(n) && n > 0) out.push('--limit', String(n))
+    return out
+  },
+  emptyHint: '没有未解决的问题。',
+})
+
+/** 本地匿名统计 */
+export const statsTool = describeTextTool({
+  name: 'srelay_stats',
+  description: '本项目记忆库的规模与健康状况（会话数/决策数/未决数/归档数/体积/守护状态）。何时用：想确认「记忆层到底存了多少东西」「采集是不是在跑」。',
+  parameters: {},
+  buildArgs: () => ['stats'],
+  emptyHint: '暂无统计。',
+})
+
+/** 置顶 / 取消置顶决策 */
+export const pinTool = describeTextTool({
+  name: 'srelay_pin',
+  description: '把文本包含指定片段的所有决策**置顶**（简报优先显示，即使时间很老），或取消置顶（unpin=true）。何时用：某条结论太重要、必须每次开场都被看到。',
+  parameters: {
+    text: { type: 'string', required: true, description: '要匹配的文本片段（子串匹配）' },
+    unpin: { type: 'boolean', description: 'true = 取消置顶' },
+  },
+  buildArgs: (a) => (a.unpin ? ['unpin', String(a.text)] : ['pin', String(a.text)]),
+  emptyHint: '没有匹配的决策条目。',
+})

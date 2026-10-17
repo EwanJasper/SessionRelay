@@ -2,11 +2,11 @@
 
 简体中文 | [English](./README.en.md)
 
-[![CI](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml/badge.svg)](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml)
+[![CI](https://github.com/rui08984-dot/SessionRelay/actions/workflows/ci.yml/badge.svg)](https://github.com/rui08984-dot/SessionRelay/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
 [![downloads](https://img.shields.io/npm/dm/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933)
-![MCP](https://img.shields.io/badge/MCP-16%E5%B7%A5%E5%85%B7-6C5CE7)
+![MCP](https://img.shields.io/badge/MCP-13%E5%B7%A5%E5%85%B7-6C5CE7)
 ![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows_%7C_macOS_%7C_Linux-2D7DD2)
 ![语义检索](https://img.shields.io/badge/%E8%AF%AD%E4%B9%89%E6%A3%80%E7%B4%A2-%E5%8F%AF%E9%80%89-F4A261)
 ![License](https://img.shields.io/badge/License-MIT-EAC435)
@@ -17,11 +17,45 @@
 
 你和 AI 聊了 3 天的方案，不应该随关窗消失。它属于项目，属于下一个接手的人。
 
+## 本 fork 的差异（rui08984-dot/SessionRelay）
+
+> 上游：[EwanJasper/SessionRelay](https://github.com/EwanJasper/SessionRelay)。本仓库是**功能增强型 fork**，
+> 内核架构未改，改动集中在「让它真的能用起来」的那几处。
+
+### 能力补齐
+
+| 变化 | 说明 |
+| ---- | ---- |
+| **DSH 面板工具 7 → 13** | 与 MCP 侧（`srelay serve`）能力对齐。新增 `srelay_related`（以会话为锚推荐相关历史，治「换个角度就搜不到」）、`srelay_history`、`srelay_decisions`、`srelay_unresolved`、`srelay_stats`、`srelay_pin`。**全部只包 CLI 已有命令，不另写内核逻辑** |
+| **标签图谱可视化** | 面板「图谱」页新增**力导向图**：100 节点 / 1200 边，斥力+弹簧+向心三力模拟，节点大小映射会话数，悬停高亮邻居。纯 Canvas 手写，零第三方依赖 |
+| **实时刷新** | 图谱页 15 秒轮询，改配置 / 重建图谱后无需手动刷页面 |
+| **ZCode MCP 接入** | 注册 `sessionrelay` 到 ZCode 的 `mcp.servers`，ZCode 侧从「只能被动接收简报」变成「能主动查/记」 |
+
+### 修掉的缺陷（都是「静默失效」类）
+
+这几条的共同形状：**把「我不知道」渲染成了「一切正常」**。
+
+| 缺陷 | 后果 |
+| ---- | ---- |
+| 图谱查询引用了不存在的列名（`e.tag_a`/`e.tag_b`，真实是 `a`/`b`/`w`） | **图谱页从做出来那天起就没显示过一次**；异常被 `withDb` 吞成 null，面板显示「还没建过」而库里躺着 5037 个标签 |
+| `export { X } from` 被当成本地变量用 | ZCode 侧简报抛 `ReferenceError` 却被「失败=空输出」契约吞掉 ⇒ **从那次归核起一条简报都没注入过** |
+| 门禁把「跳过」算作成功 | dist 重建窗口里两次 `ERR_MODULE_NOT_FOUND` 仍打印「✅ 全部一致」 |
+| `watchdogOnline` 用 `() => undefined` 吞掉读错误 | 「全局库打不开」被渲染成「守护离线」 |
+| 面板「未决」数全部 `key_questions`（含已回答） | 同一时刻四个入口给出 686 / 55 / 4 / 1，面板那个是错的 |
+| 生命周期 `lastAt` 从来没被赋值 | 卡片上「已执行 196 次」配「最近运行：—」 |
+
+修法统一为：**错误必须可见**（`withDb` 补 `onError`）、**判据只有一份**（判活/阈值/过滤收敛成共享函数）、**数字必须绑口径**（计数值带语义过滤）。
+
+### 怎么用
+
+上游的安装与使用方式完全不变，见下方[快速开始](#快速开始)。
+本 fork 额外提供 DSH 面板插件与 ZCode 适配器（`integrations/` 目录）。
+
 ## 60 秒演示
 
 ![会话接力 SessionRelay 演示](assets/demo-zh.gif)
 
-GIF 无声音——完整配音版（中文/英文 + 手机竖版）在 [Releases · v0.2.2](https://github.com/EwanJasper/SessionRelay/releases/tag/v0.2.2) 页面内可直接播放。
+GIF 无声音——完整配音版（中文/英文 + 手机竖版）在 [Releases · v0.2.2](https://github.com/rui08984-dot/SessionRelay/releases) 页面内可直接播放。
 
 ## 它解决什么
 
@@ -164,38 +198,40 @@ bigram 的结果列表更干净（平均 3.0 条 vs 38.5 条，jieba 多出来�
 > 1014 实测这个不对称让 4361 条消息的客户端样板文字占掉一个库全部索引的 15.9%，
 > 一直没被发现，因为它的症状是"索引胀大"而不是"简报出错"。
 
-### 🤖 MCP Server（16 个工具，9 读 + 7 写域）
-任何支持 MCP 的 AI agent 接入后，从此在这个项目里不再是失忆的：
+### 🤖 MCP Server（13 个工具，6 读 + 7 写）
+
+任何支持 MCP 的 AI agent 接入后，在这个项目里不再是失忆的。
+
+> ⚠️ **工具名在 10-14 改过一轮**：检索类原来拆成 `search_sessions` / `get_decisions` /
+> `get_file_history` / `get_unresolved` 四个工具，现在**全部收口到 `srelay_search` 的 `kind` 参数**
+> （「工具尽量少、能力不变」）。如果手上的旧文档或旧脚本还在调那四个名字，会调到不存在的工具。
 
 <details>
-<summary><b>9 个读工具</b>——AI 从此能回答的问题</summary>
+<summary><b>6 个读工具</b>——AI 从此能回答的问题</summary>
 
 | 工具 | 回答的问题 |
 | ---- | ---------- |
-| `search_sessions` | "我们之前讨论过 X 吗？"（中文全文 + 元数据过滤） |
-| `get_session_detail` | "那场讨论具体聊了什么？"（完整消息，支持范围） |
+| `srelay_search` | **四类内容一个入口**，靠 `kind` 区分：<br>`sessions`（默认）"我们之前讨论过 X 吗？"<br>`decisions` "为什么决定用 X 而不是 Y？"（含 `kind=negative` = **被否掉的路**，看到就别再提）<br>`unresolved` "还有什么没定的？"<br>`files` "这个文件为什么这么写？" |
+| `srelay_show` | "那场讨论具体聊了什么？"（完整消息，支持范围与 role 过滤） |
 | `list_sessions` | "这个项目都聊过哪些话题？" |
-| `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
-| `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
-| `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现的同主题会话，可解释理由） |
-| `get_unresolved` | "还有什么没定的？"（未决问题清单） |
-| `get_stats` | "记忆库什么状态？"（会话数/来源分布/体积） |
-| `set_scope` | 检索边界逃生口 |
+| `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现，带可解释理由） |
+| `get_linked_sessions` | "这个会话和哪些会话连着？"（显式建立的关联，双向 + kind） |
+| `get_stats` | "记忆库什么状态？"（会话数 / 来源分布 / 体积） |
 
 </details>
 
 <details>
 <summary><b>7 个写域工具</b>——AI 不再只是读者</summary>
 
-| 工具 | 能力 | 安全边界 |
-| ---- | ---- | -------- |
-| `annotate_session` | 给会话打标签 / 写人工摘要 | 只改元数据，不改写对话 |
-| `save_note` | AI 把结论写成笔记（决策句式直接入决策库） | source=note，可识别可审计 |
-| `export_handoff` | 生成 .hop 交接包 | 只读导出 |
-| `import_handoff` | 导入交接包（sha256 校验 + 归化） | **默认隔离模式**（正文待放行） |
-| `release_quarantine` | 放行隔离会话正文 | 需显式调用 |
-| `link_sessions` | 建立会话关联（continues/related/pinned） | 关联可查可撤销 |
-| `get_linked_sessions` | 双向查询会话关联（出边/入边） | 只读 |
+| 工具 | 作用 |
+| ---- | ---- |
+| `save_note` | 把一条结论 / 笔记沉淀进项目记忆 |
+| `annotate_session` | 给会话打标注（话题 / 状态） |
+| `link_sessions` | 建立会话关联（`continues` 延续 / `related` 相关 / `pinned` 挂载） |
+| `set_scope` | 检索边界逃生口（本次只看指定会话） |
+| `release_quarantine` | 解除隔离（误判为噪声的会话放回检索） |
+| `export_handoff` | 导出 `.hop` 交接包 |
+| `import_handoff` | 导入交接包（sha256 校验 + 归化到当前项目） |
 
 </details>
 
@@ -244,7 +280,7 @@ sequenceDiagram
     小王->>包: srelay import xxx.hop --from 张三
     Note over 小王: 自动：校验完整性<br/>归化 project_id<br/>记入审计
     小王->>AI: "为什么数据库选了 PG？"
-    AI->>包: get_decisions()
+    AI->>包: srelay_search(kind=decisions)
     包-->>AI: "决定采用 PostgreSQL（出处：张三 08-20 会话）"
     AI-->>小王: 带出处的完整回答
 ```
@@ -359,22 +395,20 @@ claude mcp add sessionrelay --scope user -- srelay serve
 
 > **"我们之前为什么决定用 PostgreSQL？"**
 
-正确的样子：AI 调用 `get_decisions` 或 `search_sessions`，回答里带出处（日期、来源 agent、会话 ID、消息序号）。如果它说"不知道"，说明 MCP 未接通——检查 `srelay doctor`。
+正确的样子：AI 调用 `srelay_search kind=decisions` 或 `srelay_search`，回答里带出处（日期、来源 agent、会话 ID、消息序号）。如果它说"不知道"，说明 MCP 未接通——检查 `srelay doctor`。
 
-### 16 个工具能回答什么
+### 13 个工具能回答什么
 
 <details>
-<summary><b>读工具（8 个）</b>——点击展开</summary>
+<summary><b>读工具（6 个）</b>——点击展开</summary>
 
 | 工具 | AI 从此能回答 |
 | ---- | ------------- |
-| `search_sessions` | "我们之前讨论过 X 吗？"（中文全文 + 元数据过滤） |
-| `get_session_detail` | "那场讨论具体聊了什么？"（可按角色过滤、分页、截断） |
+| `srelay_search` | "我们之前讨论过 X 吗？"（中文全文 + 元数据过滤） |
+| `srelay_show` | "那场讨论具体聊了什么？"（可按角色过滤、分页、截断） |
 | `list_sessions` | "这个项目都聊过哪些话题？" |
-| `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
-| `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
+| `srelay_search kind=decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
 | `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现，可解释理由） |
-| `get_unresolved` | "还有什么没定的？"（未决问题清单） |
 | `get_stats` | "记忆库什么状态？"（会话数/来源/体积） |
 | `set_scope` | 检索边界逃生口 |
 
@@ -397,8 +431,8 @@ claude mcp add sessionrelay --scope user -- srelay serve
 
 ### 上下文安全（AI 不会"吃太多"）
 
-- `get_session_detail` 默认最多 20 条 × 1000 字 ≈ 20KB，硬顶 50KB
-- 超出时返回 `truncated: true` + 行动建议（`role="user"` 只看提问 / `get_decisions()` 直接拿结论 / 翻页）
+- `srelay_show` 默认最多 20 条 × 1000 字 ≈ 20KB，硬顶 50KB
+- 超出时返回 `truncated: true` + 行动建议（`role="user"` 只看提问 / `srelay_search(kind=decisions)` 直接拿结论 / 翻页）
 - 要更多需显式传参——默认安全，不信任 AI 自觉
 
 ### Claude Code 生命周期钩子（可选，加速会话确认）

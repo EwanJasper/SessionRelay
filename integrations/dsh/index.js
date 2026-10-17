@@ -41,7 +41,7 @@
 // ═══ 已知未实测项 ═══
 // cwd 字段尚未在真实 DSH 组装中打过日志（启动 DSH 不触发组装，需真实一轮对话）。
 // 已用「cwd 优先 + slug 回落」防御：取不到时行为与旧版一致。
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -51,7 +51,8 @@ import { fileURLToPath } from 'node:url'
 // 历史上两侧手抄导致过滤器漂移（DSH 多一条而 ZCode 没有，用户日常在 ZCode 侧干活）。
 import { passesBriefFilters } from './src/brief-filters.mjs'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
-import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool } from './src/tools.js'
+import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool,
+         relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
 import { queryBriefData, sqlChannelAvailable, queryRecentFiles, foldPresentation } from './src/brief-sql.mjs'
 import { registerHooks } from './src/hooks.mjs'
@@ -116,6 +117,50 @@ const CHATTER_TITLE = /^(你好|哈喽|您好|hi+|hello|hey|test|测试|在吗|�
 // 会话里有"改用 fileURLToPath()"这种真决策（1015 实测，两个候选判据都试过）。
 const SUBAGENT_TASK_TITLE = /^(你是|你作为|任务[:：]|你的任务|act as|you are)/i
 
+// ── [1021] 守护自愈：治「每次重启 DSH 面板都显示离线」的**真正根因** ──
+//
+// 实测链条（别再从头查一遍）：
+//   ① 面板显示离线 → 读项目锁 → 心跳过期 → 看起来像「守护没起」；
+//   ② 但真去起一个，它立刻退出：「全局锁被占（另一守护在跑）」；
+//   ③ 查那个 pid：**进程活着**、管道也连得上，但**心跳 96 秒没更新**（应该 15 秒一次）。
+//   ⇒ 有个**僵尸守护**：进程没死、管道没放，但事件循环卡住了。
+//     每次重启 DSH 都撞到它，所以面板永远离线，**用户重启多少次都没用**。
+//
+// 修法：起新守护之前先做健康判定 —— 锁里有 pid 且活着、但心跳过期 ⇒ 判定僵尸、杀掉，再 spawn。
+const DAEMON_ZOMBIE_MS = 120_000
+const DAEMON_CHECK_COOLDOWN_MS = 60_000
+const daemonLastTry = new Map()
+
+function readDaemonLock(root) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(root, '.sessionrelay', 'lock'), 'utf8'))
+    const pid = Number(j.pid)
+    const hb = Number(j.heartbeat)
+    if (!Number.isFinite(pid) || !Number.isFinite(hb)) return null
+    let pidAlive = false
+    try { process.kill(pid, 0); pidAlive = true } catch { pidAlive = false }
+    return { pid, ageMs: Date.now() - hb, pidAlive }
+  } catch { return null }
+}
+
+function ensureDaemon(root) {
+  try {
+    if (!root) return
+    const st = readDaemonLock(root)
+    if (st && st.pidAlive && st.ageMs <= DAEMON_ZOMBIE_MS) return
+    if (st && st.pidAlive && st.ageMs > DAEMON_ZOMBIE_MS) {
+      try { process.kill(st.pid) } catch { /* 已经死了更好 */ }
+    }
+    const last = daemonLastTry.get(root) || 0
+    if (Date.now() - last < DAEMON_CHECK_COOLDOWN_MS) return
+    daemonLastTry.set(root, Date.now())
+    const child = spawn(NODE, [SRELAY, 'watch', '--foreground', '--global'], {
+      cwd: root, detached: true, stdio: 'ignore', windowsHide: true,
+    })
+    child.on('error', () => { /* 起不来不影响简报，下个冷却周期再试 */ })
+    if (typeof child.unref === 'function') child.unref()
+  } catch { /* 任何异常都不许挡住简报 */ }
+}
 function runSrelay(args, root, timeoutMs) {
   return new Promise((resolve) => {
     execFile(NODE, [SRELAY, ...args],
@@ -560,6 +605,7 @@ export function apply(ctx) {
 
   const refresh = (root) => {
     if (disposed || inflight.has(root)) return
+    ensureDaemon(root)   // [1021] 顺手确保守护在跑（含存活判据 + 60s 冷却，见 ensureDaemon）
     const p = buildBrief(root)
       .then(text => { cache.set(root, { text, at: Date.now() }) })
       .catch(() => { /* 刷新失败保留旧值，下轮再试 */ })
@@ -683,7 +729,11 @@ export function apply(ctx) {
   } catch { /* 非 DSH 环境：简报已注册，工具缺席 */ }
   if (typeof defineTool !== 'function') return
 
-  const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool]
+  // [1021 满血版] 13 个，与 MCP 侧（srelay serve）能力对齐 ——
+  //   同一个产品的两面不该能力不一样。新增的 6 个只是把 CLI **已有**的命令包成工具，
+  //   没另写内核逻辑（判据仍只有一份）。
+  const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool,
+                    relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool]
   for (const t of allTools) {
     try { ctx.tools.register(t) } catch { /* 单个失败不拖垮其他 */ }
   }

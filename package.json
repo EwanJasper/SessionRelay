@@ -64,6 +64,19 @@
     "cross-agent",
     "ai-memory",
     "local-first",
-    "handoff"
-  ]
+    "handoff",
+    "agent-memory",
+    "knowledge-graph",
+    "force-directed",
+    "dsh",
+    "session-handoff"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rui08984-dot/SessionRelay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rui08984-dot/SessionRelay/issues"
+  },
+  "homepage": "https://github.com/rui08984-dot/SessionRelay#readme"
 }
