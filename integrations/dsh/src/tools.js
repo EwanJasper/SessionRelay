@@ -12,6 +12,30 @@ import { homedir } from 'node:os'
 import { defineTool } from './define-tool.js'
 import { execSrelay, clip } from './cli.js'
 import { getActiveProject, proposeProject, confirmProject, cancelProposal } from './state.js'
+
+/**
+ * 工具侧的项目根解析：**显式参数 > agent 的 cwd（与简报同源）> 绑定/环境变量**。
+ *
+ * [1017 夜 08:0x] 为什么需要它（修「简报有、工具报错」的不对称）：
+ *   简报走「agent 的 cwd」，而 search/record/show 原先只走 `getActiveProject()` ——
+ *   后者只由**两段式绑定项目**或环境变量 `SRELAY_PROJECT_ROOT` 设定，**看不到会话 cwd**。
+ *   更根本的是：这三个工具的 `execute` 签名是 `(args)`，**物理上就收不到 exec**，
+ *   所以拿不到 `exec.agent.session.header.cwd`。症状是用户看到
+ *   「开场简报好好的，让我搜一下就报『未找到 .sessionrelay』」。
+ *
+ * 判据顺序与同文件里 `srelay_init` 完全一致（architecture 纪律：复用规范 helper，别写第二套）。
+ * 兜底仍用 getActiveProject()：显式绑定过的项目应当**压过**会话 cwd（用户可能在一个
+ * 跨项目的窗口里，明确指定了要看哪个库）。
+ */
+function resolveToolRoot(args, exec) {
+  const explicit = String(args?.projectPath ?? '').trim()
+  if (explicit) return explicit
+  const bound = getActiveProject()
+  if (bound) return bound;
+  const cwd = exec?.agent?.session?.header?.cwd
+  if (typeof cwd === 'string' && cwd.trim()) return cwd.trim()
+  return null
+}
 import { isInternalDir } from '../project-resolve.mjs'
 
 /**
@@ -64,7 +88,15 @@ export const searchTool = defineTool({
       text: value.ok ? value.payload : `检索失败：${value.error}`,
     }],
   },
-  async execute(args) {
+  // ⚠️ [1017 夜 08:0x · 修「简报有、工具报错」的不对称]
+  // 病历：简报走「agent 的 cwd」，而 search/record/show 走 `getActiveProject()` ——
+  // 后者只由**两段式绑定项目**或环境变量 SRELAY_PROJECT_ROOT 设定，**看不到会话 cwd**。
+  // 于是用户看到的是「开场简报正常，但让我搜一下就报『未找到 .sessionrelay』」。
+  // 根因不是绑定没做，而是**这三个工具的 execute 压根没接 exec 参数**（签名是 `execute(args)`），
+  // 所以它们**在物理上无法**读到 `exec.agent.session.header.cwd`。
+  // 修法沿用同文件里 srelay_init 已经有的判据顺序（architecture 技能的「复用规范 helper」）：
+  //   **显式 projectPath 参数 > agent 的 cwd（与简报同源）> 绑定/环境变量兜底**。
+  async execute(args, exec) {
     const q = String(args?.query ?? '').trim()
     if (!q) return { ok: false, payload: '', error: 'query 关键词不能为空' }
 
@@ -76,7 +108,7 @@ export const searchTool = defineTool({
     if (args.topic) cliArgs.push('--topic', String(args.topic))
     if (args.tag) cliArgs.push('--tag', String(args.tag))
 
-    const cwd = getActiveProject()
+    const cwd = resolveToolRoot(args, exec)
     const res = await execSrelay(cliArgs, { cwd })
 
     if (!res.ok) {
@@ -110,7 +142,7 @@ export const showTool = defineTool({
       text: value.ok ? value.payload : `查看失败：${value.error}`,
     }],
   },
-  async execute(args) {
+  async execute(args, exec) {
     const id = String(args?.sessionIdPrefix ?? '').trim()
     if (!id) return { ok: false, payload: '', error: 'sessionIdPrefix 不能为空' }
 
@@ -119,7 +151,7 @@ export const showTool = defineTool({
       cliArgs.push('--range', args.range.trim())
     }
 
-    const cwd = getActiveProject()
+    const cwd = resolveToolRoot(args, exec)
     const res = await execSrelay(cliArgs, { cwd })
 
     if (!res.ok) {
@@ -154,7 +186,7 @@ export const recordTool = defineTool({
       text: value.ok ? value.payload : `记录失败：${value.error}`,
     }],
   },
-  async execute(args) {
+  async execute(args, exec) {
     const summary = String(args?.summary ?? '').trim()
     if (!summary) return { ok: false, payload: '', error: 'summary 决策摘要不能为空' }
 
@@ -170,7 +202,7 @@ export const recordTool = defineTool({
     }
     cliArgs.push('--json')
 
-    const cwd = getActiveProject()
+    const cwd = resolveToolRoot(args, exec)
     const res = await execSrelay(cliArgs, { cwd })
 
     if (!res.ok) {
@@ -216,7 +248,7 @@ export const bindProjectTool = defineTool({
       text: value.ok ? value.payload : `绑定提议失败：${value.error}`,
     }],
   },
-  async execute(args) {
+  async execute(args, exec) {
     const rawPath = String(args?.projectPath ?? '').trim()
     if (!rawPath) return { ok: false, payload: '', error: 'projectPath 不能为空' }
 
