@@ -5,6 +5,15 @@
 
 ## [0.5.1-fork.1] - 2026-10-18
 
+### ⚠️ 契约变化（MCP 消费方请注意）
+- **`get_session_context`**：`range` 在空结果时从 `[from, from-1]` 变为 `null`；
+  `totalInDb` 从会话的 `message_count` 改为**真实消息行数**（条数与序号不再是同一个量）。
+- **`srelay_search` 的 `limit` 现在真的生效**（`kind=decisions` / `kind=unresolved` 以前静默忽略）；
+  `scope` 对这两个 kind 也生效了 —— 以前它们会返回 scope 范围外的条目。
+- `kind=decisions` / `kind=unresolved` **不按 `query` 过滤**（决策是结论清单，不是全文索引）。
+  为免静默，响应里带 `not_applied: ['query']` 与说明；要按词筛请改用 `kind=sessions`。
+- 其余 11 个工具只有新增字段，无删除/改名。
+
 ### 修复
 - **DSH 事件钩子依赖的导出从未存在于发布模块**（审查 #17）：`integrations/dsh/src/hooks.mjs` 用
   `recall.js` 的 `loadConfig` / `runSync` 做宿主内即时采集，而产物只导出 `runLifecycle`
