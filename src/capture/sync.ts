@@ -116,9 +116,9 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   try {
     for (const source of cfg.capture.sources) {
       // 改动 1：从注册表取 adapter（不再 if/else）
-      // [1021 回归 P4] **显式带项目根**。不传 root 时 registry 只能退回那个**进程级**的 activeKey，
-      // 而全局守护是并发跑多项目的：两次 await 之间可能被别的项目的 ensureRegistered 改写，
-      // 结果拿到别人项目的同名 custom adapter（红队指出的架构残留）。传 root 就没这个窗口。
+      // [1021 P4 → B2] 显式带项目根（现在是**必填**：漏传 registry.get 会直接抛错）。
+      //   进程级 activeKey 已删除——全局守护并发跑多项目，两次 await 之间别的项目会改写它，
+      //   A 项目的周期就会拿到 B 项目的同名 custom adapter；歧义窗口从代码层消失。
       const adapter = get(source, root);
       if (!adapter) {
         result.warnings.push(`未知会话源：${source}（可用：${list(root).map(a => a.id).join(', ')}）`);
@@ -168,7 +168,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
           : (ds.mtimeMs !== undefined ? `${ds.mtimeMs}:${ds.sizeBytes}` : undefined);
         if (sig !== undefined && syncWatermark.get(wmKey) === sig && knownSessions.has(wmKey)) continue;
 
-        await ingestOne(db, ds, { mode, projectId, cfg, result, stats: opts.stats, ignoreRules, tombstones, source, aConfig });
+        await ingestOne(db, ds, { mode, projectId, projectRoot: root, cfg, result, stats: opts.stats, ignoreRules, tombstones, source, aConfig });
         if (sig !== undefined) syncWatermark.set(wmKey, sig);
       }
     }
@@ -197,7 +197,7 @@ export function discoverAll(root: string, cfg: RelayConfig): DiscoveredSession[]
   ensureRegistered(root);
   const out: DiscoveredSession[] = [];
   for (const source of cfg.capture.sources) {
-    const adapter = get(source);
+    const adapter = get(source, root);   // [B2] root 必填，不许回落到进程级上下文
     if (!adapter) continue;
     out.push(...adapter.discover(root, adapterConfig(cfg, source)));
   }
@@ -232,9 +232,9 @@ export async function captureSessions(opts: {
       result.warnings.push(`会话「${ds.title ?? ds.sourceSessionId}」被忽略规则拦截（.sessionrelayignore），未存储`);
       continue;
     }
-    const adapter = get(ds.source);
+    const adapter = get(ds.source, opts.projectRoot);   // [B2] 显式项目根
     if (!adapter) { result.warnings.push(`未知源：${ds.source}`); continue; }
-    await ingestOne(opts.db, ds, { mode: 'full', projectId, cfg, result, stats: opts.stats, ignoreRules, tombstones, source: ds.source, aConfig: adapterConfig(cfg, ds.source), origin: 'manual' });
+    await ingestOne(opts.db, ds, { mode: 'full', projectId, projectRoot: opts.projectRoot, cfg, result, stats: opts.stats, ignoreRules, tombstones, source: ds.source, aConfig: adapterConfig(cfg, ds.source), origin: 'manual' });
   }
   return result;
 }
@@ -242,9 +242,9 @@ export async function captureSessions(opts: {
 async function ingestOne(
   db: DB,
   ds: DiscoveredSession,
-  ctx: { mode: string; projectId: string; cfg: RelayConfig; result: SyncStats; stats?: StatsCounter; ignoreRules: string[]; tombstones: Set<string>; source: string; aConfig: import("../adapters/types.js").AdapterConfig; origin?: 'auto' | 'manual' },
+  ctx: { mode: string; projectId: string; projectRoot: string; cfg: RelayConfig; result: SyncStats; stats?: StatsCounter; ignoreRules: string[]; tombstones: Set<string>; source: string; aConfig: import("../adapters/types.js").AdapterConfig; origin?: 'auto' | 'manual' },
 ): Promise<void> {
-  const adapter = get(ds.source);
+  const adapter = get(ds.source, ctx.projectRoot);   // [B2] 显式项目根，不依赖任何进程级活动上下文
   if (!adapter) return;
 
   // 墓碑（forget 次级防线）：读都不读，直接丢弃（主防线 session: ignore 在入口已挡）

@@ -44,15 +44,15 @@ describe('#16 · 注册上下文按项目根隔离', () => {
     const projB = makeProject('projB', 'B-marker');
 
     ensureRegistered(projA);
-    expect(get('zzprobe')?.displayName, 'A 初始化后应拿到 A 的适配器').toBe('A-marker');
+    // [B2] 读适配器必须显式带项目根（进程级 activeKey 已删除）
+    expect(get('zzprobe', projA)?.displayName, 'A 初始化后应拿到 A 的适配器').toBe('A-marker');
 
     ensureRegistered(projB);
-    // 修前：这里恒为 'A-marker'（进程级布尔把 B 的加载整个跳过了）
-    expect(get('zzprobe')?.displayName, 'B 初始化后必须拿到 B 的适配器').toBe('B-marker');
+    // 修前（#16）：这里恒为 'A-marker'（进程级布尔把 B 的加载整个跳过了）
+    expect(get('zzprobe', projB)?.displayName, 'B 初始化后必须拿到 B 的适配器').toBe('B-marker');
 
-    // 显式携带上下文（新代码应这样调；不依赖「最近一次 ensureRegistered」这条老约定）
+    // 两次初始化后 A 仍必须是 A 的——旧 activeKey 实现下"最近一次"会把 A 抢走
     expect(get('zzprobe', projA)?.displayName).toBe('A-marker');
-    expect(get('zzprobe', projB)?.displayName).toBe('B-marker');
 
     // list 也必须按上下文给（sync 用它报「未知源可用列表」）
     expect(list(projB).find((a) => a.id === 'zzprobe')?.displayName).toBe('B-marker');
@@ -64,9 +64,18 @@ describe('#16 · 注册上下文按项目根隔离', () => {
     const projEmpty = path.join(root, 'projEmpty');
     fs.mkdirSync(projEmpty, { recursive: true });
     ensureRegistered(projA);
-    expect(get('zzprobe')?.displayName).toBe('A-marker');
+    expect(get('zzprobe', projA)?.displayName).toBe('A-marker');
     ensureRegistered(projEmpty);
     // 空项目：拿不到 zzprobe（回落到 builtin 表，那里没有这个 id）
-    expect(get('zzprobe')).toBeUndefined();
+    expect(get('zzprobe', projEmpty)).toBeUndefined();
+  });
+
+  it('[B2] 漏传项目根 = 立刻抛错（歧义路径已删除，不许静默猜上下文）', () => {
+    const projA = makeProject('projA3', 'A-marker');
+    ensureRegistered(projA);
+    // @ts-expect-error 故意漏传 root：TypeScript 层也拦（这里验证运行时同样不放过）
+    expect(() => get('zzprobe')).toThrow(/必须显式传 projectRoot/);
+    // @ts-expect-error 同上
+    expect(() => list()).toThrow(/必须显式传 projectRoot/);
   });
 });

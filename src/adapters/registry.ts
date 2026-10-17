@@ -24,23 +24,36 @@ const builtins = new Map<string, SessionSourceAdapter>();
 // 加载完 `.sessionrelay/adapters/` 之后，后续项目**再也不读自己的目录**，而且拿到的是上一个项目的
 // 适配器（实测：A、B 各定义一个 zzprobe.js，依次初始化后 B 拿到的是 A 的标记）。
 //
-// 修法：以**项目根**为键管理注册上下文。
-//   · `get(id, root)` / `list(root)` 可显式携带上下文（新代码请这样调）；
-//   · 老调用点（sync.ts / watch.ts 的 `get(source)`）不传 root —— 它们都在
-//     `ensureRegistered(root)` **之后**才 get，所以走"最近一次 ensureRegistered 设定的活动上下文"，
-//     拿到的正是自己项目的上下文。这条规则写在 ensureRegistered 上，别在别处另立一套。
+// 修法：以**项目根**为键管理注册上下文。**读路径一律显式传根**。
+//
+// [B2 二次收口] 上一版还给老调用点留了个兜底：模块级 `let activeKey` = "最近一次 ensureRegistered
+//   设定的活动上下文"。那是一条**歧义路径**：全局守护并发跑多项目，两次 await 之间别的项目可能
+//   把 activeKey 改写 ⇒ A 项目的周期拿到 B 项目的同名 custom adapter（红队已复现）。
+//   现在 activeKey **彻底删除**：`get(id, root)` / `list(root)` 的 root 必填，
+//   调用方漏传就**立刻抛错**（requireRoot），不再有"猜一个上下文"的余地。
 interface RegContext {
   loaded: boolean;
   customs: Map<string, SessionSourceAdapter>;
 }
 
-/** 不带项目根的 registerCustom 落到这里（= 旧行为：对所有项目可见，优先级低于项目自己的） */
+/** 不带项目根的 registerCustom 落到这里（只做**写**：对所有项目可见、优先级低于项目自己的）。
+ *  读路径不允许再隐式取它 —— 见下面 requireRoot 的注释。 */
 const globalContext: RegContext = { loaded: true, customs: new Map() };
 const contexts = new Map<string, RegContext>();
-/** 最近一次 ensureRegistered(root) 设定的活动上下文（老调用点靠它） */
-let activeKey: string | null = null;
 
 const keyOf = (projectRoot: string): string => path.resolve(projectRoot).toLowerCase();
+
+/** [B2] 读路径的唯一入口校验：**必须**显式给项目根。
+ *  病历：原实现有模块级 `let activeKey`（最近一次 ensureRegistered 的项目），老调用点
+ *  `get(source)` 不传根就落到它上面。全局守护是**并发**跑多项目的：两次 await 之间别的项目
+ *  可能把 activeKey 改写，于是 A 项目的周期拿到 B 项目的同名 custom adapter（串项目）。
+ *  这条歧义路径已**彻底删除**（activeKey 不存在了）；再漏传根 = 立刻抛错，不许静默猜测。 */
+function requireRoot(api: string, projectRoot?: string): string {
+  if (typeof projectRoot !== 'string' || projectRoot.trim() === '') {
+    throw new Error(api + '() 必须显式传 projectRoot：进程级 activeKey 已删除（多项目并发会串项目，见 1021 #16 / B2）');
+  }
+  return projectRoot;
+}
 
 function ctxFor(projectRoot: string): RegContext {
   const k = keyOf(projectRoot);
@@ -49,14 +62,9 @@ function ctxFor(projectRoot: string): RegContext {
   return c;
 }
 
-/** 取上下文：给 root 就取那个项目的；没给就取活动上下文；都没有才退回全局（只有 builtins + 显式注册） */
-function contextOf(projectRoot?: string): RegContext {
-  if (projectRoot) return ctxFor(projectRoot);
-  if (activeKey) {
-    const c = contexts.get(activeKey);
-    if (c) return c;
-  }
-  return globalContext;
+/** 取上下文：**只认显式传入的项目根**（缺失即抛错，见 requireRoot）。 */
+function contextOf(api: string, projectRoot?: string): RegContext {
+  return ctxFor(requireRoot(api, projectRoot));
 }
 
 /** 注册内置适配器 */
@@ -69,15 +77,17 @@ export function registerCustom(adapter: SessionSourceAdapter, projectRoot?: stri
   (projectRoot ? ctxFor(projectRoot) : globalContext).customs.set(adapter.id, adapter);
 }
 
-/** 获取适配器：项目上下文 custom 优先 → 全局 custom → builtin。 */
-export function get(sourceId: string, projectRoot?: string): SessionSourceAdapter | undefined {
-  const ctx = contextOf(projectRoot);
+/** 获取适配器：项目上下文 custom 优先 → 全局 custom → builtin。
+ *  [B2] projectRoot **必填**；不传直接抛错（不再回落到进程级 activeKey）。 */
+export function get(sourceId: string, projectRoot: string): SessionSourceAdapter | undefined {
+  const ctx = contextOf('get', projectRoot);
   return ctx.customs.get(sourceId) ?? globalContext.customs.get(sourceId) ?? builtins.get(sourceId);
 }
 
-/** 列出所有可用适配器（同一 id 只出现一次，先到先得 = 项目 custom 优先） */
-export function list(projectRoot?: string): SessionSourceAdapter[] {
-  const ctx = contextOf(projectRoot);
+/** 列出所有可用适配器（同一 id 只出现一次，先到先得 = 项目 custom 优先）。
+ *  [B2] projectRoot **必填**；不传直接抛错（不再回落到进程级 activeKey）。 */
+export function list(projectRoot: string): SessionSourceAdapter[] {
+  const ctx = contextOf('list', projectRoot);
   const seen = new Set<string>();
   const out: SessionSourceAdapter[] = [];
   for (const a of [...ctx.customs.values(), ...globalContext.customs.values(), ...builtins.values()]) {
@@ -156,12 +166,10 @@ register(dshAdapter);
  *
  * [1021 #16] 关键是**每个项目各一次**：原实现是进程级单个 `customLoaded` 布尔，
  * 第一个项目加载后，后续项目直接返回空结果（连自己的目录都不读）。
- * 同时这里会把该项目的上下文设为**活动上下文**，供不传 root 的老调用点（`get(source)`）使用。
+ * [B2] 这里**不再**顺手设置什么"活动上下文"（activeKey 已删）：读适配器一律显式传根，
+ *       并发项目之间没有任何共享可变状态可以串。
  */
-export function ensureRegistered(projectRoot?: string): { loaded: string[]; errors: string[] } {
-  if (!projectRoot) return { loaded: [], errors: [] };   // 没有项目根 = 无从加载（与原行为一致）
-  const key = keyOf(projectRoot);
-  activeKey = key;
+export function ensureRegistered(projectRoot: string): { loaded: string[]; errors: string[] } {
   const ctx = ctxFor(projectRoot);
   if (ctx.loaded) return { loaded: [], errors: [] };
   return loadCustomAdapters(projectRoot);

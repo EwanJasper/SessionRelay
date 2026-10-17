@@ -352,7 +352,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
     ensureRegistered(root);
     const roots = new Set<string>();
     for (const s of opts.config.capture.sources) {
-      const adapter = get(s);
+      const adapter = get(s, root);   // [B2] 显式项目根：不再依赖进程级 activeKey
       if (adapter?.watchRoots) {
         for (const dir of adapter.watchRoots(root, adapterConfig(opts.config, s))) {
           roots.add(dir);

@@ -9,6 +9,7 @@
 // 为什么不做成守护自动跑：抽错一句话就会污染**所有项目**的注入。让它是个显式命令，
 // 人（或排程）决定什么时候跑、跑完要不要收。
 import { addLesson } from '../../store/global.js';
+import { isNearDuplicate } from '../compact/dedup.js';
 
 const PATTERNS = [
   '踩坑', '血的教训', '教训是', '下次一定', '以后再', '以后要', '千万别', '别再', '不要再',
@@ -79,6 +80,8 @@ export interface HarvestReport {
   notDraft: string[];
   /** 本轮"库里已有、只把 hits 加了 1"的条数（重复遇到 = 反复发生的真坑） */
   repeated: number;
+  /** 疑似与库内某条同义的候选数（**只标注，不丢弃**；见近重复那段） */
+  nearDup: number;
   /** 取样（前 20 条新候选；dry-run 与事件日志用） */
   samples: Harvested[];
 }
@@ -133,10 +136,41 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   } catch { msgs = []; }   // 老库没有 seq_num 之类 —— 采集失败不该让生命周期红
 
   const cands = harvestCandidates(msgs.map((m) => ({ role: m.role, content: m.content, seqNum: m.seq, sessionId: m.sid })));
-  const existing = new Set(
-    (gdb.prepare('SELECT text FROM lessons').all() as Array<{ text?: string }>).map((r) => String(r.text ?? '')),
-  );
-  const fresh = cands.filter((c) => !existing.has(c.text));
+  const existingTexts = (gdb.prepare('SELECT text FROM lessons').all() as Array<{ text?: string }>)
+    .map((r) => String(r.text ?? ''))
+    .filter((t) => t.length > 0);
+  const existing = new Set(existingTexts);
+
+  // ── [1021 A5] 近重复：**只标注，绝不丢弃** ──
+  //
+  // 先记下踩到的坑（实测数据，不是推测）：
+  //   本想把压缩 L1b 的 isNearDuplicate(0.8) 直接拿来当"经验重复"判据。实测它
+  //   **区分不了"换个说法"和"换了个结论"**：
+  //     「改了A就没B」 vs 「改了A就没C」                          → 判成重复（结论不同！）
+  //     「…vendor，否则插件自测跑的是旧副本」 vs 「…否则面板自测跑的是旧副本」 → 判成重复（对象不同！）
+  //   而且短句上调阈值**没用**：0.8 / 0.85 / 0.9 / 0.95 全部照样误杀 —— 短句公共字符太多。
+  //
+  //   压缩那边为什么敢用 0.8：它是**合并 + 可回滚**（原文进 compact_detail.absorbed），
+  //   掉召回还能整批回滚。采集这边一旦"判重就丢"，被误杀的**真经验再也找不回来**。
+  //   同一个判据，在"可回滚的合并"里成立，在"不可逆的丢弃"里不成立。
+  //
+  // 所以这里做两件本质不同的事：
+  //   · **精确重复** → bump hits（可证明无损，照旧走 C1 通道）
+  //   · **近重复**   → **照常写草稿**，只在 source_ref 里记一句"疑似与库内某条同义"，
+  //                   并给那条旧条目打 needs_review，让人看见"这两条可能是同一件事"
+  //   —— 机器不确定时标记不确定，而不是替人下结论。
+  const NEAR_DUP_THRESHOLD = 0.8;
+  const hitTexts = new Set<string>();
+  const fresh: Harvested[] = [];
+  /** 新候选文字 → 库里那条高度相似的原文（**只用于标注**，不用于丢弃） */
+  const nearLike = new Map<string, string>();
+  for (const c of cands) {
+    if (existing.has(c.text)) { hitTexts.add(c.text); continue; }
+    for (const t of existingTexts) {
+      if (isNearDuplicate(t, c.text, NEAR_DUP_THRESHOLD).dup) { nearLike.set(c.text, t); break; }
+    }
+    fresh.push(c);   // 无论如何都保留 —— 判据不可靠时，不许静默丢数据
+  }
 
   // ── [1021 C1] 重复遇到 = 真信号，不再静默丢掉 ──
   //
@@ -151,24 +185,35 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   const HITS_CAP = 20;
   let repeated = 0;
   if (!opts.dry) {
-    const dupTexts = new Set(cands.filter((c) => existing.has(c.text)).map((c) => c.text));
-    if (dupTexts.size) {
+    if (hitTexts.size) {
       const bump = gdb.prepare('UPDATE lessons SET hits = MIN(hits + 1, ?), updated_at = ? WHERE text = ?');
       const nowIso = new Date().toISOString();
-      for (const t of dupTexts) { bump.run?.(HITS_CAP, nowIso, t); repeated++; }
+      for (const t of hitTexts) { bump.run?.(HITS_CAP, nowIso, t); repeated++; }
+    }
+    // 近重复：给**库里那条旧经验**打待复核，不碰 status、不碰分数
+    if (nearLike.size) {
+      const mark = gdb.prepare('UPDATE lessons SET needs_review = 1, updated_at = ? WHERE text = ?');
+      const nowIso = new Date().toISOString();
+      for (const t of new Set(nearLike.values())) mark.run?.(nowIso, t);
     }
   }
 
   const report: HarvestReport = {
     scanned: msgs.length, found: cands.length, fresh: fresh.length, written: 0, notDraft: [],
-    repeated,
+    repeated, nearDup: nearLike.size,
     samples: fresh.slice(0, 20),
   };
   if (opts.dry || !fresh.length) return report;
 
   for (const c of fresh) {
     const input = {
-      text: c.text, quote: c.quote, sourceRef: c.sourceRef,
+      text: c.text, quote: c.quote,
+      // 近重复只做标注：让人在复核时看到"这条和库里某条可能是同一件事"，
+      // 由人来决定合并还是各自成立（机器判不可靠时不许替人下结论）
+      sourceRef: nearLike.has(c.text)
+        ? c.sourceRef + ' · 疑似与库内一条同义(阈值' + NEAR_DUP_THRESHOLD + ')，待人工判断是否合并: 「'
+          + String(nearLike.get(c.text) ?? '').slice(0, 60) + '」'
+        : c.sourceRef,
       route: c.role === 'user' ? 'user-message' : 'none',
       grade: c.level,
       // 有 domain ⇒ domain 级（同领域共享）；无 ⇒ project 级（仅本项目）
