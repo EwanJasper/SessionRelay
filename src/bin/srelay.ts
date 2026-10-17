@@ -222,6 +222,7 @@ program
   .option('--since <date>')
   .option('--until <date>')
   .option('--limit <n>', '默认 10')
+  .option('--global', '跨项目联邦检索（只读；默认只查本项目）')
   .option('--json', '机器格式')
   .action(async (q: string[], flags) => {
     const { cmdSearch } = await import('../cli/query.js');

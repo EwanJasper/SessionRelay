@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { searchSessions, type SearchHit, type SearchOptions } from './engine.js';
 import { registryCandidates } from '../shared/registry.js';
+import { loadConfig } from '../shared/config.js';
 import { dbFile } from '../shared/paths.js';
 
 /**
@@ -41,7 +42,12 @@ export interface NamespacedHit extends SearchHit {
   projectName: string;
 }
 
-export interface NamespaceSearchOptions extends SearchOptions {
+/**
+ * 注意 project 在检索选项里是**可选**且**不对外**的：每个项目库都有自己的 project_id，
+ * 联邦检索时必须用**那个库自己的**身份去查，不能把调用方的 project 套到别人的库上
+ * （否则 extraWhere/scope 会把别人的结果全过滤掉 —— 这是很容易写出"全局检索永远 0 条"的坑）。
+ */
+export interface NamespaceSearchOptions extends Omit<SearchOptions, 'project'> {
   /** 'project'（默认，只查本库）| 'global'（跨库联邦，只读） */
   mode?: NamespaceMode;
   /** project 模式必填：要查哪个项目 */
@@ -144,7 +150,11 @@ export function searchNamespaced(opts: NamespaceSearchOptions): {
     try {
       // **只读**打开：联邦检索绝不能顺手迁移别人的库
       db = new Database(file, { readonly: true, fileMustExist: true });
-      const hits = searchSessions(db as never, { ...opts, limit });
+      // 用**该库自己的** project_id（读它自己的 config）；读不到就退回用 root。
+      // 绝不能用调用方的 project —— 那会让别人的库把所有结果过滤光。
+      let ownProject = t.root;
+      try { ownProject = loadConfig(t.root).identity?.project_id ?? t.root; } catch { /* 配置坏了就用 root */ }
+      const hits = searchSessions(db as never, { ...opts, project: ownProject, limit });
       groups.push({ projectRoot: t.root, projectName: t.name, hits });
     } catch (e) {
       failed.push({ projectRoot: t.root, reason: String((e as Error).message).slice(0, 60) });
