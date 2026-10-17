@@ -17,10 +17,14 @@
 
 你和 AI 聊了 3 天的方案，不应该随关窗消失。它属于项目，属于下一个接手的人。
 
-## 本 fork 的差异（rui08984-dot/SessionRelay）
+## 关于本仓库
 
-> 上游：[EwanJasper/SessionRelay](https://github.com/EwanJasper/SessionRelay)。本仓库是**功能增强型 fork**，
-> 内核架构未改，改动集中在「让它真的能用起来」的那几处。
+> **独立维护**：https://github.com/rui08984-dot/SessionRelay
+>
+> 本项目起源于 [EwanJasper/SessionRelay](https://github.com/EwanJasper/SessionRelay)（MIT），
+> 但**已独立演进** —— 代码、文档、工具面、缺陷修复都不再跟随上游。
+> 遇到问题请提到**本仓库**的 Issues，不要去上游问。
+
 
 ### 能力补齐
 
@@ -49,7 +53,7 @@
 ### 怎么用
 
 上游的安装与使用方式完全不变，见下方[快速开始](#快速开始)。
-本 fork 额外提供 DSH 面板插件与 ZCode 适配器（`integrations/` 目录）。
+本仓库额外提供 **DSH 面板插件**与 **ZCode 适配器**（`integrations/` 目录）。
 
 ## 60 秒演示
 
@@ -350,7 +354,7 @@ npm install -g @ewanjasper/sessionrelay
 npx @ewanjasper/sessionrelay init
 
 # 方式三：从源码
-git clone https://github.com/EwanJasper/SessionRelay.git
+git clone https://github.com/rui08984-dot/SessionRelay.git
 cd SessionRelay && npm install && npm run build && npm link
 ```
 
@@ -563,4 +567,4 @@ module.exports = {
 
 ## License
 
-MIT © 2026 EwanJasper
+MIT © 2026 EwanJasper（原作）· rui08984-dot（本仓库维护）
