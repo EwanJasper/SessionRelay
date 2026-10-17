@@ -597,6 +597,9 @@ export interface PanelGraph {
   root: string; generatedAt: string; ok: boolean; error: string | null;
   stats: { tags: number; edges: number; sessions: number; builtAt: string | null; builtSessions: number | null; stale: boolean };
   hubs: PanelGraphTag[];
+  /** [1021] 力导向图：节点（标签）+ 边（共现）。nodes 里的 id 是 graph_tags.id，links 的 a/b 是 nodes 数组下标。 */
+  nodes: Array<{ id: number; name: string; kind: string; sessions: number; degree: number }>;
+  links: Array<{ a: number; b: number; w: number }>;
   roleNote: string;
 }
 
@@ -605,11 +608,13 @@ export function panelGraph(root: string, limit = 20): PanelGraph {
     root, generatedAt: new Date().toISOString(), ok: false, error: null,
     stats: { tags: 0, edges: 0, sessions: 0, builtAt: null, builtSessions: null, stale: false },
     hubs: [],
+    nodes: [],
+    links: [],
     roleNote: '图谱默认不参与检索（实测对召回零收益）。这里用它追溯「哪些会话围绕同一个东西」。',
   };
   const f = dbFile(root);
   if (!fs.existsSync(f)) { out.error = '这个项目还没有库文件'; return out; }
-  type Got = { tags: number; edges: number; sess: number; builtAt: string | null; builtSessions: number | null; stale: boolean; hubs: Array<{ name: string; sessions: number; degree: number }> };
+  type Got = { tags: number; edges: number; sess: number; builtAt: string | null; builtSessions: number | null; stale: boolean; hubs: Array<{ name: string; sessions: number; degree: number }>; nodes: Array<{ id: number; name: string; kind: string; sessions: number; degree: number }>; links: Array<{ a: number; b: number; w: number }> };
   const got = withDb(f, (db): Got | null => {
     const has = (t: string): boolean => { try { db.prepare('SELECT 1 FROM ' + t + ' LIMIT 1').get(); return true; } catch { return false; } };
     if (!has('graph_tags')) return null;
@@ -633,8 +638,35 @@ export function panelGraph(root: string, limit = 20): PanelGraph {
       + ' LEFT JOIN graph_tag_edges e ON e.a = t.id'
       + ' GROUP BY t.id ORDER BY sessions DESC, degree DESC LIMIT ?',
     ).all(limit) as Array<{ name: string; sessions: number; degree: number }>;
+    // ── 力导向图数据（[1021] 图谱页要做成节点+连线，光有 hubs 列表画不出网络）──
+    //   节点取"被最多会话用到"的前 N 个；边只取**两端都在节点集里**的，
+    //   全量 44617 条边既渲染不动也没意义（弱边全是噪声）。
+    const nodeLimit = Math.max(60, Math.min(200, limit * 5));
+    let nodes: Array<{ id: number; name: string; kind: string; sessions: number; degree: number }> = [];
+    let links: Array<{ a: number; b: number; w: number }> = [];
+    try {
+      nodes = db.prepare(
+        "SELECT t.id AS id, t.name AS name, COALESCE(t.kind, '') AS kind,"
+        + " COUNT(DISTINCT ts.session_id) AS sessions, COALESCE(t.df, 0) AS degree"
+        + " FROM graph_tags t LEFT JOIN graph_tag_sessions ts ON ts.tag_id = t.id"
+        + " GROUP BY t.id ORDER BY sessions DESC, degree DESC LIMIT ?",
+      ).all(nodeLimit) as typeof nodes;
+      if (nodes.length) {
+        const idx = new Map<number, number>();
+        nodes.forEach((n, i) => idx.set(Number(n.id), i));
+        const ids = Array.from(idx.keys());
+        const ph = ids.map(() => '?').join(',');
+        const rows = db.prepare(
+          "SELECT a, b, w FROM graph_tag_edges WHERE a IN (" + ph + ") AND b IN (" + ph + ")"
+          + " ORDER BY w DESC LIMIT 1200",
+        ).all(...ids, ...ids) as Array<{ a: number; b: number; w: number }>;
+        links = rows
+          .map((r) => ({ a: idx.get(Number(r.a)) as number, b: idx.get(Number(r.b)) as number, w: Number(r.w) || 0 }))
+          .filter((l) => typeof l.a === 'number' && typeof l.b === 'number' && l.a !== l.b);
+      }
+    } catch { /* 图画不出来不影响统计与枢纽榜：退化成空图，不静默改别的结果 */ }
     const stale = builtSessions === null ? true : builtSessions !== sess;
-    return { tags, edges, sess, builtAt, builtSessions, stale, hubs };
+    return { tags, edges, sess, builtAt, builtSessions, stale, hubs, nodes, links };
   },
   // ⚠️ [1021] **必须传 onError**：不传时 withDb 把异常吞成 null，于是「查询报错」和「没建过图谱」
   //   长得一模一样。上面那个 `e.tag_b` 列名错误（真实列是 `a`/`b`/`w`）就靠这个躲了一整个版本，
@@ -646,6 +678,8 @@ export function panelGraph(root: string, limit = 20): PanelGraph {
   }
   out.ok = true;
   out.stats = { tags: got.tags, edges: got.edges, sessions: got.sess, builtAt: got.builtAt, builtSessions: got.builtSessions, stale: got.stale };
+  out.nodes = (got.nodes || []).map((n) => ({ id: Number(n.id), name: String(n.name ?? ''), kind: String(n.kind ?? ''), sessions: Number(n.sessions ?? 0), degree: Number(n.degree ?? 0) }));
+  out.links = (got.links || []).map((l) => ({ a: Number(l.a), b: Number(l.b), w: Number(l.w ?? 0) }));
   out.hubs = got.hubs.map((h) => ({ name: String(h.name ?? ''), sessions: Number(h.sessions ?? 0), degree: Number(h.degree ?? 0) }));
   return out;
 }
