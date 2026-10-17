@@ -5,8 +5,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { open } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tailCompleteLines } from '../claude-code/tailer.js';
 import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult } from '../types.js';
+
+/** 前缀连续性检查窗口（字节）。256B 足以区分任何真实重写，又是 O(1) 读 */
+const TAIL_PROBE_BYTES = 256;
 
 export const SOURCE_ID = 'codex';
 
@@ -123,9 +128,54 @@ export function parseLine(lineText: string, lineNo: number):
   };
 }
 
+/**
+ * 已消费前缀的"尾部指纹"：offset 前最后 TAIL_PROBE_BYTES 个字节的 sha1（O(256B)/次）。
+ *
+ * [1021 · 适配器附加检查] 回答"文件被重写/截断时 offset 会不会漏读/错读"：
+ *   · **截断（长度变短）**：已由共享 tailer 的 `detectRewrite(size < offset)` 兜住
+ *     （claude-code/codex/qoder 共用；探针实测：截断后 readNew 从头重读，offset 归位）。
+ *   · **原地重写（内容变了但长度 ≥ offset）**：tailer 只认"变小"，看不出来；于是 offset
+ *     停在新文件中间，**重写后的前半段永远读不到**，而且没有任何告警。
+ *     实测（假数据）：4 行 → 重写成 5 行再追加 1 行，readNew 只吐出「重写乙/丙/丁/新追加」，
+ *     「重写甲」永久丢失。
+ *   · 为什么不用"offset-1 必须是 '\n'"那种边界检查：实测它会**巧合命中** ——
+ *     重写后各行长度相近，offset 恰好落在新文件的行边界上，照样漏读。
+ *     改用"前缀尾部 256B 指纹"：append-only 时这段字节不变；被重写则必然变。
+ *   ⚠️ 这是**前缀连续性**检查，不是 detectRewrite 的第二份实现（大小比较仍只有 tailer 那一份）。
+ *     它目前只装在 Codex 这条线上；claude-code/qoder 有同样风险，正确归宿是搬进 tailer.ts
+ *     （三个适配器共用）——那不在本次写权限内，已在交付说明里登记。
+ */
+async function readTailProbe(filePath: string, offset: number): Promise<string | null> {
+  if (offset <= 0) return '';
+  const start = Math.max(0, offset - TAIL_PROBE_BYTES);
+  const len = offset - start;
+  const fh = await open(filePath, 'r');
+  try {
+    const b = Buffer.alloc(len);
+    const { bytesRead } = await fh.read(b, 0, len, start);
+    if (bytesRead < len) return null;   // 文件比 offset 还短 = 被截断（那条判据归 tailer）
+    return createHash('sha1').update(b.subarray(0, bytesRead)).digest('hex').slice(0, 16);
+  } finally {
+    await fh.close();
+  }
+}
 export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<ReadResult> {
-  const cur = (cursor ?? {}) as { offset?: number; lines?: number };
-  const t = await tailCompleteLines(ds.sourceFile, cur.offset ?? 0, cur.lines ?? 0);
+  const cur = (cursor ?? {}) as { offset?: number; lines?: number; rewrites?: number; tailHash?: string | null };
+  let offset = cur.offset ?? 0;
+  let consumed = cur.lines ?? 0;
+  let rewrites = cur.rewrites ?? 0;
+  // 原地重写检测（见 readTailProbe 注释）：已消费前缀的尾部指纹变了 ⇒ 整文件重读、行号归零
+  // （seqNum = 行号，重写后必须重排）。留痕：rewrites 计数写进游标，source_files.cursor 里看得见。
+  if (offset > 0 && typeof cur.tailHash === 'string') {
+    const nowProbe = await readTailProbe(ds.sourceFile, offset);
+    if (nowProbe !== null && nowProbe !== cur.tailHash) {
+      offset = 0;
+      consumed = 0;
+      rewrites += 1;
+    }
+  }
+  const t = await tailCompleteLines(ds.sourceFile, offset, consumed);
+  const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;
   for (const l of t.lines) {
@@ -133,7 +183,7 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
     if (r.kind === 'message') messages.push(r);
     else if (r.kind === 'bad') bad++;
   }
-  return { messages, badLines: bad, cursor: { offset: t.newOffset, lines: t.consumedLineCount } };
+  return { messages, badLines: bad, cursor: { offset: t.newOffset, lines: t.consumedLineCount, rewrites, tailHash } };
 }
 
 // ── 统一接口导出 ──
