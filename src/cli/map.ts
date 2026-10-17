@@ -1270,6 +1270,18 @@ function upgradeHatchedMap(root: string, existing: { page: MapPage; revision: st
   return { ok: true, imported: nodes.length, skipped: built.value.skipped, note: '已补齐分层与依赖边：' + hatchNote(nodes.length, layers.length, edges.length, unresolved, ambiguous).replace('已自动孵化 ', '') };
 }
 
+/** 现存 `kb-N` 里最大的 N + 1（id 必须符合 /^[a-z0-9][a-z0-9-]{0,63}$/ —— 下划线非法）。 */
+// 为什么不是「用第几个就说几」：那是原写法，撞名时拼 `_x` 直接非法 ⇒ REFUSED ⇒ 整批操作被拒 ⇒
+//   此后新增与状态同步**永久停摆**（红队实测 3/3）。序号从现存最大值续，天然不撞。
+function nextKbIndex(usedIds: Set<string>): number {
+  let max = 0;
+  for (const id of usedIds) {
+    const m = /^kb-(\d+)$/.exec(id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
 /** 收件箱层：progress.md 新增行落在这里，**不改动任何已有层的结构**。 */
 const INBOX_LAYER_ID = 'inbox';
 const INBOX_LAYER_NAME = '收件箱（progress.md 新增，未分层）';
@@ -1316,12 +1328,21 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       const have = byLabel.get(label);
       if (have) {
         matched++;
-        if (have.status !== want) statusOps.push({ id: have.id, status: want });
+        // ⚠️ **不反推 status**（2026-10-18 红队实测打回）：
+        //   文档 docs/map-cli.md:415 明写「想让下一场会话看见什么，就写进地图的 context.next 与节点状态，
+        //   而不是去手改 progress.md」，:410 也写「投影不改地图里的 status」。
+        //   而原实现每轮拿看板状态覆盖地图状态 ⇒ 用户按文档改的地图状态，下一轮被静默改回。
+        //   地图是**结构真值**，看板只是它的一个投影；反推等于让投影反过来定义真值。
+        //   （同理 statusOps 恒空，statusFixed 保留只为返回结构稳定。）
         continue;
       }
       if (fresh.length >= MAX_ADD_PER_ROUND) continue;
-      let id = 'kb' + String(fresh.length + 1);
-      while (usedIds.has(id)) id = id + '_x';
+      // ⚠️ id 必须符合 MAP_ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/ —— **下划线非法**。
+      //   原写法 'kb1' 撞名时拼成 'kb1_x' ⇒ 被 REFUSED ⇒ 整批操作被拒 ⇒ 此后新增与状态同步永久停摆。
+      //   实测 3/3：hatch → 加行1 成功 → 加行2 REFUSED → 之后纯状态变更也 ok=false。
+      //   现在从「现存 kb-N 的最大序号 + 1」开始编号，短横线合法。
+      const nextKb = nextKbIndex(usedIds);
+      const id = 'kb-' + String(nextKb);
       usedIds.add(id);
       fresh.push({ id, label, layer: INBOX_LAYER_ID, status: want });
     }

@@ -59,13 +59,16 @@ describe('看板 → 地图增量同步', () => {
     expect(kept).toBe(ranksBefore);
   });
 
-  it('看板状态变了 ⇒ 图里节点状态跟着变（而不只是新增）', () => {
+  it('★ 看板状态变了 ⇒ 地图节点状态**不跟着变**（地图是结构真值，投影不能反过来定义它）', () => {
     const d = mk([['甲', '🔄 进行中']]);
     hatchMapFromKanban(d);
+    const beforeStatus = pageOf(d).page.nodes.find((n) => n.label === '甲').status;
     fs.writeFileSync(path.join(d, 'progress.md'), kanban([['甲', '✅ 完成']]));
     const r = syncMapFromKanban(d);
-    expect(r.statusFixed).toBe(1);
-    expect(pageOf(d).page.nodes.find((n) => n.label === '甲').status).toBe('done');
+    // 红队实测打回的设计冲突：docs/map-cli.md 明写「投影不改地图里的 status」，
+    //   而原实现每轮拿看板状态覆盖地图 ⇒ 用户按文档改的地图状态下一轮被静默改回。
+    expect(r.statusFixed).toBe(0);
+    expect(pageOf(d).page.nodes.find((n) => n.label === '甲').status).toBe(beforeStatus);
   });
 
   it('★ 看板行消失 ⇒ 不删节点（删是人的决定）', () => {
@@ -104,5 +107,20 @@ describe('看板 → 地图增量同步', () => {
     expect(r.added).toBe(0);
     expect(r.note).toContain('结构图');
     expect(pageOf(d).page.nodes.map((n) => n.label)).not.toContain('丁事');
+  });
+
+
+  it('★ 两波新增：id 不会撞（原病：kb1 撞名拼成 kb1_x，非法 id 整批被拒，此后永久停摆）', () => {
+    const d = mk([['甲', '✅']]);
+    hatchMapFromKanban(d);
+    fs.writeFileSync(path.join(d, 'progress.md'), kanban([['甲', '✅'], ['第一波', '✅']]));
+    expect(syncMapFromKanban(d).added).toBe(1);
+    fs.writeFileSync(path.join(d, 'progress.md'), kanban([['甲', '✅'], ['第一波', '✅'], ['第二波', '✅']]));
+    const r = syncMapFromKanban(d);
+    expect(r.ok, '第二波必须成功 —— 原病是 REFUSED 后永久停摆').toBe(true);
+    expect(r.added).toBe(1);
+    const ids = pageOf(d).page.nodes.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((x) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(x)), 'id 必须符合 MAP_ID_RULE').toBe(true);
   });
 });

@@ -197,7 +197,18 @@ export function syncKanbanAuto(root: string, cfg: RelayConfig): { ok: boolean; r
     const fresh = [...proj.rows, ...renderTodoRows(todos).filter((r) => !seen.has(normTask(r[0])))]
     const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/)
     const isSep = (l: string) => /^\|[-\s|:]+\|$/.test(l.trim())
-    const isAuto = (l: string) => l.trim().startsWith('|') && (l.includes(AUTO_MODULE) || l.includes(MAP_MODULE))
+    // ⚠️ 判据必须是**模块列精确匹配**，不能整行子串（2026-10-18 红队实测打回）：
+    //   原写法 `l.includes(AUTO_MODULE)` 只看「这一行里有没有 auto:todos 这几个字」——
+    //   于是人写的计划只要**提到**它就被当成机器行整行删掉，不可恢复。
+    //   实测：`| 清理 auto:todos 遗留行 | 🔄 进行中 | core | 这条是人的计划，别删 |` → 整行消失（1→0）。
+    //   同文件 :335 那处用的是模块列精确判断 —— 判据只许有一份，这里对齐它。
+    const isAuto = (l: string) => {
+      const t = l.trim()
+      if (!t.startsWith('|')) return false
+      const c = t.split('|')
+      const mod = (c[3] ?? '').trim()
+      return mod === AUTO_MODULE || mod === MAP_MODULE
+    }
     // 自动行插在**表格末尾**（而不是表头之后）：
     // 实测插在开头会把人写的行挤出简报的 2 个名额（简报只读 🔄/⛔ 且按文件顺序取前 2 行）——
     // 人写的项目级计划优先，自动的细粒度待办排后面。
