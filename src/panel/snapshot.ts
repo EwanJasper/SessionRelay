@@ -225,12 +225,20 @@ export function panelLifecycle(): PanelLifecycle {
 }
 
 /** 守护是否在线：注册表心跳**或**任一项目锁新鲜即为在线 */
-export function watchdogOnline(nowMs = Date.now()): { online: boolean; ageMs: number | null } {
+export function watchdogOnline(nowMs = Date.now()): { online: boolean; ageMs: number | null; readError: string | null } {
   const f = globalDbFile();
   let ageMs: number | null = null;
+  // ⚠️ [1021 后端红队 N3] 这里原来是 `withDb(f, ..., () => undefined)` —— 错误被吞成 undefined。
+  //   而本函数的判决是「读不到心跳 = 离线」⇒ **「库打不开」被渲染成了「守护没在跑」**。
+  //   这和图谱那个 bug 是同一形状：把「我不知道」说成「是/否」。触发面：global.sqlite 被独占/损坏/schema 旧。
+  //   现在把读错误单独带出来，调用方（面板 / diagnostics）能区分「离线」与「读不到」。
+  let readError: string | null = null;
   if (fs.existsSync(f)) {
-    const got = withDb(f, (db) => heartbeatAgeMs(db as unknown as LifecycleDb, 'watch'), () => undefined);
+    const got = withDb(f, (db) => heartbeatAgeMs(db as unknown as LifecycleDb, 'watch'),
+      (msg) => { readError = '读全局心跳失败：' + String(msg).slice(0, 160); });
     ageMs = typeof got === 'number' ? got : null;
+  } else {
+    readError = '全局库不存在：' + String(f).slice(0, 120);
   }
   // ── [1021] 判活改成 **OR**，治「重启后前 1~3 分钟面板必显示离线」──
   //
@@ -244,14 +252,14 @@ export function watchdogOnline(nowMs = Date.now()): { online: boolean; ageMs: nu
   //   · 注册表（60s 一拍）负责**全局** —— 覆盖已有锁文件但没登记的旧项目。
   //   两者都是「pid 活着 + 心跳新鲜」，所以放宽不会把真死判成活。
   const registryFresh = registryHeartbeatFresh(ageMs);
-  if (registryFresh) return { online: true, ageMs };
+  if (registryFresh) return { online: true, ageMs, readError };
   let lockFresh = false;
   try {
     for (const c of registryCandidates()) {
       if (isDaemonAlive(c.root).alive) { lockFresh = true; break; }
     }
   } catch { /* 注册表读不到就只信注册表心跳 */ }
-  return { online: lockFresh, ageMs };
+  return { online: lockFresh, ageMs, readError };
 }
 
 // ─────────────────────────── 总览 ───────────────────────────

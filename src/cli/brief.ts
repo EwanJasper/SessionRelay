@@ -28,12 +28,23 @@ export interface BriefPayload {
   unresolved: UnresolvedRow[];
   counts: { decisions: number; decisionsRaw?: number; folded?: number; unresolved: number };
   recentFiles: RecentFileRow[];
-  /** 🌍 全局经验（两道闸 + 预算后；没命中就是空数组，客户端应整段不渲染） */
+  /**
+   * 🌍 全局经验（**两道闸 + 预算**后；没命中就是空数组，客户端应整段不渲染）
+   *
+   * ⚠️ [1021 后端红队 N1] 这里原来写「两道闸」，而**实际只过了一道**：
+   *   `pickForInjection` 的相关性闸需要 `query`，本仓调用时**没传**。
+   *   实测后果（同一时刻同一库）：ZCode（走 CLI）注入 3 条、DSH（传了 lastUserMessage）注入 2 条，
+   *   **两组内容零交集**，而两侧注释都声称已过两道闸。
+   *
+   * 语义上这不是错：ZCode 的钩子是 SessionStart，此刻**还没有用户输入**，没有 query 只能按分数取。
+   * 错的是注释把「有条件」说成「无条件」。现在：① 注释改实话；
+   * ② `collectBrief` 接受 `query`，让**有上下文**的调用方真能把闸 2 打开。
+   */
   experiences: Array<{ text: string; scope: string; grade: string }>;
 }
 
 /** 纯取数（不碰 CLI / 不开库）——便于单测与组件复用 */
-export function collectBrief(db: DB, projectId: string, opts: { limit?: number; days?: number; top?: number } = {}, root?: string): BriefPayload {
+export function collectBrief(db: DB, projectId: string, opts: { limit?: number; days?: number; top?: number; query?: string } = {}, root?: string): BriefPayload {
   const limit = opts.limit ?? 200;
   // 呈现层折叠（ADR-003 D3）：近重复只折叠"这一次显示"，存储一条不动 —— 简报里 5 个名额
   // 应该给 5 件不同的事，而不是同一件事说 3 遍。判据复用核心 isNearDuplicate（含长度比门，
@@ -121,7 +132,7 @@ export async function cmdBrief(opts: { limit?: number; days?: number; top?: numb
 }
 
 /** 经验段的取数：**没命中就返回空数组**，由调用方决定整段渲不渲染 */
-function collectExperiences(root: string, opts: { top?: number; maxChars?: number }): Array<{ text: string; scope: string; grade: string }> {
+function collectExperiences(root: string, opts: { top?: number; maxChars?: number; query?: string }): Array<{ text: string; scope: string; grade: string }> {
   try {
     const db = openGlobal();
     try {
@@ -130,6 +141,10 @@ function collectExperiences(root: string, opts: { top?: number; maxChars?: numbe
       const rows = pickForInjection(db, {
         workspaceId: resolveWorkspaceId(root),
         domain: resolveDomain(root),
+        // [1021 红队 N1] 有 query 就传 —— 传了才会开「相关性闸」，与 DSH 侧走同一条路径。
+        //   没有（SessionStart 场景）就保持 undefined：那时确实无从判断相关性，
+        //   按分数取是唯一诚实的选择。**关键是这个区别现在在类型上看得见了**。
+        query: opts.query && opts.query.trim() ? opts.query.trim() : undefined,
         top: opts.top ?? 3,
         maxChars: opts.maxChars ?? 200,
       });
