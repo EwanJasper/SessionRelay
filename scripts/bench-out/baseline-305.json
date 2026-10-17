@@ -1,0 +1,3177 @@
+{
+  "at": "2026-10-17T22:44:58.611Z",
+  "dbPath": "D:/dsh插件  记忆/tmp/graph-bench-snapshot.sqlite",
+  "rewrite": true,
+  "limit": 10,
+  "acc": {
+    "K": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "S": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "M": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ks": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ss": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ms": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ke": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Se": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Me": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "R": {
+      "n": 105,
+      "h1": 16,
+      "h3": 30,
+      "h10": 60,
+      "satTop1": 3
+    },
+    "X": {
+      "n": 95,
+      "h1": 5,
+      "h3": 13,
+      "h10": 29,
+      "satTop1": 1
+    },
+    "T": {
+      "n": 105,
+      "h1": 14,
+      "h3": 25,
+      "h10": 50,
+      "satTop1": 0
+    },
+    "toJSON": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    }
+  },
+  "knobs": {
+    "semantic": false,
+    "threshold": 0.4,
+    "reserve": 3,
+    "topk": 5,
+    "dtype": null,
+    "fusion": "default",
+    "lengthnorm": true,
+    "expand": false,
+    "tagreserve": 0,
+    "taghops": 1,
+    "tagterms": 4,
+    "tagfusion": false
+  },
+  "expStats": {
+    "n": 0,
+    "seeded": 0,
+    "expanded": 0,
+    "terms": 0,
+    "pathHits": 0,
+    "ms": 0,
+    "baseMs": 90964,
+    "sample": []
+  },
+  "semReady": false,
+  "semWhy": "",
+  "rows": [
+    {
+      "arm": "R",
+      "query": "微调那摊子事的唯一入口是哪份文件",
+      "target": "734f3cc50b8c2fe2",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 122
+    },
+    {
+      "arm": "R",
+      "query": "给那个编辑器列的问题清单，最高优先级那条是什么",
+      "target": "54e4846d58a21971",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 55
+    },
+    {
+      "arm": "R",
+      "query": "每开一个会话就起一个服务还不管回收，这个毛病在清单里排第几",
+      "target": "646f6bd8b9b63e88",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 457
+    },
+    {
+      "arm": "R",
+      "query": "编辑器那边六个部分的问题按优先级处理到哪了",
+      "target": "d5c9843eb13e5388",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 34
+    },
+    {
+      "arm": "R",
+      "query": "视频里说权重不发放，只给复现步骤和工具包",
+      "target": "9d9501d267abd345",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 12
+    },
+    {
+      "arm": "R",
+      "query": "folia 发现页那份交接收尾的活",
+      "target": "0eed0a09f936bde0",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 24
+    },
+    {
+      "arm": "R",
+      "query": "十七号那份新入口交接，开头三读是哪几节",
+      "target": "a6095702661ffbc5",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 486
+    },
+    {
+      "arm": "R",
+      "query": "按最新入口文档续作，要先自查哪一节",
+      "target": "5407c1efae4428dd",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "R",
+      "query": "网上有没有大而全的提示词合集，挑热门口碑好的",
+      "target": "e0f4823cd52a9162",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 477
+    },
+    {
+      "arm": "R",
+      "query": "qq 发现页那个交接接着往下做",
+      "target": "270161f5ca553fa7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 33
+    },
+    {
+      "arm": "R",
+      "query": "自己架模型和薅免费算力这件事，调研到哪一步了",
+      "target": "cd61ddb51cc5fd3d",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 27
+    },
+    {
+      "arm": "R",
+      "query": "语音把安装清单听成车票那次，是怎么纠正回来的",
+      "target": "f3657e3c176deb4c",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "R",
+      "query": "把前三轮提到的工具合并成一份能照抄的清单",
+      "target": "061b3409dd467317",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "R",
+      "query": "十月十五号那份总交接文件，先通读别动手",
+      "target": "ee28bbcac74d7410",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 481
+    },
+    {
+      "arm": "R",
+      "query": "那份主交接里准备的东西全看一遍，有一堆问题要问",
+      "target": "732adf1bc9055e9d",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 440
+    },
+    {
+      "arm": "R",
+      "query": "我那几台机器显卡够不够跑得动大模型",
+      "target": "5b58a704925ad3ac",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 457
+    },
+    {
+      "arm": "R",
+      "query": "那个模型融合项目的宣传片，三句话就让 AI 自己做完",
+      "target": "8a443ed202b2a683",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 417
+    },
+    {
+      "arm": "R",
+      "query": "阶跃那个接口的密钥和调用方式",
+      "target": "9d061832d5a139ce",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 19
+    },
+    {
+      "arm": "R",
+      "query": "状态栈那份交接文件里提到的文件都要看",
+      "target": "24ee14f4a9205dd1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 44
+    },
+    {
+      "arm": "R",
+      "query": "盆景二调优那份交接，逐个文件看",
+      "target": "f5dc58d9e667aef9",
+      "lex": 7,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 457
+    },
+    {
+      "arm": "R",
+      "query": "调优交接里提到的每个文件都得读",
+      "target": "c46b9d0c6250e858",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 25
+    },
+    {
+      "arm": "R",
+      "query": "盆景调优那件事接着做",
+      "target": "cc9566218c29eda9",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 306
+    },
+    {
+      "arm": "R",
+      "query": "github 上那个做闪光卡片的技能，帮我核实一下",
+      "target": "22d63be72905a369",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 32
+    },
+    {
+      "arm": "R",
+      "query": "结尾那段雪落满墓园的描写是哪部小说",
+      "target": "c0f6f811753ef8e6",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 380
+    },
+    {
+      "arm": "R",
+      "query": "机器人框架本机有两个实例，桌面图标点了没反应",
+      "target": "a55b4d958af4d0f7",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 435
+    },
+    {
+      "arm": "R",
+      "query": "我们这套不用接触就能接上上下文的框架，是不是真达标了",
+      "target": "68e7553a361907e7",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 23
+    },
+    {
+      "arm": "R",
+      "query": "那十二条需求方案是不是全接住了",
+      "target": "3086914cb95ac891",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 297
+    },
+    {
+      "arm": "R",
+      "query": "本地推理的批大小怎么调才吃到一千多 token 每秒",
+      "target": "f779b3c5888047e1",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 375
+    },
+    {
+      "arm": "R",
+      "query": "想做个记录奶茶好不好喝的手机应用，先看社区有没有模板",
+      "target": "68d0125e15aae888",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 19
+    },
+    {
+      "arm": "R",
+      "query": "从我的世界相关技能里挑几个，但先别真调用，只做规划",
+      "target": "5a6145ee1df11d65",
+      "lex": 8,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "R",
+      "query": "那只大嘴鸟蹬自行车的经典测试题，你画一个",
+      "target": "e86052317e440eed",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 316
+    },
+    {
+      "arm": "R",
+      "query": "去厦门玩三天，本地人才去的地方推荐",
+      "target": "eb32bf4fc514a757",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 376
+    },
+    {
+      "arm": "R",
+      "query": "提示词库里有没有能绕过限制的应急说法，只要找不要做",
+      "target": "40068e8a2f457d40",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "R",
+      "query": "那个编辑器什么时候开始免费开放的",
+      "target": "a220277a92acdd79",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "R",
+      "query": "所有硬盘都没空间了，查清楚但别删重要记录",
+      "target": "cb50ec73876412ce",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "R",
+      "query": "那个接口上挂的 flash 模型到底通不通",
+      "target": "e0aab165e65ea14c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 23
+    },
+    {
+      "arm": "R",
+      "query": "转发网关定时探活把免费次数烧光了",
+      "target": "a91d92bfe61da1fb",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 376
+    },
+    {
+      "arm": "R",
+      "query": "那个三合一编程工具的项目地址和接入方式",
+      "target": "400836d1d9b7510b",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 391
+    },
+    {
+      "arm": "R",
+      "query": "本地模型服务里有个视觉模型自己会起来偷显存",
+      "target": "c3a62be16af3e8b9",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 35
+    },
+    {
+      "arm": "R",
+      "query": "运维手册在哪，顺便说说整体什么状况",
+      "target": "32678c283eef26ae",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 12
+    },
+    {
+      "arm": "R",
+      "query": "全靠 AI 写代码的话，架构和品味是不是还得靠人",
+      "target": "e7a286f4167ab22e",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 352
+    },
+    {
+      "arm": "R",
+      "query": "命令行里敲某个命令提示不是内部或外部命令",
+      "target": "41e4fdb5b9512ea4",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "R",
+      "query": "那个讲天才思维方式有点不公平的视频",
+      "target": "59bc0d7106e159ff",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 359
+    },
+    {
+      "arm": "R",
+      "query": "那批角色扮演微调的实验数据够不够支撑一篇论文",
+      "target": "cacb49f09218dd6c",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "R",
+      "query": "什么东西隔一会儿就吃一下处理器和显卡",
+      "target": "356958fe2c807bef",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "R",
+      "query": "系统盘怎么又塞满了",
+      "target": "cee9bf412f264861",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 177
+    },
+    {
+      "arm": "R",
+      "query": "某个模型报未知字段 reasoning effort",
+      "target": "f78ffe84eb7bceca",
+      "lex": 8,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 14
+    },
+    {
+      "arm": "R",
+      "query": "可移植性那个分支要改哪些东西",
+      "target": "7d211565188ec63b",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "R",
+      "query": "提示词库里那些通用的越狱模板，随便拿一条给我看看",
+      "target": "0af62673368d886d",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "R",
+      "query": "怎么把环境事实和用户改口这两类信息抽出来",
+      "target": "98273a2560e4dc8a",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "R",
+      "query": "网关里配的那几个模型调不动",
+      "target": "b23082289e016ac8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 295
+    },
+    {
+      "arm": "R",
+      "query": "那个上下文插件里能用哪些智能体",
+      "target": "9b4998c18819c311",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 21
+    },
+    {
+      "arm": "R",
+      "query": "那个修图产品有没有开源替代，能不能反编译",
+      "target": "bbe0229c88709362",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 356
+    },
+    {
+      "arm": "R",
+      "query": "外接盘里这几天新加的照片在哪",
+      "target": "bac9779496c2cc8e",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 227
+    },
+    {
+      "arm": "R",
+      "query": "这一轮代码改动做对抗性审查，只查不改",
+      "target": "473adf91f642a899",
+      "lex": 7,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "R",
+      "query": "把模型换到这个端点就报不支持",
+      "target": "4914d7b7d2f63a89",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 24
+    },
+    {
+      "arm": "R",
+      "query": "给我一份方案要点，只读别改东西",
+      "target": "8dcfab7bdb856071",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 12
+    },
+    {
+      "arm": "R",
+      "query": "找出那些会让人悄无声息踩坑的缺陷",
+      "target": "774fb6b4793a4f15",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 241
+    },
+    {
+      "arm": "R",
+      "query": "只读调研还不许装依赖",
+      "target": "a36e4a22e3ff3cd0",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 9
+    },
+    {
+      "arm": "R",
+      "query": "跨会话记忆系统的项目根在哪，插件和记忆中间有空格",
+      "target": "972400837716c16e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 376
+    },
+    {
+      "arm": "R",
+      "query": "用网页给一只大嘴鸟蹬车做个动画",
+      "target": "29246406e4d4af63",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 365
+    },
+    {
+      "arm": "R",
+      "query": "能不能不靠小模型、纯用算法做摘要和检索",
+      "target": "28d4df393824ea02",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 379
+    },
+    {
+      "arm": "R",
+      "query": "同类产品有哪些，做个对比报告",
+      "target": "24f9724fc84f40f1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 12
+    },
+    {
+      "arm": "R",
+      "query": "只看一张界面图给设计意见",
+      "target": "aab2ea5a08283b8c",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 291
+    },
+    {
+      "arm": "R",
+      "query": "让人逐条判读准确率那次评审",
+      "target": "20da588beef538de",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 4
+    },
+    {
+      "arm": "R",
+      "query": "用挑刺的方式看这两批改动对不对",
+      "target": "faef416a2315a39a",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 7
+    },
+    {
+      "arm": "R",
+      "query": "目录名中间两个空格这事强调过吗",
+      "target": "22ea720ad2fe7300",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "R",
+      "query": "可视化界面的脚本是哪个文件，只允许改一处",
+      "target": "4edb2e852e6805f5",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 31
+    },
+    {
+      "arm": "R",
+      "query": "两个互不知情的评审分别看同一份代码",
+      "target": "d550fa3108d9a88e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 419
+    },
+    {
+      "arm": "R",
+      "query": "modmind 那个 stdio 程序路径在哪",
+      "target": "4ab918bd6310aaa8",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 19
+    },
+    {
+      "arm": "R",
+      "query": "把某条结论固定住一直显示的功能",
+      "target": "fd7a268a26d34847",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "R",
+      "query": "如果快离开世界会留下什么，结合整个工作区说说",
+      "target": "a54eac68b51a1c03",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 22
+    },
+    {
+      "arm": "R",
+      "query": "手机连电脑后共享网络不管用怎么调",
+      "target": "c483a0acd7cdefc5",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 9
+    },
+    {
+      "arm": "R",
+      "query": "系统盘只剩三个G了，帮我看看什么东西占着",
+      "target": "0f482250fa809f52",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 58
+    },
+    {
+      "arm": "R",
+      "query": "那个模型端点图片不响应但平台显示正常",
+      "target": "a08110930a5d22ad",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 29
+    },
+    {
+      "arm": "X",
+      "query": "给编辑器的问题清单在哪些会话里处理过",
+      "target": "54e4846d58a21971",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 21
+    },
+    {
+      "arm": "X",
+      "query": "十七号新入口交接在哪些开局里被用过",
+      "target": "a6095702661ffbc5",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 291
+    },
+    {
+      "arm": "X",
+      "query": "盆景二调优交接过几次手",
+      "target": "f5dc58d9e667aef9",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 233
+    },
+    {
+      "arm": "X",
+      "query": "十月十五号主交接被哪几次开局读过",
+      "target": "ee28bbcac74d7410",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 388
+    },
+    {
+      "arm": "X",
+      "query": "folia 发现页交接过几次",
+      "target": "0eed0a09f936bde0",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 11
+    },
+    {
+      "arm": "T",
+      "query": "十月七号那天开工说的微调唯一入口是哪份",
+      "target": "734f3cc50b8c2fe2",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 401
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号聊的那个编辑器起服务不回收的毛病",
+      "target": "646f6bd8b9b63e88",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 370
+    },
+    {
+      "arm": "T",
+      "query": "九月二十号那个视频里提到的复现说明",
+      "target": "9d9501d267abd345",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 349
+    },
+    {
+      "arm": "T",
+      "query": "十月五号那份发现页交接还有哪些收尾活",
+      "target": "0eed0a09f936bde0",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 388
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号那次开局是照哪份入口文档往下做的",
+      "target": "a6095702661ffbc5",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 374
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号那天在找什么样的提示词合集",
+      "target": "e0f4823cd52a9162",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 452
+    },
+    {
+      "arm": "T",
+      "query": "十月六号开始的那份本地部署可行性调研",
+      "target": "cd61ddb51cc5fd3d",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 406
+    },
+    {
+      "arm": "T",
+      "query": "十月四号那次语音听错字的澄清是怎么说的",
+      "target": "f3657e3c176deb4c",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 404
+    },
+    {
+      "arm": "T",
+      "query": "九月二十二号那份状态栈交接里都提了哪些文件",
+      "target": "24ee14f4a9205dd1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 432
+    },
+    {
+      "arm": "T",
+      "query": "九月十九号那份调优交接提到的东西",
+      "target": "c46b9d0c6250e858",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 383
+    },
+    {
+      "arm": "T",
+      "query": "十月九号核实的那个做闪光卡片的技能",
+      "target": "22d63be72905a369",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 430
+    },
+    {
+      "arm": "T",
+      "query": "九月二十四号画的那只鸟蹬车的测试题",
+      "target": "e86052317e440eed",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 341
+    },
+    {
+      "arm": "T",
+      "query": "九月二十一号核对的那十二条需求",
+      "target": "3086914cb95ac891",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 368
+    },
+    {
+      "arm": "T",
+      "query": "九月十七号查的那个机器人框架实例问题",
+      "target": "a55b4d958af4d0f7",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 463
+    },
+    {
+      "arm": "T",
+      "query": "九月三号晚上给一款饮品小店记账工具定下的整体观感基调是什么",
+      "target": "68d0125e15aae888",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 372
+    },
+    {
+      "arm": "X",
+      "query": "复古科技插画那套素材，在哪几个会话里都用上过",
+      "target": "68d0125e15aae888",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 409
+    },
+    {
+      "arm": "X",
+      "query": "桌面快捷方式指向的实例却打不开这件事，在哪几次会话里翻出来处理过",
+      "target": "a55b4d958af4d0f7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 18
+    },
+    {
+      "arm": "T",
+      "query": "九月十八号中午为了让长提示先跑得更快，最后定的是哪套启停参数",
+      "target": "f779b3c5888047e1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 417
+    },
+    {
+      "arm": "X",
+      "query": "本地起服务那套启停脚本，在哪几次会话里被改过",
+      "target": "f779b3c5888047e1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 24
+    },
+    {
+      "arm": "R",
+      "query": "那份讲小显存怎么榨推理速度的交接，排在最前面的待办是拿哪两个引擎互相比",
+      "target": "e640a0153c0833d8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 41
+    },
+    {
+      "arm": "T",
+      "query": "九月十八号深夜那份小显存推理优化的交接，里面还有哪些收尾没做",
+      "target": "e640a0153c0833d8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 445
+    },
+    {
+      "arm": "X",
+      "query": "三值量化那条技术路线，在几次会话里被讨论过",
+      "target": "e640a0153c0833d8",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 18
+    },
+    {
+      "arm": "T",
+      "query": "九月十八号半夜那个供应商报字段不支持，最后怎么绕过去的",
+      "target": "f78ffe84eb7bceca",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 432
+    },
+    {
+      "arm": "X",
+      "query": "上游不认思考强度这个字段导致连不上的毛病，在哪些会话里出现过",
+      "target": "f78ffe84eb7bceca",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 35
+    },
+    {
+      "arm": "T",
+      "query": "九月十八号傍晚那份盆景二续作交接，要求先把哪几类文件过一遍",
+      "target": "f5dc58d9e667aef9",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 478
+    },
+    {
+      "arm": "T",
+      "query": "九月十九号下午把那个没人用却按时自己爬起来的本地看图服务关掉的那次",
+      "target": "c3a62be16af3e8b9",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 629
+    },
+    {
+      "arm": "X",
+      "query": "本地看图档位定时自启、跟别的东西抢显存的问题，在哪几次会话里查过",
+      "target": "c3a62be16af3e8b9",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 461
+    },
+    {
+      "arm": "X",
+      "query": "盆景二那套调优交接收尾的活，在哪几次会话里被接着往下做",
+      "target": "c46b9d0c6250e858",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 387
+    },
+    {
+      "arm": "T",
+      "query": "九月二十号下午那次，问的是接入方里五十来个能力是不是按需加载",
+      "target": "cc9566218c29eda9",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 367
+    },
+    {
+      "arm": "X",
+      "query": "能力按需加载到底占不占上下文这件事，在哪几次会话里被讨论过",
+      "target": "cc9566218c29eda9",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "T",
+      "query": "九月二十号傍晚聊模型选型，最后挑中哪个端点自带看图本事",
+      "target": "9d061832d5a139ce",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 392
+    },
+    {
+      "arm": "X",
+      "query": "带看图能力的那个端点接进本地客户端的事，在哪几次会话里处理过",
+      "target": "9d061832d5a139ce",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 31
+    },
+    {
+      "arm": "X",
+      "query": "那套三值量化的推理框架，在哪些会话里被碰过",
+      "target": "9d9501d267abd345",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 11
+    },
+    {
+      "arm": "X",
+      "query": "把思考档位按场景分路的那份脚本，在哪几次会话里被改过",
+      "target": "3086914cb95ac891",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 413
+    },
+    {
+      "arm": "T",
+      "query": "九月二十一号上午系统盘再度告急，最后定位到哪个隐藏的交换文件",
+      "target": "cee9bf412f264861",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 404
+    },
+    {
+      "arm": "X",
+      "query": "系统盘被十几 G 的交换文件撑满这件事，在哪几次会话里查过",
+      "target": "cee9bf412f264861",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 449
+    },
+    {
+      "arm": "T",
+      "query": "九月二十一号下午那个中转端点报模型不存在，怎么查清它到底支持哪些",
+      "target": "4914d7b7d2f63a89",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 464
+    },
+    {
+      "arm": "X",
+      "query": "中转端点连不通的毛病，在哪几次会话里排查过",
+      "target": "4914d7b7d2f63a89",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 12
+    },
+    {
+      "arm": "T",
+      "query": "九月二十一号深夜那次，是怎么把偶发的后台占用抓出来的",
+      "target": "356958fe2c807bef",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 462
+    },
+    {
+      "arm": "X",
+      "query": "定时冒头的显卡占用，在哪几次会话里被查过",
+      "target": "356958fe2c807bef",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 447
+    },
+    {
+      "arm": "R",
+      "query": "那次只让把一份交接里点到的文件全看一遍、明确不许动手，是哪份材料",
+      "target": "afd5655523f19598",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 40
+    },
+    {
+      "arm": "T",
+      "query": "九月二十二号中午那份状态栈交接，只读不动手的那一回",
+      "target": "afd5655523f19598",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 449
+    },
+    {
+      "arm": "X",
+      "query": "状态系统那份文档，在哪几次会话里被读过",
+      "target": "24ee14f4a9205dd1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 24
+    },
+    {
+      "arm": "T",
+      "query": "九月二十二号中午那个中转端点回话只回一半，最后确认是不是我们接错",
+      "target": "e0aab165e65ea14c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 412
+    },
+    {
+      "arm": "T",
+      "query": "九月二十二号傍晚把限时免费的那家模型接进来，思考档位开到最大",
+      "target": "a220277a92acdd79",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 475
+    },
+    {
+      "arm": "X",
+      "query": "网关里接新模型的做法，在哪几次会话里用过",
+      "target": "a220277a92acdd79",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "T",
+      "query": "九月二十四号下午聊用 AI 写项目靠什么，顺手补了本机的技能速查",
+      "target": "e7a286f4167ab22e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 454
+    },
+    {
+      "arm": "X",
+      "query": "本机技能清单怎么补全这件事，在哪几次会话里提过",
+      "target": "e7a286f4167ab22e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "X",
+      "query": "那只骑车的鹈鹕，在几次会话里被画过",
+      "target": "e86052317e440eed",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 5
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号傍晚让做的那个单页动画，主角是哪种鸟在蹬车",
+      "target": "29246406e4d4af63",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 401
+    },
+    {
+      "arm": "X",
+      "query": "本地提示词库那套检索服务，在哪几次会话里被用过",
+      "target": "e0f4823cd52a9162",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 418
+    },
+    {
+      "arm": "R",
+      "query": "让人物出图的描述动笔之前，先被要求加载的那套规则该怎么称呼",
+      "target": "3f2b4f0b3b2f58d4",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 451
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号深夜那次室内人像描述改了几轮，最后落在什么观感上",
+      "target": "3f2b4f0b3b2f58d4",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 473
+    },
+    {
+      "arm": "X",
+      "query": "那个出图描述技能在哪几次会话里被加载过",
+      "target": "3f2b4f0b3b2f58d4",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 26
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号傍晚只让做规划、不许动手的那一次",
+      "target": "5a6145ee1df11d65",
+      "lex": 8,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 417
+    },
+    {
+      "arm": "X",
+      "query": "给执行代理派活之后自动续跑的机制，在哪几次会话里被提过",
+      "target": "5a6145ee1df11d65",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 31
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号傍晚排的那趟三天行程，住的是哪个区",
+      "target": "eb32bf4fc514a757",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 458
+    },
+    {
+      "arm": "X",
+      "query": "联网搜索那个工具在哪几次会话里被用过",
+      "target": "eb32bf4fc514a757",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 26
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号傍晚把网关每十分钟自查关掉的那次",
+      "target": "a91d92bfe61da1fb",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 423
+    },
+    {
+      "arm": "X",
+      "query": "网关隔一阵就自动检测、把人叫醒的毛病，在哪几次会话里处理过",
+      "target": "a91d92bfe61da1fb",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 464
+    },
+    {
+      "arm": "T",
+      "query": "九月二十五号傍晚三个盘一起爆红，最后清出去多少东西",
+      "target": "cb50ec73876412ce",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 422
+    },
+    {
+      "arm": "X",
+      "query": "那堆占地方的压缩包清理，在哪几次会话里做过",
+      "target": "cb50ec73876412ce",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 369
+    },
+    {
+      "arm": "T",
+      "query": "十月二号晚上从相机存储卡里挑出国庆头两天新拍的东西",
+      "target": "bac9779496c2cc8e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 351
+    },
+    {
+      "arm": "T",
+      "query": "十月二号晚上下载那个打包工具，后来嫌它没用又删干净",
+      "target": "400836d1d9b7510b",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 414
+    },
+    {
+      "arm": "X",
+      "query": "那个把 gemini 和门禁绕行拼起来的工具，在哪几次会话里被提到",
+      "target": "400836d1d9b7510b",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 408
+    },
+    {
+      "arm": "T",
+      "query": "十月二号晚上看开源模型融合插件的视频，并照着它调本地配置",
+      "target": "8a443ed202b2a683",
+      "lex": 7,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 423
+    },
+    {
+      "arm": "X",
+      "query": "开源模型融合插件这件事，在哪几次会话里被讨论过",
+      "target": "8a443ed202b2a683",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 31
+    },
+    {
+      "arm": "T",
+      "query": "十月二号深夜在本地词库里翻能破掉限制的急救词",
+      "target": "40068e8a2f457d40",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 387
+    },
+    {
+      "arm": "X",
+      "query": "那个开源越狱词库在哪几次会话里被检索过",
+      "target": "40068e8a2f457d40",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 18
+    },
+    {
+      "arm": "T",
+      "query": "十月二号傍晚照着运维手册查系统盘为什么满",
+      "target": "32678c283eef26ae",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 388
+    },
+    {
+      "arm": "X",
+      "query": "给 Docker 占盘设定期清理的定时任务，在哪几次会话里动过",
+      "target": "32678c283eef26ae",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 569
+    },
+    {
+      "arm": "R",
+      "query": "把一段口述整理成任务书，要求引擎参数全调一遍再接到哪两个地方",
+      "target": "99b7d699d665f586",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 475
+    },
+    {
+      "arm": "T",
+      "query": "十月二号晚上整理出来的那份调优任务书，要接进哪两个使用方",
+      "target": "99b7d699d665f586",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 450
+    },
+    {
+      "arm": "T",
+      "query": "十月四号傍晚核实那套云端与本地分工的方案，指出几处事实有错",
+      "target": "68e7553a361907e7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 453
+    },
+    {
+      "arm": "X",
+      "query": "零接触上下文接续的框架，在哪几次会话里被核过",
+      "target": "68e7553a361907e7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "X",
+      "query": "那几条做科研的工具链，在哪几次会话里被拼成整包方案",
+      "target": "f3657e3c176deb4c",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 399
+    },
+    {
+      "arm": "T",
+      "query": "十月四号晚上聊那个歌词可视化播放器能不能导入自己的歌",
+      "target": "c0f6f811753ef8e6",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 513
+    },
+    {
+      "arm": "X",
+      "query": "那个歌词可视化播放器的导入功能，在哪几次会话里被问过",
+      "target": "c0f6f811753ef8e6",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 460
+    },
+    {
+      "arm": "T",
+      "query": "十月四号深夜那份把可抄的工具并在一起的整包清单",
+      "target": "061b3409dd467317",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 487
+    },
+    {
+      "arm": "X",
+      "query": "把几轮聊到的工具并成一份能照抄的清单，在哪几次会话里做过",
+      "target": "061b3409dd467317",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "T",
+      "query": "十月五号深夜在本地词库里翻破甲的词，最后找到多少条",
+      "target": "0af62673368d886d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 461
+    },
+    {
+      "arm": "X",
+      "query": "越狱类词条在本地词库里到底有多少，在哪几次会话里查过",
+      "target": "0af62673368d886d",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 429
+    },
+    {
+      "arm": "T",
+      "query": "十月五号深夜问那款闭源修图软件和它的开源替代",
+      "target": "bbe0229c88709362",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 425
+    },
+    {
+      "arm": "T",
+      "query": "十月五号傍晚把那个供应商配置单独拆出来的改造",
+      "target": "a08110930a5d22ad",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 472
+    },
+    {
+      "arm": "X",
+      "query": "供应商配置单独拆出来这件事，在哪几次会话里动过",
+      "target": "a08110930a5d22ad",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 10
+    },
+    {
+      "arm": "T",
+      "query": "十月五号傍晚调研各平台免费算力额度的那一轮",
+      "target": "5b58a704925ad3ac",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 375
+    },
+    {
+      "arm": "X",
+      "query": "免费算力额度那轮调研，在哪几次会话里接着做过",
+      "target": "5b58a704925ad3ac",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 13
+    },
+    {
+      "arm": "R",
+      "query": "想找个体积小、开得快的本地文档阅读器，最后是在哪个装包渠道里核实体积和星数的",
+      "target": "de9bd2d4872b58e6",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 450
+    },
+    {
+      "arm": "T",
+      "query": "十月五号傍晚挑本地阅读器那次，看重哪几个指标",
+      "target": "de9bd2d4872b58e6",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 443
+    },
+    {
+      "arm": "X",
+      "query": "用装包渠道核实软件体积和活跃度这件事，在哪几次会话里做过",
+      "target": "de9bd2d4872b58e6",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 491
+    },
+    {
+      "arm": "X",
+      "query": "投机解码那条优化线，在哪几次会话里被调研过",
+      "target": "cd61ddb51cc5fd3d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "T",
+      "query": "十月六号晚上打招呼那次，回答里说本机跑的是哪个模型",
+      "target": "b23082289e016ac8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 533
+    },
+    {
+      "arm": "X",
+      "query": "那个闪速档的千问模型，在哪几次会话里被提到",
+      "target": "b23082289e016ac8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 568
+    },
+    {
+      "arm": "R",
+      "query": "渲染进程崩了之后，最早被点名要看的是哪份诊断材料",
+      "target": "ef00ec195e312052",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "T",
+      "query": "十月七号下午查渲染器崩溃那回，两份日志分别是几点",
+      "target": "ef00ec195e312052",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 403
+    },
+    {
+      "arm": "X",
+      "query": "那份被称作唯一入口的交接，在哪几次会话里被当开场材料",
+      "target": "734f3cc50b8c2fe2",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 364
+    },
+    {
+      "arm": "T",
+      "query": "十月七号深夜那次开场，入口备忘指向哪份文件",
+      "target": "41e4fdb5b9512ea4",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 370
+    },
+    {
+      "arm": "X",
+      "query": "那份完整版微调交接，在哪几次会话里被拿来当入口",
+      "target": "41e4fdb5b9512ea4",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "T",
+      "query": "十月七号深夜问的那个假设性问题：只剩一个月会留下什么",
+      "target": "a54eac68b51a1c03",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 455
+    },
+    {
+      "arm": "X",
+      "query": "阿德勒式的那套哲学陪伴技能，在哪几次会话里被加载过",
+      "target": "a54eac68b51a1c03",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 423
+    },
+    {
+      "arm": "T",
+      "query": "十月九号下午手机连电脑共享网络不通，最后怎么定位的",
+      "target": "c483a0acd7cdefc5",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 513
+    },
+    {
+      "arm": "X",
+      "query": "手机通过代理共享上网调不通的问题，在哪几次会话里查过",
+      "target": "c483a0acd7cdefc5",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 610
+    },
+    {
+      "arm": "X",
+      "query": "那个能生成闪光卡片的技能，在哪几次会话里被提到",
+      "target": "22d63be72905a369",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 39
+    },
+    {
+      "arm": "T",
+      "query": "十月十号深夜按那份问题清单的优先级开工",
+      "target": "54e4846d58a21971",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 565
+    },
+    {
+      "arm": "T",
+      "query": "十月十号深夜接着做发现页交接，缓存去重那块怎么定",
+      "target": "270161f5ca553fa7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 622
+    },
+    {
+      "arm": "X",
+      "query": "发现页那套分区构建脚本在哪几次会话里改过",
+      "target": "270161f5ca553fa7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 30
+    },
+    {
+      "arm": "T",
+      "query": "十月十号晚上解析那个英语视频，最后说它的核心是什么",
+      "target": "59bc0d7106e159ff",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 411
+    },
+    {
+      "arm": "X",
+      "query": "把站内视频的链接连字幕一起解析出来再提炼要点，在哪几次会话里做过",
+      "target": "59bc0d7106e159ff",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 472
+    },
+    {
+      "arm": "T",
+      "query": "十月十一号傍晚修那两个接不上的 MCP 服务器",
+      "target": "4ab918bd6310aaa8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 379
+    },
+    {
+      "arm": "X",
+      "query": "带 modmind 字样的那个接线服务，在哪几次会话里被修过",
+      "target": "4ab918bd6310aaa8",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 39
+    },
+    {
+      "arm": "T",
+      "query": "十月十二号下午审计微调实验数据能不能撑起一篇投稿",
+      "target": "cacb49f09218dd6c",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 556
+    },
+    {
+      "arm": "X",
+      "query": "角色扮演微调那批实验数据，在哪几次会话里被核过",
+      "target": "cacb49f09218dd6c",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 14
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号下午并行工作流里负责决策置顶的那一支",
+      "target": "fd7a268a26d34847",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 504
+    },
+    {
+      "arm": "X",
+      "query": "项目记忆库那个存放决策的数据库文件，在哪几次会话里被提过",
+      "target": "fd7a268a26d34847",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 640
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号下午负责移植性修复的那一支，最后动了哪个探测函数",
+      "target": "7d211565188ec63b",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 591
+    },
+    {
+      "arm": "X",
+      "query": "采集各来源的探测函数，在哪几次会话里被改过",
+      "target": "7d211565188ec63b",
+      "lex": 8,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号下午红队审查找出哪些会静默踩坑的真缺陷",
+      "target": "774fb6b4793a4f15",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 575
+    },
+    {
+      "arm": "X",
+      "query": "重算会话绕过清洗导致数据没变的那个教训，在哪几次会话里提过",
+      "target": "774fb6b4793a4f15",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 936
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号下午调研用算法替掉小模型做总结的那一支",
+      "target": "28d4df393824ea02",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 1259
+    },
+    {
+      "arm": "X",
+      "query": "记忆该按什么依据淘汰旧内容，在哪几次会话里被讨论过",
+      "target": "28d4df393824ea02",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 82
+    },
+    {
+      "arm": "R",
+      "query": "让把一份现状核对表逐行读成事实清单，每条要标出出自哪一节",
+      "target": "22119793e4f65f7c",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 47
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号傍晚那份核对表要求精读到第几行",
+      "target": "22119793e4f65f7c",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 1234
+    },
+    {
+      "arm": "R",
+      "query": "一次让读七份材料、每份都要压成一段可核对事实的那次任务",
+      "target": "2834f3824f9771dd",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 1009
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号傍晚七份文档一起精读，最后交的是什么",
+      "target": "2834f3824f9771dd",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 709
+    },
+    {
+      "arm": "X",
+      "query": "那份十三号的主交接文档，在哪几次会话里被当材料读",
+      "target": "2834f3824f9771dd",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 628
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号晚上调研怎么抽出环境事实和更正这两类信息",
+      "target": "98273a2560e4dc8a",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 532
+    },
+    {
+      "arm": "X",
+      "query": "开场简报该不该带上机器硬件约束，在哪几次会话里讨论过",
+      "target": "98273a2560e4dc8a",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号晚上红队审查那轮改动，最后点出哪些问题",
+      "target": "473adf91f642a899",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 570
+    },
+    {
+      "arm": "X",
+      "query": "把检索用的文本收口成同一条路的那次重构，在哪几次会话里被审过",
+      "target": "473adf91f642a899",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 565
+    },
+    {
+      "arm": "T",
+      "query": "十月十四号深夜按那份问题清单的优先级动手",
+      "target": "d5c9843eb13e5388",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 489
+    },
+    {
+      "arm": "X",
+      "query": "每开一个对话就多起一份服务又不回收的毛病，在哪几次会话里被算过账",
+      "target": "646f6bd8b9b63e88",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 465
+    },
+    {
+      "arm": "T",
+      "query": "十月十五号下午只看不动手，把主交接里的方案全部核一遍",
+      "target": "ee28bbcac74d7410",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 426
+    },
+    {
+      "arm": "T",
+      "query": "十月十五号傍晚查那份上游审计报告落在哪个目录",
+      "target": "9b4998c18819c311",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 572
+    },
+    {
+      "arm": "X",
+      "query": "论文语言润色那类技能，在哪几次会话里被列过清单",
+      "target": "9b4998c18819c311",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 521
+    },
+    {
+      "arm": "T",
+      "query": "十月十五号傍晚系统盘只剩三个 G，最后清出去什么",
+      "target": "0f482250fa809f52",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 595
+    },
+    {
+      "arm": "R",
+      "query": "只准读生产库、只准写一份队友报告的那次对抗审计",
+      "target": "4bf01d2d8fe2d773",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 620
+    },
+    {
+      "arm": "T",
+      "query": "十月十五号深夜红队审计里负责队友 A 的那份报告",
+      "target": "4bf01d2d8fe2d773",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 544
+    },
+    {
+      "arm": "X",
+      "query": "跑审计时要求数据库只读打开这件事，在哪几次会话里被这样约束",
+      "target": "4bf01d2d8fe2d773",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 23
+    },
+    {
+      "arm": "R",
+      "query": "要求只能交付一份自己的报告、不许碰生产代码的那次独立复测",
+      "target": "d12b300e4404ed24",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 36
+    },
+    {
+      "arm": "T",
+      "query": "十月十五号深夜独立复测的那位队友，报告落在哪个文件",
+      "target": "d12b300e4404ed24",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 518
+    },
+    {
+      "arm": "X",
+      "query": "要求不信别人给的数字、自己重跑一遍的派活方式，在哪几次会话里出现过",
+      "target": "d12b300e4404ed24",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 37
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号下午做竞品调研，说自家换说法检索只有十分之一进第一",
+      "target": "24f9724fc84f40f1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 479
+    },
+    {
+      "arm": "X",
+      "query": "在本地 CPU 上跑向量检索这条路，在哪几次会话里被评过",
+      "target": "24f9724fc84f40f1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 415
+    },
+    {
+      "arm": "R",
+      "query": "只读不改，专门揪出这轮改动里悄悄坏掉、却照常报绿的地方",
+      "target": "ab4595b1814aec8d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 429
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚红队 A 那轮攻击，报告落在哪个文件",
+      "target": "ab4595b1814aec8d",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 448
+    },
+    {
+      "arm": "X",
+      "query": "判断某个目录该不该算作不可认领的祖先，在哪几次会话里被推敲过",
+      "target": "ab4595b1814aec8d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 438
+    },
+    {
+      "arm": "R",
+      "query": "要求逐条给出数字、同意或否认，不许照抄别人结论的那次复核",
+      "target": "7cd6e66f654e1567",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 19
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚那轮独立复现，全量测试过了多少个",
+      "target": "7cd6e66f654e1567",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 539
+    },
+    {
+      "arm": "X",
+      "query": "用配对检验说明检索改动是否真的有效，在哪几次会话里做过",
+      "target": "7cd6e66f654e1567",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 34
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号晚上复核两批改动，起审时的提交号是哪个",
+      "target": "faef416a2315a39a",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 530
+    },
+    {
+      "arm": "X",
+      "query": "探测仓库根目录的那个函数，在哪几次会话里被改过",
+      "target": "faef416a2315a39a",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 35
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号深夜实现可视化面板，最后只交出一个文件",
+      "target": "4edb2e852e6805f5",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 505
+    },
+    {
+      "arm": "X",
+      "query": "那个单独一个文件就能跑的可视化面板，在哪几次会话里被评过",
+      "target": "4edb2e852e6805f5",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 487
+    },
+    {
+      "arm": "R",
+      "query": "只给一张整页截图、不给代码，让人按四步挑毛病的那种活",
+      "target": "7dfc60598fd919eb",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 530
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚那版 1226×10664 的浅色整页点评",
+      "target": "7dfc60598fd919eb",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 503
+    },
+    {
+      "arm": "X",
+      "query": "只看截图不看代码的设计点评，在哪几次会话里派过",
+      "target": "7dfc60598fd919eb",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 471
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚那张 1226×13583 的整页截图点评",
+      "target": "aab2ea5a08283b8c",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 538
+    },
+    {
+      "arm": "X",
+      "query": "要求每次工具调用都能被核验的那套规矩，在哪几次点评里被提到",
+      "target": "aab2ea5a08283b8c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 487
+    },
+    {
+      "arm": "R",
+      "query": "只凭一张浅色整页长图，要求先给美学方向再挑致命问题",
+      "target": "fdd6db72e3fb98be",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 493
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚那张 1241×9785 的点评",
+      "target": "fdd6db72e3fb98be",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 432
+    },
+    {
+      "arm": "R",
+      "query": "只给一张长图、让评价一个把档案、决策、自检都摊开的页面",
+      "target": "9f33dbc2e1771f3f",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 475
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚那张 1385×9964 的点评",
+      "target": "9f33dbc2e1771f3f",
+      "lex": 2,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 425
+    },
+    {
+      "arm": "R",
+      "query": "只给一张长图，让它回答三件事：当前是否健康、积累了多少、哪件还等着人点头",
+      "target": "a5d5d31d372f04e1",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 433
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚那版 1385×6530 的点评",
+      "target": "a5d5d31d372f04e1",
+      "lex": 0,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 391
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚照着十五号那份主交接又全面过了一遍",
+      "target": "732adf1bc9055e9d",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 462
+    },
+    {
+      "arm": "R",
+      "query": "把记忆的清洗淘汰从外挂脚本搬进框架内部的那一轮",
+      "target": "7f876d401c392f22",
+      "lex": 7,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 25
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚负责存储那一支，最后交了什么结论",
+      "target": "7f876d401c392f22",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 448
+    },
+    {
+      "arm": "X",
+      "query": "把记忆生命周期写进框架而不是靠外部脚本，在哪几次会话里被讨论过",
+      "target": "7f876d401c392f22",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 48
+    },
+    {
+      "arm": "R",
+      "query": "让把压缩之后的读路径占比压到只剩个位数的那个分支",
+      "target": "e16a61ee537b11a6",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 479
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚负责压缩那一支的结论",
+      "target": "e16a61ee537b11a6",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 513
+    },
+    {
+      "arm": "X",
+      "query": "给记忆状态和策略列一张表来管生命周期，在哪几次会话里被提过",
+      "target": "e16a61ee537b11a6",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 475
+    },
+    {
+      "arm": "R",
+      "query": "压缩那块的投影要是空的，就退回哪条旧路径",
+      "target": "49375b477494a6c3",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 15
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚负责插件那一支的结论",
+      "target": "49375b477494a6c3",
+      "lex": 8,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 599
+    },
+    {
+      "arm": "X",
+      "query": "跨会话近重复占到一半这个实测数字，在哪几次会话里被引用",
+      "target": "49375b477494a6c3",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 45
+    },
+    {
+      "arm": "R",
+      "query": "同一个论文检索工具，两个人一个报校验错一个回空，怎么回事",
+      "target": "323c111a48c66a9c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 612
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号傍晚负责论文检索那一支查出了什么",
+      "target": "323c111a48c66a9c",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 521
+    },
+    {
+      "arm": "X",
+      "query": "论文检索工具一个报错一个回空的分歧，在哪几次会话里被记过",
+      "target": "323c111a48c66a9c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 515
+    },
+    {
+      "arm": "R",
+      "query": "那七条看着没解的问题，其实每条后面都跟着几百条回答",
+      "target": "62df568227aa34c7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 447
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号晚上调研未决清单里到底有多虚",
+      "target": "62df568227aa34c7",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 440
+    },
+    {
+      "arm": "X",
+      "query": "未决问题这一栏的准确性，在哪几次会话里被查过",
+      "target": "62df568227aa34c7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 435
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号晚上定本地嵌入模型，为什么把那几个候选排除掉",
+      "target": "a36e4a22e3ff3cd0",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 460
+    },
+    {
+      "arm": "X",
+      "query": "本地嵌入模型选型，在哪几次会话里被比较过",
+      "target": "a36e4a22e3ff3cd0",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 28
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号深夜复核两套实现并轨会不会改变行为",
+      "target": "8dcfab7bdb856071",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 424
+    },
+    {
+      "arm": "X",
+      "query": "定时清理和归档定时器撞车这块，在哪几次会话里查过",
+      "target": "8dcfab7bdb856071",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 14
+    },
+    {
+      "arm": "T",
+      "query": "十月十六号深夜对交接里那句复跑数字一致做独立复审",
+      "target": "d550fa3108d9a88e",
+      "lex": 8,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 407
+    },
+    {
+      "arm": "X",
+      "query": "交接说复跑两遍数字分毫不差，这种说法在哪几次会话里被验过",
+      "target": "d550fa3108d9a88e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 403
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号早上人工判读未决样本，准确率最后是多少",
+      "target": "20da588beef538de",
+      "lex": 6,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 460
+    },
+    {
+      "arm": "X",
+      "query": "未决清单的准确率，在哪几次会话里被人工判读过",
+      "target": "20da588beef538de",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 449
+    },
+    {
+      "arm": "R",
+      "query": "复审时明确不许跑长测、只读不许改的那次",
+      "target": "f708d4d3a7344067",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 431
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号早上那次只读复审，不许跑长命令",
+      "target": "f708d4d3a7344067",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 455
+    },
+    {
+      "arm": "R",
+      "query": "两份实现在两次比对之间的写入完全没被看见的那段空窗",
+      "target": "2ca3f435e58f5e70",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号早上查两份实现指纹恒等、输出却会变",
+      "target": "2ca3f435e58f5e70",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 479
+    },
+    {
+      "arm": "X",
+      "query": "简报查询那份脚本的输出会变、指纹却不变，在哪几次复审里被指出",
+      "target": "2ca3f435e58f5e70",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 22
+    },
+    {
+      "arm": "R",
+      "query": "只更新一个计数字段、其它五项逐字不变，为什么等于没修",
+      "target": "21ecac95dec872e7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 38
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号早上那轮复审说整体慢两倍、比值仍是 1.00",
+      "target": "21ecac95dec872e7",
+      "lex": 4,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 521
+    },
+    {
+      "arm": "X",
+      "query": "只改一列导致校验看不出变化，在哪几次复审里被点出",
+      "target": "21ecac95dec872e7",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 8
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号早上指出删一个加一个文件、指纹逐字恒等",
+      "target": "22ea720ad2fe7300",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 452
+    },
+    {
+      "arm": "X",
+      "query": "七项指纹恒等导致守卫假绿，在哪几次复审里被指出",
+      "target": "22ea720ad2fe7300",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 5
+    },
+    {
+      "arm": "R",
+      "query": "把空值序列化成 null 之后，那道守门就再也报不出问题",
+      "target": "c573b23d361a0c43",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 450
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号上午查那段序列化把缺值变成 null",
+      "target": "c573b23d361a0c43",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 415
+    },
+    {
+      "arm": "X",
+      "query": "简报过滤器那个守门脚本，在哪几次会话里被查过",
+      "target": "c573b23d361a0c43",
+      "lex": 3,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 24
+    },
+    {
+      "arm": "R",
+      "query": "让把界面上三层能力分别对应到什么机制讲清楚",
+      "target": "84d248d91f5c59b8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 19
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号下午弄清三层能力各自是什么",
+      "target": "84d248d91f5c59b8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 351
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号晚上按最新入口文档续作，自查要看哪几节",
+      "target": "5407c1efae4428dd",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 436
+    },
+    {
+      "arm": "X",
+      "query": "给自动基准补上语义那一条臂，在哪几次会话里做过",
+      "target": "5407c1efae4428dd",
+      "lex": 9,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 23
+    },
+    {
+      "arm": "R",
+      "query": "实测发现向量那条路召回还不如纯字面，而且更慢",
+      "target": "f53c079ce936380c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 28
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号晚上那次实测，语义检索比字面慢几倍",
+      "target": "f53c079ce936380c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 451
+    },
+    {
+      "arm": "R",
+      "query": "不用模型、只靠一张标签对应表来召回的路子",
+      "target": "42093ecccab2a383",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 451
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号晚上讨论改走标签关系表那条路",
+      "target": "42093ecccab2a383",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 457
+    },
+    {
+      "arm": "X",
+      "query": "竞品那套不要模型、只靠关系表召回的做法，在哪几次会话里被提过",
+      "target": "42093ecccab2a383",
+      "lex": 5,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 21
+    },
+    {
+      "arm": "R",
+      "query": "老记录要还能搜到、但排得靠后，接线这一步交给谁",
+      "target": "f042c487db43ab5d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 8
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号晚上定旧记录该排多靠后",
+      "target": "f042c487db43ab5d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 401
+    },
+    {
+      "arm": "X",
+      "query": "记忆层那个总配置结构，在哪几次会话里被改过",
+      "target": "f042c487db43ab5d",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 30
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号晚上解释为什么必须加版本号",
+      "target": "972400837716c16e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 390
+    },
+    {
+      "arm": "X",
+      "query": "改了抽取规则但存量库不重算的问题，在哪几次会话里被提过",
+      "target": "972400837716c16e",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 409
+    },
+    {
+      "arm": "R",
+      "query": "只准交文档报告，不许下模棱两可的结论",
+      "target": "0aead508b67cb687",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 378
+    },
+    {
+      "arm": "T",
+      "query": "十月十七号晚上那次只写文档报告的活",
+      "target": "0aead508b67cb687",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 362
+    },
+    {
+      "arm": "X",
+      "query": "那只骑车的鹈鹕在几次会话里被画过",
+      "target": "29246406e4d4af63",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 7
+    },
+    {
+      "arm": "X",
+      "query": "给测试基准算命中率和显著性，在哪几次会话里做过",
+      "target": "f53c079ce936380c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "X",
+      "query": "渲染进程崩溃后翻诊断记录的活，在哪几次会话里干过",
+      "target": "ef00ec195e312052",
+      "lex": 1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 17
+    },
+    {
+      "arm": "X",
+      "query": "那份状态栈交接在几次会话里被接着读下去",
+      "target": "afd5655523f19598",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 16
+    },
+    {
+      "arm": "X",
+      "query": "那套机器人框架的抢救备份，在哪几次会话里被翻出来过",
+      "target": "0f482250fa809f52",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 9
+    },
+    {
+      "arm": "X",
+      "query": "要求两人各写一份、彼此不通气的复核，在哪几次会话里派过",
+      "target": "f708d4d3a7344067",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 445
+    },
+    {
+      "arm": "X",
+      "query": "那份现状核对表在几次会话里被当材料读",
+      "target": "22119793e4f65f7c",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 376
+    },
+    {
+      "arm": "X",
+      "query": "界面上那三层能力分别是什么，在哪几次会话里被问过",
+      "target": "84d248d91f5c59b8",
+      "lex": -1,
+      "sem": -1,
+      "exp": -1,
+      "lit": false,
+      "ms": 20
+    }
+  ]
+}
