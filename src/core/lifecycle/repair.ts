@@ -43,7 +43,20 @@ export interface IntegrityVerdict {
 
 /** 锁冲突的识别（不同平台/驱动措辞不同，宁可多认几个） */
 export function isBusyMessage(msg: string): boolean {
-  return /database is locked|SQLITE_BUSY|SQLITE_LOCKED|EBUSY|database table is locked/i.test(msg);
+  return /database is locked|SQLITE_BUSY|SQLITE_LOCKED|EBUSY|database table is locked|database schema is locked/i.test(msg);
+}
+
+/**
+ * 真损坏的识别（红队 R1）。以前这两类落进 error 分支，于是**永远不被修复**：
+ * 我只把"能打开 + DDL 跑完 + integrity_check 非 ok"算 corrupt，
+ * 但真损坏最常见的两种形态**在 createDb 阶段就抛了**：
+ *   · 文件根本不是库 → SQLITE_NOTADB / "file is not a database"
+ *   · 页结构坏了     → "database disk image is malformed"（integrity_check 之前就抛）
+ * 都不隔离也不重建 ⇒ repair 每轮打印"重建失败"却永不动手。
+ * 那是**静默躺平**，比误隔离更难发现。
+ */
+export function isCorruptMessage(msg: string): boolean {
+  return /SQLITE_NOTADB|SQLITE_CORRUPT|file is not a database|database disk image is malformed|malformed database schema/i.test(msg);
 }
 
 export function integrityOf(file: string): IntegrityVerdict {
@@ -60,8 +73,10 @@ export function integrityOf(file: string): IntegrityVerdict {
   } catch (e) {
     const msg = String((e as Error).message).slice(0, 80);
     // ★ 关键分叉：锁冲突不是损坏。绝不能让"现在读不到"变成"隔离 + 另建空库"。
+    // ★ 顺序要紧：**先判锁、再判损坏**。反过来会把锁冲突当损坏去隔离 —— 那就是 10-18 事故。
     if (isBusyMessage(msg)) return { ok: false, kind: 'busy', detail: '被占用（不是损坏）：' + msg, sizeMb };
-    return { ok: false, kind: 'error', detail: '读取失败：' + msg, sizeMb };
+    if (isCorruptMessage(msg)) return { ok: false, kind: 'corrupt', detail: '库已损坏：' + msg, sizeMb };
+    return { ok: false, kind: 'error', detail: '读取失败（既非锁冲突也非已知损坏，本轮不动文件）：' + msg, sizeMb };
   }
 }
 

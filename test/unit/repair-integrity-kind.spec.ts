@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { integrityOf, isBusyMessage } from '../../src/core/lifecycle/repair.js';
+import { integrityOf, isBusyMessage, isCorruptMessage } from '../../src/core/lifecycle/repair.js';
 
 /**
  * 2026-10-18 事故回归：库被别的进程锁着时，integrityOf 必须报 kind='busy'，
@@ -27,6 +27,26 @@ describe('库体检 · 「读不了」不许当成「坏了」', () => {
       'SQLITE_CORRUPT',
       'no such table: sessions',
     ]) expect(isBusyMessage(m), m).toBe(false);
+  });
+
+  // ── [红队 R1] 真损坏最常见的两种形态在 createDb 阶段就抛，以前落进 error ⇒ 永远不修 ──
+  it('真损坏的措辞必须识别为 corrupt（否则维修永远不动手）', () => {
+    for (const m of [
+      'SQLITE_NOTADB: file is not a database',
+      'file is not a database',
+      'database disk image is malformed',
+      'SQLITE_CORRUPT: malformed database schema',
+    ]) {
+      expect(isCorruptMessage(m), m).toBe(true);
+      expect(isBusyMessage(m), m).toBe(false);      // 不许和锁冲突混淆
+    }
+  });
+
+  it('锁冲突不许被误判成损坏（那是 10-18 事故的反向）', () => {
+    for (const m of ['database is locked', 'SQLITE_BUSY', 'database schema is locked']) {
+      expect(isBusyMessage(m), m).toBe(true);
+      expect(isCorruptMessage(m), m).toBe(false);
+    }
   });
 
   it('库不存在 → kind=missing（该建库，不该"隔离"）', () => {

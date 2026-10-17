@@ -51,6 +51,25 @@ describe('namespace 两态检索 · 合并必须可容许（admissible）', () =
     expect(mergeByRoundRobin([A, empty, B], 3).length).toBe(3);
   });
 
+  // ── [红队 ② 复审] 旧判据的两个盲区，必须被堵上（否则判据只能验证它自己假设过的东西）──
+  it('盲区一：某组一条都没出现（limit 装得下）⇒ 必须判假', () => {
+    const merged = mergeByRoundRobin([A, B], 3).filter((h) => h.projectName !== 'b');   // 人为丢掉 B 整组
+    // 3 条全来自 A，B 有 2 条却一条没出现；limit=3 装得下 2 个组 ⇒ 漏项
+    expect(admissible(merged, B, { totalGroups: 2, limit: 3 })).toBe(false);
+  });
+
+  it('盲区二：丢中间一段（剩下的仍递增）⇒ 必须判假', () => {
+    const merged = mergeByRoundRobin([A]).filter((h) => h.sessionId !== 'a2');   // 丢掉 a1 与 a3 之间的 a2
+    expect(admissible(merged, A, { totalGroups: 1, limit: 10 })).toBe(false);
+  });
+
+  it('limit 确实装不下所有组时，未出现的组不算漏项', () => {
+    const merged = mergeByRoundRobin([A, B, C], 1);   // 只出 1 条，必然有组没出现
+    const appeared = new Set(merged.map((h) => h.projectName));
+    const missing = [A, B, C].filter((g) => !appeared.has(g.projectName));
+    for (const g of missing) expect(admissible(merged, g, { totalGroups: 3, limit: 1 })).toBe(true);
+  });
+
   it('反例：组内真被改序时，admissible 必须判定为假（防止判据本身失效）', () => {
     const merged = mergeByRoundRobin([A, B, C]);
     // ⚠️ 这里有个反直觉的事实（我第一版写成"按分数全局排序"当反例，结果测试红了）：

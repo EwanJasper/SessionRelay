@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { searchSessions, type SearchHit, type SearchOptions } from './engine.js';
 import { registryCandidates } from '../shared/registry.js';
 import { loadConfig } from '../shared/config.js';
-import { dbFile } from '../shared/paths.js';
+import { dbFile, projectIdOf } from '../shared/paths.js';
 
 /**
  * 检索的两种「命名空间」（研究报告 §1.2 建议 #1，抄 LangGraph Store 的 tuple 前缀语义，不抄它的 Postgres）。
@@ -99,16 +99,24 @@ export function mergeByRoundRobin(groups: ProjectHits[], limit = 20): Namespaced
  * 把合并结果过滤到某一个项目后，它的**相对次序**必须与该项目单独检索时逐位相同。
  * 返回 true = 通过。
  */
-export function admissible(merged: NamespacedHit[], single: ProjectHits): boolean {
+export function admissible(merged: NamespacedHit[], single: ProjectHits, opts: { totalGroups?: number; limit?: number } = {}): boolean {
   const inMerged = merged.filter((h) => h.projectRoot === single.projectRoot).map((h) => h.sessionId);
   const inSingle = single.hits.map((h) => h.sessionId);
-  // 合并结果可能被 limit 截断，所以只比较"合并里出现的那些"在单库里的相对次序
-  const order = new Map(inSingle.map((id, i) => [id, i]));
-  for (let i = 1; i < inMerged.length; i++) {
-    const prev = order.get(inMerged[i - 1]);
-    const cur = order.get(inMerged[i]);
-    if (prev === undefined || cur === undefined) return false;
-    if (prev >= cur) return false;   // 次序被合并改动了 ⇒ 不可容许
+
+  // [红队 ②] 旧实现只比较"合并里出现的那些"的相对次序，有两个盲区（都实测过）：
+  //   · limit 小到让某组完全没出现 → 真空通过（组丢了也说 OK）
+  //   · 丢中间一段 → 剩下的仍是递增 → 通过
+  // 正确实现里轮转只取各组前缀、limit 只截尾，但**判据不能靠"实现应该是对的"来自证**，
+  // 否则它就只能验证它自己假设过的东西。改成前缀等式：合并结果必须**逐位等于**单库结果的前缀。
+  if (inMerged.length > inSingle.length) return false;
+  for (let i = 0; i < inMerged.length; i++) {
+    if (inMerged[i] !== inSingle[i]) return false;   // 位次不符（含丢中段、乱序）⇒ 不可容许
+  }
+  // 组里有货却一条都没出现：只有在 limit 确实装不下这么多组时才允许（否则就是漏项）
+  if (inMerged.length === 0 && inSingle.length > 0) {
+    const groups = opts.totalGroups ?? 1;
+    const limit = opts.limit ?? Infinity;
+    if (limit >= groups) return false;   // limit 装得下却没出现 ⇒ 漏了整组
   }
   return true;
 }
@@ -152,8 +160,14 @@ export function searchNamespaced(opts: NamespaceSearchOptions): {
       db = new Database(file, { readonly: true, fileMustExist: true });
       // 用**该库自己的** project_id（读它自己的 config）；读不到就退回用 root。
       // 绝不能用调用方的 project —— 那会让别人的库把所有结果过滤光。
-      let ownProject = t.root;
-      try { ownProject = loadConfig(t.root).identity?.project_id ?? t.root; } catch { /* 配置坏了就用 root */ }
+      // 身份顺序：配置里的 identity.project_id → 用 projectIdOf 现算（与写路径同一公式）→ 都没有才算失败。
+      // ⚠️ 红队实证：以前兜底成 root 是**静默空结果** —— engine 按 s.project_id 过滤，
+      //   而 agent1super 库里 project_id='proj_d--agent1super'，拿 'D:/agent1super' 去查是 0 行，
+      //   还不算 failed。表现为"全局检索对这个库永远没结果"且不报错。
+      let ownProject = '';
+      try { ownProject = String(loadConfig(t.root).identity?.project_id ?? ''); } catch { /* 配置坏了就现算 */ }
+      if (!ownProject) { try { ownProject = projectIdOf(t.root); } catch { ownProject = ''; } }
+      if (!ownProject) { failed.push({ projectRoot: t.root, reason: '无法确定 project_id（配置与现算都失败），跳过以免返回空结果误导' }); continue; }
       const hits = searchSessions(db as never, { ...opts, project: ownProject, limit });
       groups.push({ projectRoot: t.root, projectName: t.name, hits });
     } catch (e) {
