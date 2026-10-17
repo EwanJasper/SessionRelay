@@ -18,7 +18,10 @@ export {
 } from './store/global.js';
 export { resolveDomain, resolveWorkspaceId, workspaceKey } from './shared/workspace.js';
 export { findRelayRootInfo, findRelayRoot, inferProjectRoot, isUnclaimableAncestor } from './shared/paths.js';
-export { isTransientRoot } from './shared/registry.js';
+// [红队第二轮 P2] 守门脚本要判「整套记忆有没有在进」，需要**项目候选列表**。
+//   读不到就只能自己拼 ~/.sessionrelay-registry 路径 —— 那就是第二份判据（本仓铁律禁止）。
+//   从入口导出，让 check-versions 与内核用同一份。
+export { isTransientRoot, registryCandidates } from './shared/registry.js';
 export { globalDbFile } from './store/global.js';
 // [B3] 一次性探针会话的判据（SQL 片段）—— 适配器/守门要能拿到**同一份口径**，别各写一套
 export { PROBE_SQL, PROBE_MAX_MESSAGES, countProbeSessions } from './store/db.js';
