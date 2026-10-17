@@ -215,6 +215,24 @@ export interface BuildStats {
 }
 
 /** 建表（幂等） */
+/**
+ * 图内容指纹 —— 判断「库变了没」。
+ *
+ * [1021 红队 T5] 原来复用判据只看 `session_count`。于是：抽取规则升级后 topics/decisions 变了、
+ *   标签来源也就变了，但会话数没变 ⇒ 直接复用旧图 ⇒ **图与库静默不一致且无告警**。
+ *   指纹取三样：会话数 + 抽取版本之和 + 最新更新时间；任一变化就重建。
+ *   不用内容哈希：那要读所有 sessions 算 md5，代价大于重建本身（620 会话 1.3s）；
+ *   而这三样都是走索引的聚合查询，毫秒级。
+ */
+export function contentFingerprint(db: DB): string {
+  try {
+    const r = db.prepare(
+      'SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(extracted_version, 0)), 0) AS v,'
+      + ' MAX(COALESCE(updated_at, created_at, \'\')) AS t FROM sessions',
+    ).get() as { n?: number; v?: number; t?: string | null } | undefined;
+    return String(r?.n ?? 0) + ':' + String(r?.v ?? 0) + ':' + String(r?.t ?? '');
+  } catch { return 'unknown'; }   // 算不出就给固定值 ⇒ 下次必不匹配 ⇒ 重建一次（宁多建，不复用错的）
+}
 export function ensureGraphSchema(db: DB): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS graph_tags (
@@ -243,9 +261,18 @@ export function ensureGraphSchema(db: DB): void {
       built_at TEXT NOT NULL,
       session_count INTEGER NOT NULL,
       tag_count INTEGER NOT NULL,
-      edge_count INTEGER NOT NULL
+      edge_count INTEGER NOT NULL,
+      -- [1021 红队 T5] 内容指纹：只比 session_count 会漏掉「会话数不变但内容变了」
+      --   （典型：抽取规则升级后 topics/decisions 变了，标签来源也就变了，但图不重建）。
+      --   老库没有这一列，下面用 ALTER 幂等补。
+      fingerprint TEXT
     );
   `);
+  // 幂等补列（老库升级路径）
+  try {
+    const cols = db.prepare("PRAGMA table_info(graph_meta)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'fingerprint')) db.exec('ALTER TABLE graph_meta ADD COLUMN fingerprint TEXT');
+  } catch { /* 补列失败不影响主流程：指纹为 null 时按「不一致」处理，会重建一次 */ }
 }
 
 export interface BuildOptions {
@@ -266,8 +293,13 @@ export function buildTagGraph(db: DB, opts: BuildOptions = {}): BuildStats {
   ensureGraphSchema(db);
   const rows = db.prepare('SELECT id, title, topics, decisions, key_questions, files_mentioned FROM sessions').all() as SessionRow[];
   if (opts.reuse !== false) {
-    const meta = db.prepare('SELECT version, session_count FROM graph_meta WHERE id = 1').get() as { version: number; session_count: number } | undefined;
-    if (meta && meta.version === GRAPH_TAG_VERSION && meta.session_count === rows.length) {
+    const fp = contentFingerprint(db);
+    const meta = db.prepare('SELECT version, session_count, fingerprint FROM graph_meta WHERE id = 1').get() as { version: number; session_count: number; fingerprint: string | null } | undefined;
+    // [1021 红队 T5] 判据从「只看会话数」改成「会话数 + **内容指纹**」。
+    //   原来只比 session_count：抽取规则升级后 topics/decisions 变了（标签来源变），
+    //   但会话数没变 ⇒ 直接复用旧图 ⇒ **图与库静默不一致，还不报错**。
+    //   指纹 = 会话数 + 抽取版本和 + 最新更新时间，任一变化都会触发重建。
+    if (meta && meta.version === GRAPH_TAG_VERSION && meta.session_count === rows.length && meta.fingerprint === fp) {
       const tags = (db.prepare('SELECT COUNT(*) AS c FROM graph_tags').get() as { c: number }).c;
       const edges = (db.prepare('SELECT COUNT(*) AS c FROM graph_tag_edges').get() as { c: number }).c;
       if (tags > 0) return { sessions: rows.length, tags, pairs: 0, edges, reused: true, ms: Date.now() - t0 };
@@ -340,8 +372,9 @@ export function buildTagGraph(db: DB, opts: BuildOptions = {}): BuildStats {
       edges++;
     }
     const tagCount = tagId.size;
-    db.prepare('INSERT OR REPLACE INTO graph_meta (id, version, built_at, session_count, tag_count, edge_count) VALUES (1, ?, ?, ?, ?, ?)')
-      .run(GRAPH_TAG_VERSION, new Date().toISOString(), entries.size, tagCount, edges);
+    db.prepare('INSERT OR REPLACE INTO graph_meta (id, version, built_at, session_count, tag_count, edge_count, fingerprint) VALUES (1, ?, ?, ?, ?, ?, ?)')
+      // [1021 T5] 第 7 个参数是指纹 —— 加了列就必须加值，否则运行期才炸（Too few parameter values）
+      .run(GRAPH_TAG_VERSION, new Date().toISOString(), entries.size, tagCount, edges, contentFingerprint(db));
     return { tags: tagCount, edges, pairs };
   });
 

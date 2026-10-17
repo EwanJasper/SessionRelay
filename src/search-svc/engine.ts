@@ -6,7 +6,7 @@
 // - 合并确定性：messages 命中优先于 meta 命中（技术方案 T27）
 import type { DB, } from '../store/db.js';
 import { parseQuery, unitExpr, segment } from '../core/tokenize/tokenizer.js';
-import { decayFactor, ageMsOf, type DecayConfig } from '../core/decay/decay.js';
+import { applyDecay, ageMsOf, type DecayConfig } from '../core/decay/decay.js';
 import { rewriteQuery } from '../core/tokenize/rewrite.js';
 import { expandQueryTags } from '../core/graph/expand.js';
 import type { QueryExpansion, ExpansionTerm } from '../core/graph/expand.js';
@@ -423,9 +423,12 @@ function applyDecayToHits(db: DB, hits: SearchHit[], cfg: DecayConfig): SearchHi
     for (const r of rows) ages.set(r.id, r.at);
   } catch { return hits; }   // 取不到就不衰减（宁可不做，也不猜一个年龄出来）
   const now = Date.now();
+  // ⚠️ [1021 红队 T10] 原来这里写的是 `h.score * decayFactor(...)` —— **内联乘法**，
+  //   绕过了 `decay.ts` 的 `applyDecay()` 守卫（它在 score 非有限/≤0 时**原样返回**）。
+  //   于是「判据」又散成了两份：decay.ts 一份、engine.ts 一份，改一处忘一处就分叉。
+  //   现在统一走 `applyDecay()` —— 它是这条链上唯一该做乘法的地方。
   return hits
-    .map((h) => ({ h, f: decayFactor(ageMsOf(ages.get(h.sessionId), now), 'decision', cfg) }))
-    .map(({ h, f }) => ({ ...h, score: h.score * f }))
+    .map((h) => ({ ...h, score: applyDecay(h.score, ageMsOf(ages.get(h.sessionId), now), 'decision', cfg) }))
     .sort((a, b) => b.score - a.score || (b.coverage ?? 0) - (a.coverage ?? 0));
 }
 

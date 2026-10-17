@@ -222,7 +222,11 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     }
 
     // ── kind=sessions：搜会话（默认） ──
-    const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits, semanticReserve: cur.cfg.semantic?.reserve_slots });
+    // [1021 红队 T9] kind=sessions 分支原来**没传 decay** —— 而 files 分支传了。
+//   同一行 searchSessions、只差一个参数，结果就是「按文件搜」受时间衰减、「按会话搜」不受。
+//   这不是写错，是**漏写**，而且没有任何断言会发现 —— 判据散在两处的典型。
+//   顺带按同文件 205-209 的规矩用 `cfgNow`（每次重读）而不是缓存的 `cur.cfg`。
+const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits, semanticReserve: cfgNow.semantic?.reserve_slots, decay: cfgNow.decay });
     const out = hits.map((h) => ({
       ...sessionBrief(cur.db, h.sessionId),
       score: Number(h.score.toFixed(3)),
