@@ -180,8 +180,14 @@ function ensureTable(db: DB): void {
 
 /** 本库记录的重算版本（无记录 = 0，视为全新库/未初始化） */
 export function extractVersionOf(db: DB): number {
-  ensureTable(db);
-  const row = db.prepare('SELECT version FROM extract_meta WHERE id = 1').get() as { version: number } | undefined;
+  // [1020] 只读容错：`ensureTable` 做的是 CREATE TABLE（**写操作**），而本函数也会被
+  //   **只读连接**调用 —— `srelay doctor` 用 `new Database(f, { readonly: true })` 调它做体检。
+  //   原本直接 ensureTable ⇒ 只读库上抛 `attempt to write a readonly database`，
+  //   doctor 只能把它显示成一条 ⚠️ —— **新用户第一次跑 doctor 就会撞到**（本轮实测）。
+  //   正确语义：表在就跳过；不在（全新库）说明还没提取过，返回 0 本来就是真实答案。
+  try { ensureTable(db); } catch { /* 只读连接且表不存在 */ }
+  let row: { version: number } | undefined;
+  try { row = db.prepare('SELECT version FROM extract_meta WHERE id = 1').get() as { version: number } | undefined; } catch { row = undefined; /* 表根本不存在（全新库/只读）⇒ 版本即 0，这是真实答案不是错误 */ }
   return row?.version ?? 0;
 }
 
