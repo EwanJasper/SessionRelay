@@ -95,6 +95,18 @@ export interface SearchOptions {
   query: string;
   limit?: number;
   extraWhere?: ExtraWhere | null;
+  /**
+   * [1021] 多单元按 **OR** 组合（默认 AND）。仅供**查询改写路**使用。
+   *
+   * 为什么必须单独有这个开关：`fusedSearch` 里补一句
+   *   `// 补充路用 OR（避免 AND 把补充词也卡死）` —— 但实现是 `extraUnits.flat().join(' ')`，
+   *   而 `parseQuery` 会把空格拆成**多个单元**、`searchOnce` 又做**会话级 AND**。
+   *   ⇒ 注释说 OR、代码做 AND，**意图与实现不符**（这次实测把它抓出来了）。
+   *   后果：「磁盘空间不足」的补充词被拼成「硬盘 盘 存储 容量 盘空」⇒ 五词全中才算命中 ⇒ 恒空
+   *   ⇒ 改写路等于没工作，所以加族、加子词回退全都没效果。
+   *   （实测佐证：「盘」单独搜时目标会话在 top-10；拼成五词 AND 就没了。）
+   */
+  orUnits?: boolean;
   /** 语义命中保底槽位数（默认 3；0 = 旧行为）。CLI 的 semantic status 也读它，避免两处各写一个 3。 */
   /** 语义补充命中（调用方经 semanticSearch 预计算注入；不传/空 = 与纯 FTS 行为等价） */
   semanticHits?: Array<{ sessionId: string; score: number }> | null;
@@ -224,9 +236,13 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   }
 
   // 会话级 AND：所有单元都被覆盖（跨消息）；零命中 → OR 兜底
+  // [1021] `opts.orUnits` 时**直接走并集**（改写路用，见 SearchOptions.orUnits 的说明）
   let sids: string[] = [];
   const andMap = new Map<string, number>();
-  for (const uh of unitHits) {
+  if (opts.orUnits) {
+    for (const uh of unitHits) for (const [sid, v] of uh.map) andMap.set(sid, (andMap.get(sid) ?? 0) + v.score);
+    sids = [...andMap.keys()];
+  } else for (const uh of unitHits) {
     if (sids.length === 0 && andMap.size === 0) {
       for (const [sid, v] of uh.map) { sids.push(sid); andMap.set(sid, v.score); }
     } else {
@@ -457,8 +473,11 @@ function searchCore(db: DB, opts: SearchOptions): SearchHit[] {
   if (rw.extraUnits.length === 0) return hits;
 
   // 补充路用 OR（避免 AND 把补充词也卡死）
+  // [1021 修复] 原来这里只 join(' ') —— 而 parseQuery 会把空格拆成多个单元、searchOnce 做会话级 AND，
+  //   所以「说 OR 做 AND」。实测后果：「磁盘空间不足」的 5 个补充词要求全中 ⇒ 恒空 ⇒ 改写路等于没工作。
+  //   现在显式传 `orUnits: true`，才是真的 OR。
   const extraQuery = rw.extraUnits.flat().join(' ');
-  const extra = searchOnce(db, { ...opts, query: extraQuery, rewrite: false, limit });
+  const extra = searchOnce(db, { ...opts, query: extraQuery, rewrite: false, orUnits: true, limit });
   const existing = new Set(hits.map((h) => h.sessionId));
   const merged = hits.slice();
   for (const h of extra) {
