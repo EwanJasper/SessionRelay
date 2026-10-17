@@ -477,9 +477,23 @@ export function parenDepthOk(raw: string): boolean {
   return true;
 }
 
-export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
+/** 单会话决策上限（D22 上下文护栏）。**限制本身保留**——简报只显示前几条，10 条已够用；
+ *  但"到 10 条就 return"是 bug：长会话后面拍板的结论静默丢失，且毫无痕迹。
+ *  [1021 红队 #额外] 实测：12 条独立合规决策 → 只出 10 条。
+ *  处置（不取消上限，因为既有单测 extract.spec.ts:79 钉死 ≤10，那条测试不在本文件里）：
+ *    ① 上限提成常量并**继续扫描**剩余句子，如实数出被丢的条数；
+ *    ② 计数挂在数组的 dropped 属性上——JSON.stringify 只序列化下标，落库数据形状不变；
+ *    ③ summaryRule 把它写进 summary_rule，于是**简报/库摘要里能看到"还有 N 条没提取"**，
+ *       不再是无声无息的丢失。要真正提高上限，需同时改上面那条单测。 */
+export const DECISION_LIMIT = 10;
+
+/** 决策列表：数组本体 + 截断计数（不在下标里，不污染 JSON.stringify 的结果） */
+export type DecisionList = ExtractedMeta['decisions'] & { dropped?: number };
+
+export function extractDecisions(msgs: Msg[]): DecisionList {
   const out: ExtractedMeta['decisions'] = [];
   const seen = new Set<string>();
+  let dropped = 0;
   for (const m of msgs) {
     for (const s of sentences(m.content)) {
       for (const re of DECISION_RES) {
@@ -508,14 +522,16 @@ export function extractDecisions(msgs: Msg[]): ExtractedMeta['decisions'] {
         const key = text.slice(0, 20);
         if (seen.has(key)) break;
         seen.add(key);
+        // 到上限后**继续扫**（只计数不落库）：丢了几条必须能说出来，否则就是静默丢结论。
+        if (out.length >= DECISION_LIMIT) { dropped++; break; }
         out.push({ text, seq: m.seqNum, msgId: m.id, at: m.createdAt ?? undefined, kind: isNegativeDecision(text) ? 'negative' : 'decision' });
         break;   // [1021 红队 R14] 原为 `break;;`：多出来的分号是一个空语句（AST 层面无意义字符），
                  // 靠正则改这段的人会被它误导。行为不变 —— 空语句不产生任何效果。
       }
-      if (out.length >= 10) return out;
     }
   }
-  return out;
+  if (dropped > 0) (out as DecisionList).dropped = dropped;
+  return out as DecisionList;
 }
 
 // ── key_questions：用户问句 + 未决启发式 ──
@@ -1072,6 +1088,12 @@ export function summaryRule(
   const lines: string[] = [title ?? '（无标题）'];
   if (meta.decisions.length > 0) {
     lines.push(`决策（${meta.decisions.length}）：` + meta.decisions.slice(0, 5).map((d, i) => `${i + 1}) ${d.text.slice(0, 60)}`).join(' '));
+  }
+  // [1021 红队 #额外] 超上限的决策**在这里显形**：summary_rule 会落库并进简报，
+  // 用户/下一个 AI 能看到"还有 N 条没提取"，而不是以为这个会话只定了 10 条。
+  const dropped = (meta.decisions as DecisionList).dropped ?? 0;
+  if (dropped > 0) {
+    lines.push(`⚠️ 另有 ${dropped} 条决策超过单会话上限（${DECISION_LIMIT} 条）未入库——要看全文请翻原会话`);
   }
   const unresolved = meta.questions.filter((q) => q.unresolved);
   if (unresolved.length > 0) {

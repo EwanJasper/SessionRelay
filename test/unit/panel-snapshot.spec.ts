@@ -27,7 +27,10 @@ function seedProject(n: number): void {
       JSON.stringify(i === 0
         ? [{ text: 'a', dupCount: 3 }, { text: 'b' }]
         : [{ text: 'd' + i }]),
-      JSON.stringify([{ text: 'q' + i }]), 20);
+      // 未决项必须带 unresolved:true：面板未决计数的判据是 `$.unresolved <> 0`
+      //（那次 686→55 的修复把"全部 key_questions"改成"只数真未决"）。夹具原先是裸 {text}，
+      // 于是这条用例在修复后恒为 0 —— 不是计数坏了，是夹具没跟上判据。
+      JSON.stringify([{ text: 'q' + i, unresolved: true }]), 20);
     db.prepare('INSERT INTO messages (session_id, role, content, seq_num) VALUES (?,?,?,?)').run('s' + i, 'user', 'hello', 1);
   }
   db.close();
@@ -92,11 +95,14 @@ describe('面板 · 压缩图谱', () => {
     const total = (c.aging?.strengthBuckets ?? []).reduce((a, b) => a + b.count, 0);
     expect(total).toBe(2);
   });
-  it('L1 是负结果、L3 未做 —— 必须如实标出来（不许显示成"都在跑"）', () => {
+  it('L1 是负结果、L3 默认关 —— 必须如实标出来（不许显示成"都在跑"）', () => {
     seedProject(1);
     const c = panelCompression(root);
     expect(c.layers.find((l) => l.id === 'L1')?.status).toBe('rejected');
-    expect(c.layers.find((l) => l.id === 'L3')?.status).toBe('todo');
+    // L3 的真实状态是 'off'（**已建成、默认关**），不是 'todo'（未做）：
+    // 1018 实测更正过这条描述 —— 代码、note 文案、跑法（srelay compress --dry-run）都在。
+    // 本用例原先期望 'todo'，是那个错误描述的残留。
+    expect(c.layers.find((l) => l.id === 'L3')?.status).toBe('off');
   });
 });
 

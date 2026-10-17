@@ -125,8 +125,10 @@ export function panelProjectCard(root: string, extra: { daemonAlive?: boolean; l
     //   同一时刻同一事实，四个入口给出 686/55/4/1 —— 这就是「面板在撒谎」的具体形态。
     //   决策：按 text 去重 + 排除 workflow 出处（与 db.ts 读路径同口径）。
     const decSql = "SELECT count(DISTINCT json_extract(je.value,'$.text')) AS c FROM"
+      // [1021 审查 #12] 隔离会话的决策不计入「已确认结论」——与 listDecisions 同一判据
       + " (SELECT decisions AS v FROM sessions WHERE decisions IS NOT NULL"
-      + "  AND json_valid(decisions) AND length(decisions) > 2) t, json_each(t.v) je"
+      + "  AND json_valid(decisions) AND length(decisions) > 2"
+      + "  AND COALESCE(state,'') <> 'quarantine') t, json_each(t.v) je"
       + " WHERE COALESCE(json_extract(je.value,'$.origin'),'') <> 'workflow'";
     out.decisions = Number((db.prepare(decSql).get() as { c?: number } | undefined)?.c ?? 0);
     //   未决：只数 `$.unresolved` 为真的。
@@ -421,7 +423,7 @@ const LAYERS: CompressionLayer[] = [
 function l0Counts(db: { prepare: (s: string) => { all: () => unknown[] } }): { totalDecisions: number; dupRatio: number } {
   let total = 0, dup = 0;
   try {
-    const rows = db.prepare("SELECT decisions FROM sessions WHERE decisions IS NOT NULL AND json_valid(decisions)").all() as Array<{ decisions: string }>;
+    const rows = db.prepare("SELECT decisions FROM sessions WHERE decisions IS NOT NULL AND json_valid(decisions) AND COALESCE(state,'') <> 'quarantine'").all() as Array<{ decisions: string }>;
     for (const r of rows) {
       try { for (const d of JSON.parse(r.decisions) as Array<{ dupCount?: number }>) { total++; if (Number(d?.dupCount ?? 0) > 1) dup++; } } catch { /* 单行坏 JSON 跳过，不影响总数口径以外的行 */ }
     }

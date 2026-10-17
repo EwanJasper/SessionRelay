@@ -16,6 +16,9 @@
 // 共用一套配置会让「换嵌入模型」意外改掉压缩行为（用户点名要求分开，见建设方案 §2.3）。
 
 import { isNearDuplicate } from './dedup.js';
+// 「实词」提取只有一份（dedup 的判据与冲突消解共用它）——这里复用，不另写一套关键词规则。
+// 注意：model.ts 经 dedup 早已间接依赖 store/global（better-sqlite3），本 import 不新增依赖。
+import { subjectTokens } from '../../store/global.js';
 
 // ── 配置（判据的唯一来源是 config.compress；这里只放默认值）──
 
@@ -205,12 +208,38 @@ export function parseMerged(raw: string): MergedItem[] {
   return out;
 }
 
+export interface EvidenceCheck {
+  text: string;
+  evidenceIds: string[];
+  /**
+   * 本层**只**校验了「编号/ID 能否映射到原文 id」——**没有**校验结论是否受原文支持
+   * （那需要语义判定或模型，而本项目的卖点就是零模型）。所以这个字段的类型/取值是**闭死的**：
+   * 就只能是 'ids-only'，不给调用方一个能误解成"已核实"的值。
+   *
+   * [1021 红队 #额外] 病历：把一条假结论配上两个有效 ID，本层照样判定通过。
+   * 这不是"校验有 bug"，是**这一层根本没有这个能力**却让人以为有。
+   * 处置：把边界写进返回值（本字段 + overlap），调用方/审计能看见"验到哪一步"。
+   * ⚠️ 产品文案里"不产生新事实 / 不让模型编"之类承诺**超出了本实现的能力**，
+   * 需要改 README/docs（不在本文件作用域内）——本文件的职责是不再假装验过内容支持。
+   */
+  support: 'ids-only';
+  /** 弱信号：合并文本与本条所引原文的**实词重合率**（0~1）。
+   *  低 ≠ 结论错，只表示"没测到支持"；用于审计排序/抽样复核。
+   *  要把它当硬判据，请显式传 opts.minOverlap（默认不开，避免误杀正常改写）。 */
+  overlap: number;
+}
+
 /**
  * 证据校验 —— 边界⑤的**唯一执行点**。
  * 模型给的 evidence 是编号（"1"/"3"）或 id，两种都认；**认不出的编号直接丢弃该条**。
  * 返回 null 表示"这条没有可用证据，丢弃"。
+ *
+ * **能力边界（不许含混）**：这里只验「出处可映射」，不验「内容支持」。
+ * 返回值的 support 恒为 'ids-only'，overlap 是弱信号（可选用 minOverlap 当闸）。
  */
-export function validateEvidence(m: MergedItem, items: ClusterItem[]): { text: string; evidenceIds: string[] } | null {
+export function validateEvidence(
+  m: MergedItem, items: ClusterItem[], opts: { minOverlap?: number } = {},
+): EvidenceCheck | null {
   const byIndex = new Map<string, string>();
   items.forEach((x, i) => byIndex.set(String(i + 1), x.id));
   const ids: string[] = [];
@@ -221,21 +250,43 @@ export function validateEvidence(m: MergedItem, items: ClusterItem[]): { text: s
   }
   if (ids.length === 0) return null;          // 抽不出证据就丢弃
   if (ids.length < 2) return null;            // 只回指一条 = 没合并，没意义
-  return { text: m.text, evidenceIds: ids };
+  // 弱信号：合并文本的实词有多少能在所引原文里找到（**只**说明"词面上有交集"）
+  const mt = subjectTokens(m.text);
+  const src = new Set<string>();
+  for (const id of ids) {
+    const it = items.find((x) => x.id === id);
+    if (it) for (const t of subjectTokens(String(it.text ?? ''))) src.add(t);
+  }
+  const shared = [...mt].filter((t) => src.has(t)).length;
+  const overlap = mt.size === 0 ? 0 : shared / mt.size;
+  // 可选弱闸：默认关（模型改写常换说法，硬卡会误杀）。开了就与"抽不出证据"同样丢弃。
+  if (typeof opts.minOverlap === 'number' && overlap < opts.minOverlap) return null;
+  return { text: m.text, evidenceIds: ids, support: 'ids-only', overlap: Number(overlap.toFixed(3)) };
 }
 
 // ── 合并内容（纯函数，便于单测；不做任何 IO）──
 
-export interface MergeOutcome { merged: Array<{ text: string; evidenceIds: string[] }>; discarded: number }
+export interface MergeOutcome {
+  merged: EvidenceCheck[];
+  discarded: number;
+  /** 被可选 minOverlap 弱闸拦掉的条数（0 = 没开弱闸，或全都过了） */
+  weakRejected: number;
+  /** 本次合并的能力边界，**随结果一起回给调用方**：
+   *  只验了"证据能映射回原文 id"，没验"结论受原文支持"。
+   *  调用方要打印/落盘审计时请把它带上，别让读者以为事实已被核实。 */
+  supportBoundary: 'ids-only';
+}
 
-export function mergeCluster(items: ClusterItem[], raw: string): MergeOutcome {
+export function mergeCluster(items: ClusterItem[], raw: string, opts: { minOverlap?: number } = {}): MergeOutcome {
   const parsed = parseMerged(raw);
-  const merged: MergeOutcome['merged'] = [];
+  const merged: EvidenceCheck[] = [];
   let discarded = 0;
+  let weakRejected = 0;
   for (const m of parsed) {
-    const v = validateEvidence(m, items);
-    if (!v) { discarded++; continue; }
-    merged.push(v);
+    const mapped = validateEvidence(m, items);       // 只映射，不开弱闸
+    if (!mapped) { discarded++; continue; }          // 抽不出/不足两条证据
+    if (typeof opts.minOverlap === 'number' && mapped.overlap < opts.minOverlap) { weakRejected++; continue; }
+    merged.push(mapped);
   }
-  return { merged, discarded };
+  return { merged, discarded, weakRejected, supportBoundary: 'ids-only' };
 }

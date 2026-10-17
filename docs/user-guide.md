@@ -24,7 +24,7 @@ graph TB
 
     subgraph Consumers["👥 谁来查询记忆"]
         YOU["你（CLI）<br/>search · decisions · history"]
-        AGENT["AI Agent（MCP）<br/>16 个工具"]
+        AGENT["AI Agent（MCP）<br/>13 个工具"]
         TEAM["同事（HOP 交接包）<br/>export → import"]
     end
 
@@ -360,36 +360,37 @@ AI 依据**工具描述**和**响应提示**决策。推荐把下面这段加进
 本项目接入了会话接力记忆库。处理任务时遵循以下规则：
 
 1. **开始新任务前**：先调用 `get_stats` 了解记忆库规模；
-   涉及既有模块时用 `search_sessions` 查相关历史。
+   涉及既有模块时用 `srelay_search`（kind=sessions，默认）查相关历史。
 2. **用户问"之前/上次/为什么当时"**：必须查记忆，
-   优先 `get_decisions`（结论）→ `get_session_detail(include_exchanges:true)`（推导过程）。
+   优先 `srelay_search(kind=decisions)`（结论）→ `srelay_show(include_exchanges:true)`（推导过程）。
 3. **实现前**：确认是否已有相关决策，避免推翻已定的方案。
 4. **引用记忆时**：必须说明出处（"根据 8 月 20 日在 ZCode 中的讨论"）。
 5. **得出重要结论时**：调用 `save_note` 记入记忆，供后续会话使用。
 6. **省 token**：先 search 定位 → 再按需深入。响应里有 estimated_tokens 和 hint 跟随引导。
 ```
 
-### 16 个工具速览
+### 13 个工具速览
+
+> 工具名以 `src/mcp/server.ts` 的 `register(...)` 为准；`npm run check:artifacts` 会断言本文与 README
+> 对 13 个工具名全覆盖，并从 `dist/recall.js` 真跑一次采集验证发布产物契约。
 
 <details>
-<summary><b>读工具（9 个）</b></summary>
+<summary><b>读工具（7 个）</b></summary>
 
 | 工具 | 何时用 |
 |------|--------|
-| `search_sessions` | 找相关历史讨论（出处块强制） |
-| `get_session_detail` | 查看对话内容（role 过滤 / 分页 / 20KB 预算） |
-| `list_sessions` | 浏览所有会话 |
-| `get_decisions` | 拿全部技术决策 |
-| `get_file_history` | 某文件的跨会话讨论史 |
-| `get_unresolved` | 未决问题清单 |
-| `get_stats` | 记忆库规模 |
-| `suggest_related_sessions` | 以会话为锚找相关讨论（导航线索，不过 scope） |
-| `set_scope` | 检索边界逃生口 |
+| `srelay_search` | 检索记忆的**唯一入口**，靠 `kind` 区分：`sessions`（默认，找相关历史讨论，出处块强制）/ `decisions`（全部技术决策，`decision_kind=negative` 只看被否掉的路）/ `unresolved`（未决问题清单）/ `files`（某文件的跨会话讨论史） |
+| `srelay_show` | 查看某会话的消息（role 过滤 / 范围与长度限制，默认最多 20 条 × 1000 字 ≈ 20KB；`include_exchanges:true` 附关键往返 ≈ 3KB） |
+| `list_sessions` | 浏览该项目会话清单 |
+| `get_stats` | 记忆库规模（会话/决策/未决/归档/体积/守护状态） |
+| `set_scope` | 检索边界逃生口（本次只看指定会话） |
+| `get_linked_sessions` | 查询已建立的会话关联 |
+| `suggest_related_sessions` | 以会话为锚找相关讨论（导航线索；内容仍以 `srelay_show` 为准） |
 
 </details>
 
 <details>
-<summary><b>写域工具（7 个）</b></summary>
+<summary><b>写域工具（6 个）</b></summary>
 
 | 工具 | 能力 | 边界 |
 |------|------|------|
@@ -399,7 +400,6 @@ AI 依据**工具描述**和**响应提示**决策。推荐把下面这段加进
 | `import_handoff` | 导入交接包 | 默认隔离 |
 | `release_quarantine` | 放行隔离正文 | 显式调用 |
 | `link_sessions` | 建立会话关联 | 可撤销 |
-| `get_linked_sessions` | 查询关联 | 只读 |
 
 </details>
 

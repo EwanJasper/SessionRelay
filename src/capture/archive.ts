@@ -2,7 +2,7 @@
 // 归档 = 删除消息正文，保留决策/话题/摘要骨架（99.4% 空间回收）
 // 硬删 = 彻底删除含 sessions 行（不可恢复，除非源文件还在）
 import type { DB } from '../store/db.js';
-import { listSessions, getSessionFull, countMessages, insertCleanupLog, insertCleanupDetail } from '../store/db.js';
+import { listSessions, getSessionFull, countMessages, insertCleanupLog, insertCleanupDetail, isNoteSession } from '../store/db.js';
 import type { SessionRow } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
 // [1017 夜] 自动归档改走 ADR-003 的连续强度模型 —— 判据只留一份，理由见 autoArchiveProject 注释
@@ -47,7 +47,11 @@ export interface ArchiveResult {
 function isProtected(s: SessionRow): string | null {
   if (s.state === 'active') return 'active';
   if (s.origin === 'imported') return 'imported';
-  if (s.origin === 'note') return 'note';
+  // [1021 审查 #01 修复] 原判据写的是 `s.origin === 'note'` —— 而 createNoteSession 写的是
+  //   source='note' / origin='manual' / state='active'（confirm 后 confirmed）⇒ 该条件**恒为假**，
+  //   笔记从来就没被保护过：auto archive 会删光它的正文（笔记唯一的内容载体）。
+  //   判据收敛到 store/db.ts 的 isNoteSession（唯一一份），archive 与 rebuild 共用。
+  if (isNoteSession(s)) return 'note';
   // user_tags 含 "保留" 的检查需要 getSessionFull，在调用方做
   return null;
 }
@@ -284,7 +288,7 @@ export function autoArchiveProject(db: DB, policy: AutoArchivePolicy): AutoArchi
   }
   // ② 选择：planAging 是唯一判据（每轮读一次候选列；封顶 ARCHIVE_CAP_PER_ROUND）
   const rows = db.prepare(
-    'SELECT id, origin, state, last_event_at, message_count, extracted_version, decisions, cleanup_at FROM sessions'
+    'SELECT id, source, origin, state, last_event_at, message_count, extracted_version, decisions, cleanup_at FROM sessions'
   ).all() as AgingRow[];
   const planFor = (subset: AgingRow[], minAgeDays: number): AgingPlan => minAgeDays > 0
     ? planAging(subset, {

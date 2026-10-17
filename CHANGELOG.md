@@ -3,6 +3,29 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.5.1-fork.1] - 2026-10-18
+
+### 修复
+- **DSH 事件钩子依赖的导出从未存在于发布模块**（审查 #17）：`integrations/dsh/src/hooks.mjs` 用
+  `recall.js` 的 `loadConfig` / `runSync` 做宿主内即时采集，而产物只导出 `runLifecycle`
+  ⇒ 事件驱动这一路恒失败；且失败日志被 `SRELAY_BRIEF_DEBUG=1` 挡着，等于默认静默
+  （主路径 `srelay watch` 正常，所以症状是"偶尔慢半拍"而非完全没采集，更难发现）。
+  现在 `src/recall-entry.ts` 显式导出这两个原语，钩子在**挂载时**校验一次导出契约，
+  缺失/载入失败一律 `console.warn` 到宿主正常日志（去抖 8s + 冷却 60s 防刷屏）。
+- **发布检查与实现脱节**（审查 #18）：`scripts/check-artifacts.mjs` 用 `registerTool(` 正则提取
+  MCP 工具名，而实现早已改成封装过的 `register(` ⇒ 提取恒为空，脚本在第一条失败即停，
+  「文档覆盖 / 旧计数」两段**从未执行**。改为解析真实 `register(...)` 调用，并加三条不变量
+  （抽到 0 个 / 出现裸 `registerTool(` / 调用数与名字数不符，任一都判红），防止抽取规则再静默漂移。
+  新增断言：从 `dist/recall.js` 加载并**真跑一次采集**（临时项目 + 合成 claude-code 会话），
+  要求 1 会话 / 2 消息落库。
+- **文档工具清单同步**：MCP 侧实际 **13 个工具（7 读 + 6 写）**；`README.md` 与
+  `docs/user-guide.md` 里残留的「16 个工具」、旧工具名（`search_sessions` / `get_decisions` /
+  `get_session_detail` / `get_file_history` / `get_unresolved`）以及 `set_scope` 的读写归属已改正。
+
+### 新增
+- 工作区根 `tools/ses-rebuild.mjs` 守门从 7 门增至 **8 门**：新增 `check:artifacts` ——
+  此前天天说"七门全绿"，而发布检查红着却没人知道（不进守门的检查等于没有）。
+
 ## [0.5.1] - 2026-09-18
 
 ### 修复

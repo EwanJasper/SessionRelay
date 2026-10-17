@@ -14,13 +14,16 @@
 //   ③ 有派生结果（决策 ≥1 条）——没结论的老会话归档了就真没了，不许归档
 //   ④ 会话状态已是 confirmed（落定过的）
 
+import { isNoteSession } from '../../shared/session-kind.js';
+
 export interface AgingRow {
   id: string;
   last_event_at?: string | null;
   message_count?: number | null;
   extracted_version?: number | null;
   state?: string | null;
-  origin?: string | null;          // 保护判据要对齐 archive.ts 的 isProtected（imported/note 不归档）
+  origin?: string | null;          // 「怎么进来的」：imported/note 的判据起点（见 shared/session-kind.ts）
+  source?: string | null;          // 「谁产出的」：isNoteSession 用的是这一列，不是 origin
   decisions?: string | null;
   cleanup_at?: string | null;
 }
@@ -91,7 +94,10 @@ export function planAging(rows: AgingRow[], o: AgingOptions): AgingPlan {
     //    ⇒ 计划恒为空（storage-scout 查出本文件当时还是**死代码**：只被自己的单测引用）。
     //    现在保护判据与 capture/archive.ts 的 isProtected 对齐；执行器复用 runArchive（真删正文的唯一实现）。
     if (String(r.state || '') === 'active') { plan.reasons[r.id] = '正在进行，不归档'; plan.kept.push(r); continue; }
-    if (String(r.origin || '') === 'imported' || String(r.origin || '') === 'note') { plan.reasons[r.id] = '导入/笔记，不归档'; plan.kept.push(r); continue; }
+    // [1021 审查 #01 延伸] 笔记判据走唯一来源 isNoteSession（source==='note'）。
+    //   原来这里判的是 origin==='note' —— 恒假 ⇒ 计划里把笔记算进候选，虽然执行器 runArchive 会拦下，
+    //   但**计划数字在撒谎**（rt-robust 实测：计划「0+1」，执行「0+0」）。数字要绑口径，不许自相矛盾。
+    if (String(r.origin || '') === 'imported' || isNoteSession(r)) { plan.reasons[r.id] = '导入/笔记，不归档'; plan.kept.push(r); continue; }
     if (Number(r.extracted_version ?? -1) !== o.currentVersion) { plan.reasons[r.id] = '规则版本旧，先重算'; plan.kept.push(r); continue; }
     if (decisionCount(r.decisions) < minDec) { plan.reasons[r.id] = '没有派生结论，归档了就真没了'; plan.kept.push(r); continue; }
     const d = ageDays(r.last_event_at, now);

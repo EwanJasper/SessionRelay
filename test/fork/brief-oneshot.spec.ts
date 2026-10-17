@@ -84,10 +84,16 @@ describe('[A] listRecentFiles 口径', () => {
 
 describe('[A] collectBrief 与两条老命令同口径', () => {
   it('① decisions 最近在前、counts 等于实际条数', () => {
-    const db = seed([{ id: 'f100000000000001', files: [], decs: [dec('老决策', 1, 5), dec('新决策', 2, 1)] }]);
+    // 夹具必须同时满足两道**后加的**过滤，否则测的不是"口径"而是"过不过滤"：
+    //   · 文本 ≥ BRIEF_TEXT_MIN(5)  —— 1020 接上 passesBriefFilters 后，3 字以内会被滤掉
+    //   · at 在 48h 内              —— R4 加的时效窗（简报说的是"最近在动什么"）
+    // 用同一窗口内的不同时刻造先后，照样能验"最近在前"。
+    // 两条文本必须**实质不同**：collectBrief 复用核心 isNearDuplicate 去重，
+    // "旧/新" 只改一个字会被判为近重复而合并成 1 条（这不是口径问题，是夹具不像真实的两件事）。
+    const db = seed([{ id: 'f100000000000001', files: [], decs: [dec('决定改用 SQLite 作为存储后端', 1, 0.5), dec('前端框架最终选定为 Vite 方案', 2, 0.1)] }]);
     const pay = collectBrief(db, 'p', { limit: 200 });
     expect(pay.decisions.length).toBe(2);
-    expect(pay.decisions[0].text).toBe('新决策');
+    expect(pay.decisions[0].text).toBe('前端框架最终选定为 Vite 方案');
     expect(pay.counts.decisions).toBe(pay.decisions.length);
     db.close();
   });
@@ -104,9 +110,10 @@ describe('[A] collectBrief 与两条老命令同口径', () => {
   });
 
   it('③ limit 截断取最近 N 条而不是最老的 N 条', () => {
-    const db = seed([{ id: 'f100000000000003', files: [], decs: [dec('一', 1, 9), dec('二', 2, 8), dec('三', 3, 7), dec('四', 4, 1)] }]);
+    // 同上：四条都落在 48h 窗内（0.4/0.3/0.2/0.1 天前），用先后顺序验"取最近 N 条"。
+    const db = seed([{ id: 'f100000000000003', files: [], decs: [dec('决策一的内容', 1, 0.4), dec('决策二的内容', 2, 0.3), dec('决策三的内容', 3, 0.2), dec('决策四的内容', 4, 0.1)] }]);
     const pay = collectBrief(db, 'p', { limit: 2 });
-    expect(pay.decisions.map((d) => d.text)).toEqual(['四', '三']);
+    expect(pay.decisions.map((d) => d.text)).toEqual(['决策四的内容', '决策三的内容']);
     expect(pay.counts.decisions).toBe(2);
     db.close();
   });

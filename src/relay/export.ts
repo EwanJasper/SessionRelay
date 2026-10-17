@@ -12,6 +12,8 @@ import { assembleScope } from '../core/scope/assemble.js';
 import { redactText, type RedactHit } from './redact.js';
 import { buildManifest, packHop, type HopSessionFile } from './hop.js';
 import { buildHandoff, buildTimeline } from './handoff-md.js';
+import { projectIdOf } from '../shared/paths.js';
+import { loadIgnoreRules, isSessionBlocked } from '../capture/ignore.js';
 import type { StatsCounter } from '../core/stats/counter.js';
 
 export const FOOTER = '由会话接力 SessionRelay 生成 · github.com/EwanJasper/SessionRelay · 让 AI 的记忆属于项目';
@@ -27,6 +29,18 @@ export interface ExportOptions {
   filters?: ScopePredicate;
   excludeTags?: string[];
   stats?: StatsCounter;
+  /**
+   * 导出边界是否**重新应用当前排除规则**（默认 true，[1021 审查 #07]）。
+   *
+   * 病历：导出只按 scope 选集，完全不看 .sessionrelayignore —— 会话**入库之后**才加的排除规则
+   * 对导出毫无约束（复现：入库一条「机密会话X」，之后加 title:机密 规则，导出包里仍有它）。
+   * 于是「排除了」只对采集生效，分享/交接边界照样漏。
+   *
+   * 语义定死（对"新增规则对已存内容怎么处理"的回答）：
+   *   · 排除规则是**边界规则**，不是删除命令 —— 新增规则**不动库里已有内容**（要抹掉得显式 forget）；
+   *   · 但**所有对外出口**（hop 包 / markdown / summary）一律按**当前**规则过滤，且把过滤条数报出来。
+   */
+  reapplyIgnore?: boolean;
 }
 
 export interface ExportResult {
@@ -34,6 +48,8 @@ export interface ExportResult {
   sessionCount: number;
   messageCount: number;
   redactionHits: number;
+  /** 导出边界被**当前排除规则**挡掉的会话数（>0 说明库里有内容"规则说别带走"） */
+  ignoredByRules: number;
 }
 
 interface ExportData {
@@ -44,10 +60,17 @@ interface ExportData {
   messageCount: number;
   redactionHits: number;
   redactionLines: string[];
+  ignoredByRules: number;
 }
 
 function buildExportData(opts: ExportOptions): ExportData {
-  const projectId = opts.cfg.identity.project_id ?? opts.root;
+  // ⚠️ 回退值必须是 projectIdOf(root)，不能用 opts.root —— 全库其它入口（capture/import/listDecisions）
+  // 都用 projectIdOf；这里写 root 时，identity.project_id 未配置的库会**静默导出 0 条**
+  // （复现：手写 config 不含 identity → 导出 session_count=0）。判据只许有一份。
+  const projectId = opts.cfg.identity.project_id ?? projectIdOf(opts.root);
+  // 排除规则只在导出边界读一次（不逐会话读配置）
+  const ignoreRules = opts.reapplyIgnore === false ? [] : loadIgnoreRules(opts.root);
+  let ignoredByRules = 0;
   const where = opts.all ? null : assembleScope({ root: opts.root, cfg: opts.cfg, callPred: opts.filters, includeAuto: false }).where;
   const rows = listSessions(opts.db, { projectId, where, limit: 10000 });
 
@@ -60,6 +83,13 @@ function buildExportData(opts: ExportOptions): ExportData {
     const full = getSessionFull(opts.db, row.id);
     if (!full) continue;
     if (opts.excludeTags?.length && full.userTags.some((t) => opts.excludeTags!.includes(t))) continue;
+    // [1021 审查 #07] 导出边界重新过一遍**当前**排除规则（与采集侧同一份判据 isSessionBlocked）
+    if (ignoreRules.length > 0 && isSessionBlocked(ignoreRules, {
+      source: full.source,
+      sourceSessionId: full.sourceSessionId,
+      title: full.title,
+      sourceFile: full.sourceFile ?? '',
+    })) { ignoredByRules++; continue; }
 
     const rd = (text: string | null, field: string, seq?: number): string | null => {
       if (!doRedact || !text) return text;
@@ -112,7 +142,7 @@ function buildExportData(opts: ExportOptions): ExportData {
     const pats = h.hits.map((x) => `${x.pattern}×${x.count}`).join(', ');
     return `${h.session} ${h.field}${where}: ${pats}`;
   });
-  return { sessions, decisions, topicMap, fileMap, messageCount, redactionHits: allRedactionHits.length, redactionLines };
+  return { sessions, decisions, topicMap, fileMap, messageCount, redactionHits: allRedactionHits.length, redactionLines, ignoredByRules };
 }
 
 export function runExport(opts: ExportOptions): ExportResult {
@@ -144,18 +174,21 @@ export function runExport(opts: ExportOptions): ExportResult {
   fs.writeFileSync(out, packHop(manifest, files));
   insertTransferLog(opts.db, 'export', out, manifest.exported_by, null, data.sessions.map((s) => s.id));
   opts.stats?.increment('export_pkg');
-  return { file: out, sessionCount: data.sessions.length, messageCount: data.messageCount, redactionHits: data.redactionHits };
+  return {
+    file: out, sessionCount: data.sessions.length, messageCount: data.messageCount,
+    redactionHits: data.redactionHits, ignoredByRules: data.ignoredByRules,
+  };
 }
 
 /** markdown / summary 直出（方针 §8.4 --format）：summary 为免会话细节的精简版 */
-export function runExportMarkdown(opts: ExportOptions & { summaryOnly?: boolean }): { file: string; sessionCount: number } {
+export function runExportMarkdown(opts: ExportOptions & { summaryOnly?: boolean }): { file: string; sessionCount: number; ignoredByRules: number } {
   const data = buildExportData(opts);
   const md = buildHandoff(path.basename(opts.root), data.sessions, data.decisions, FOOTER, { summaryOnly: opts.summaryOnly });
   const out = opts.output ?? path.join(process.cwd(), opts.summaryOnly ? 'SUMMARY.md' : 'HANDOFF.md');
   fs.writeFileSync(out, md, 'utf8');
   insertTransferLog(opts.db, 'export', out, null, null, data.sessions.map((s) => s.id));
   opts.stats?.increment('export_pkg');
-  return { file: out, sessionCount: data.sessions.length };
+  return { file: out, sessionCount: data.sessions.length, ignoredByRules: data.ignoredByRules };
 }
 
 function getSessionMessagesForExport(db: DB, sessionId: string): Array<{ seq: number; role: string; content: string; createdAt: string | null }> {

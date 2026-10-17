@@ -68,6 +68,40 @@ export function packHop(manifest: HopManifest, files: Record<string, string>): U
 
 export class ZipSlipError extends Error {}
 export class IntegrityError extends Error {}
+/** 清单与包内容**对不上**（缺文件、清单外多余文件、会话数不符） */
+export class ManifestMismatchError extends Error {}
+
+/**
+ * 清单必须**覆盖所有被消费的文件**（[1021 审查 #09]）。
+ *
+ * 病历：unpackHop 只做「清单里列的 → 必须存在且哈希一致」，**从没检查反方向**。
+ * 于是「integrity.files 为空 + 包内塞 sessions/evil.json」这种包能一路导入：
+ * 校验集合（空）与消费集合（全部 sessions/*.json）不一致，多出来的文件没人校验。
+ * 复现：空清单 + 1 个会话文件 → imported=1，该会话完全没过哈希校验。
+ *
+ * 判据只此一份：缺文件、多余文件、会话数不符三种都在这儿判，import 侧不再重复实现。
+ */
+export function assertManifestCovers(manifest: HopManifest, files: Record<string, string>): void {
+  const listed = new Set(Object.keys(manifest.integrity?.files ?? {}));
+  const present = Object.keys(files).filter((n) => n !== 'manifest.json');
+  const unlisted = present.filter((n) => !listed.has(n)).sort();
+  if (unlisted.length > 0) {
+    throw new ManifestMismatchError(
+      '包内有清单外的文件（未经完整性校验，拒绝导入）：' + unlisted.slice(0, 5).join(', ')
+      + (unlisted.length > 5 ? ` 等 ${unlisted.length} 个` : ''),
+    );
+  }
+  const missing = [...listed].filter((n) => !(n in files)).sort();
+  if (missing.length > 0) {
+    throw new ManifestMismatchError('清单列了但包内没有：' + missing.slice(0, 5).join(', '));
+  }
+  const sessionFiles = present.filter((n) => n.startsWith('sessions/') && n.endsWith('.json'));
+  if (Number(manifest.session_count) !== sessionFiles.length) {
+    throw new ManifestMismatchError(
+      `会话数与清单不符：manifest.session_count=${manifest.session_count}，包内 sessions/*.json=${sessionFiles.length}`,
+    );
+  }
+}
 
 /** 解包到目录（zip-slip 防护）+ 完整性校验（任一不符整体拒绝，方针 §10.4） */
 export function unpackHop(pkgPath: string, destDir: string): { manifest: HopManifest; files: Record<string, string> } {
@@ -89,5 +123,7 @@ export function unpackHop(pkgPath: string, destDir: string): { manifest: HopMani
     if (!(name in files)) throw new IntegrityError(`缺文件：${name}`);
     if (sha256Hex(files[name]) !== expected) throw new IntegrityError(`完整性校验失败：${name}`);
   }
+  // 反方向也要查：清单外文件、会话数不符（同一处判据，见 assertManifestCovers）
+  assertManifestCovers(manifest, files);
   return { manifest, files };
 }

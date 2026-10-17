@@ -1,5 +1,5 @@
 // 捕获同步引擎（技术方案 §5.1 / 改进方案 改动1 注册表化 + 改动3 compaction 警告）
-import { createDb, upsertCapturedSession, insertMessage, rollbackSession,
+import { createDb, upsertCapturedSession, insertMessage, upsertMessage, rollbackSession,
          bumpMessageCount, getCursor, recordCursor, loadTombstones } from '../store/db.js';
 import type { DB } from '../store/db.js';
 import type { RelayConfig } from '../shared/config.js';
@@ -14,6 +14,14 @@ export interface SyncStats {
   discovered: number;
   newSessions: number;
   newMessages: number;
+  /**
+   * 已存在消息的**正文被覆盖**了几条（[1021 审查 #04]）。
+   *
+   * 为什么要单独计数：流式回答（ZCode 的 part 原地更新）第二次读到的不是新消息，
+   * 而是同一条消息的完整正文 —— 它不该计入 newMessages（那会让"新增"这个数字虚高），
+   * 但**必须**计入某个可观测的量，否则"重读并覆盖"这件事本身又变成静默行为。
+   */
+  updatedMessages: number;
   resumed: number;
   badLines: number;
   blocked: number;
@@ -44,19 +52,39 @@ function titleFromMessages(msgs: Array<{ role: string; content: string }>): stri
 // 没有它重建后的库永远收不到重摄。已知会话集=每周期一条本地聚合查询，代价毫秒级。
 // 内存态即够：守护重启后首轮全量（本就是补账需求）；10 分钟一次全量清扫兜底一切"以为没变其实变了"。
 const syncWatermark = new Map<string, string>();
-let lastFullSweep = 0;
+/** 兜底全量扫描间隔：10 分钟。 */
+export const FULL_SWEEP_INTERVAL_MS = 600_000;
+// [1021 审查 #15 修复] 记录「上一次**真正完成**一轮完整发现」的时刻。
+//   病历：原实现每轮同步都执行 `lastFullSweep = Date.now()`，而判据是
+//   `Date.now() - lastFullSweep > 600_000` —— 只要同步间隔 < 10 分钟（守护常态，30s/60s 一拍），
+//   这个条件**永远不会成立**，"10 分钟兜底全量清扫" 在持续同步时一次都没发生过
+//   （报告用假适配器模拟 12 分钟 24 次同步：实测只读了 1 次源）。
+//   现在：只有该轮**完整跑完发现阶段**（没抛错 + 所有配置源都注册到了适配器）才推进时间戳；
+//   时间源取 opts.now（可注入），测试/脚本能模拟长跨度而不真的睡觉。
+let lastFullSweepMs = 0;
+/** 这一轮是否该做兜底全量扫描（导出：测试与脚本用同一个判据，不许两处各写一套）。 */
+export function fullSweepDue(nowMs: number): boolean {
+  return nowMs - lastFullSweepMs > FULL_SWEEP_INTERVAL_MS;
+}
+/** 一轮**完整**发现结束后调用。失败/半途的轮次不许调（否则兜底又被自己刷掉 = 原 bug）。 */
+export function noteFullSweepDone(atMs: number): void {
+  lastFullSweepMs = atMs;
+}
 
 export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   const root = opts.projectRoot;
   const cfg = opts.config;
   const mode = cfg.capture.mode;
-  const result: SyncStats = { mode, discovered: 0, newSessions: 0, newMessages: 0, resumed: 0, badLines: 0, blocked: 0, warnings: [] };
+  const result: SyncStats = { mode, discovered: 0, newSessions: 0, newMessages: 0, updatedMessages: 0, resumed: 0, badLines: 0, blocked: 0, warnings: [] };
 
   if (mode === 'off') return result;
 
   // [fork 0922] 10 分钟全量清扫：清水位线跑一轮完整 ingest，堵一切"以为没变其实变了"的边角
-  if (Date.now() - lastFullSweep > 600_000) syncWatermark.clear();
-  lastFullSweep = Date.now();
+  // [修 #15] 判定用可注入时钟；**只有本轮真的完整跑完**才推进 lastFullSweepMs（见文件顶部注释）
+  const nowMs = (opts.now ?? new Date()).getTime();
+  const sweepDue = fullSweepDue(nowMs);
+  if (sweepDue) syncWatermark.clear();
+  let sweepCompleted = true;   // 源缺适配器 / 中途抛错都会把它置 false
 
   // 改动 1：注册表初始化（含 custom adapter 加载）——[fork] 原 here 连调两次，
   // 第二次因 customLoaded 守卫恒返回空结果，custom adapter 的加载错误从未上报
@@ -83,6 +111,7 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
       const adapter = get(source);
       if (!adapter) {
         result.warnings.push(`未知会话源：${source}（可用：${list().map(a => a.id).join(', ')}）`);
+        sweepCompleted = false;   // [修 #15] 源都没认全，这一轮不算"完整扫描"
         continue;
       }
       const aConfig = adapterConfig(cfg, source);
@@ -132,8 +161,14 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
         if (sig !== undefined) syncWatermark.set(wmKey, sig);
       }
     }
+  } catch (e) {
+    // [修 #15] 中途抛错的轮次不算"完整扫描"：保持旧时间戳，下一轮重试（finally 里也不会推进）
+    sweepCompleted = false;
+    throw e;
   } finally {
     if (own) db.close();
+    // [修 #15] 只有**真正完整**的一轮才推进兜底时间戳；中途抛错/缺源时保持旧时间戳，下一轮重试。
+    if (sweepDue && sweepCompleted) noteFullSweepDone(nowMs);
   }
   // [1015 夜] 看板自动区刷新必须挂在**守护这条路径**上（runSync），不能只挂在 `srelay sync` 命令上——
   // 实测守护进程跑的就是 runSync，于是「全自动」在真实使用里从没自动过（只有手动 sync 才会刷）。
@@ -167,7 +202,7 @@ export async function captureSessions(opts: {
   stats?: StatsCounter;
 }): Promise<SyncStats> {
   const cfg = opts.config;
-  const result: SyncStats = { mode: 'manual', discovered: opts.sessions.length, newSessions: 0, newMessages: 0, resumed: 0, badLines: 0, blocked: 0, warnings: [] };
+  const result: SyncStats = { mode: 'manual', discovered: opts.sessions.length, newSessions: 0, newMessages: 0, updatedMessages: 0, resumed: 0, badLines: 0, blocked: 0, warnings: [] };
   const ignoreRules = loadIgnoreRules(opts.projectRoot);
   const tombstones = loadTombstones(opts.db);
   const projectId = cfg.identity.project_id ?? projectIdOf(opts.projectRoot);
@@ -270,10 +305,20 @@ async function ingestOne(
     }
 
     if (ctx.mode === 'full') {
+      // [1021 审查 #04] 流式回答的正文是**原地更新**的：同一条消息第二次读到的内容更长/更完整。
+      //   原来这里只调 insertMessage（内部是 INSERT OR IGNORE + UNIQUE(session_id, seq_num)）
+      //   ⇒ 覆盖被静默丢弃 ⇒ 库里永久留着半截回答，且没有任何迹象。
+      //   改用 upsertMessage：新消息照常插入，已存在的正文变了就覆盖。
+      //   计数要分开：覆盖不算 newMessages（否则"新增"虚高），但要计入 updatedMessages（否则又静默）。
       let inserted = 0;
-      for (const m of read.messages) inserted += insertMessage(db, { sessionId: up.id, role: m.role, content: m.content, seqNum: m.seqNum, createdAt: m.createdAt });
+      let updated = 0;
+      for (const m of read.messages) {
+        const u = upsertMessage(db, { sessionId: up.id, role: m.role, content: m.content, seqNum: m.seqNum, createdAt: m.createdAt });
+        if (u.updated) updated++; else inserted += u.changes;
+      }
       if (inserted > 0) bumpMessageCount(db, up.id, inserted);
       ctx.result.newMessages += inserted;
+      ctx.result.updatedMessages += updated;
     } else {
       bumpMessageCount(db, up.id, read.messages.length);
       ctx.result.newMessages += read.messages.length;

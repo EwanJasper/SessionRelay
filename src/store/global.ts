@@ -76,6 +76,14 @@ export function addLesson(db: Database.Database, input: AddInput): { id: number;
   let reason = '';
   if (grade !== 'inferred' && !input.sourceRef) { effectiveGrade = 'inferred'; reason = '给了定级但没给来源，降为 inferred'; }
   // 状态：有证据的显式录入 = verified；自动产 / 无来源 = draft（设计 §11.2 的「不能随便入库」）
+  //
+  // ⚠️ [1021 审查 #11] **凡是自动/批量写入方，必须显式传 status**，不许吃这个默认值。
+  //   病历：lesson-harvest（采集）只传了 grade + sourceRef，没传 status ⇒ 命中"有证据=verified" ⇒
+  //   库里落成 verified，而命令输出还在说「写入草稿」——**输出与库不一致**，人工复核门槛被绕过。
+  //   补救：采集侧已显式 status:'draft' 并回读核对；这里保留默认值不动，是因为**手工录入**
+  //   （srelay lesson add --source X --grade verified-user）本来就该是 verified，
+  //   改默认会破坏那个正常路径。
+  //   判据：你是"人在录"还是"程序在攒"？程序一律显式传 status。
   let status: Status = input.status ?? (effectiveGrade !== 'inferred' && !!input.sourceRef ? 'verified' : 'draft');
   // [红队 A-9] 显式 `--status verified` 不能绕开"没有定级就是草稿"：注入闸有 `grade <> 'inferred'` 兜着，
   // 但库里留一条"verified 且 inferred"的矛盾记录会让人误判（列表里到底算 ● 还是 ○）。

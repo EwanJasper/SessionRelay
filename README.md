@@ -185,7 +185,7 @@ graph TB
 
     subgraph Consumers["👥 谁来查询记忆"]
         YOU["你（CLI）<br/>search · decisions · history"]
-        AGENT["AI Agent（MCP）<br/>16 个工具"]
+        AGENT["AI Agent（MCP）<br/>13 个工具"]
         TEAM["同事（HOP 交接包）<br/>export → import"]
     end
 
@@ -280,7 +280,7 @@ bigram 的结果列表更干净（平均 3.0 条 vs 38.5 条，jieba 多出来�
 > 1014 实测这个不对称让 4361 条消息的客户端样板文字占掉一个库全部索引的 15.9%，
 > 一直没被发现，因为它的症状是"索引胀大"而不是"简报出错"。
 
-### 🤖 MCP Server（13 个工具，6 读 + 7 写）
+### 🤖 MCP Server（13 个工具，7 读 + 6 写）
 
 任何支持 MCP 的 AI agent 接入后，在这个项目里不再是失忆的。
 
@@ -289,7 +289,7 @@ bigram 的结果列表更干净（平均 3.0 条 vs 38.5 条，jieba 多出来�
 > （「工具尽量少、能力不变」）。如果手上的旧文档或旧脚本还在调那四个名字，会调到不存在的工具。
 
 <details>
-<summary><b>6 个读工具</b>——AI 从此能回答的问题</summary>
+<summary><b>7 个读工具</b>——AI 从此能回答的问题</summary>
 
 | 工具 | 回答的问题 |
 | ---- | ---------- |
@@ -299,18 +299,18 @@ bigram 的结果列表更干净（平均 3.0 条 vs 38.5 条，jieba 多出来�
 | `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现，带可解释理由） |
 | `get_linked_sessions` | "这个会话和哪些会话连着？"（显式建立的关联，双向 + kind） |
 | `get_stats` | "记忆库什么状态？"（会话数 / 来源分布 / 体积） |
+| `set_scope` | "这次只看某个会话"（检索边界逃生口） |
 
 </details>
 
 <details>
-<summary><b>7 个写域工具</b>——AI 不再只是读者</summary>
+<summary><b>6 个写域工具</b>——AI 不再只是读者</summary>
 
 | 工具 | 作用 |
 | ---- | ---- |
 | `save_note` | 把一条结论 / 笔记沉淀进项目记忆 |
 | `annotate_session` | 给会话打标注（话题 / 状态） |
 | `link_sessions` | 建立会话关联（`continues` 延续 / `related` 相关 / `pinned` 挂载） |
-| `set_scope` | 检索边界逃生口（本次只看指定会话） |
 | `release_quarantine` | 解除隔离（误判为噪声的会话放回检索） |
 | `export_handoff` | 导出 `.hop` 交接包 |
 | `import_handoff` | 导入交接包（sha256 校验 + 归化到当前项目） |
@@ -493,7 +493,7 @@ timeline
 claude mcp add sessionrelay --scope user -- srelay serve
 ```
 
-注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、16 个工具就绪。
+注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、13 个工具就绪。
 
 ### ZCode / 其他 MCP 客户端
 

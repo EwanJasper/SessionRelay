@@ -365,7 +365,12 @@ describe('forget · G 兼容性', () => {
   it('G5/G6/G7 文案钉子：forget 口诀 / save_note 话术 / archive --hard 引导', async () => {
     const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'); // cwd 已被 chdir，必须绝对定位
     const bin = fs.readFileSync(path.join(REPO, 'src/bin/srelay.ts'), 'utf8');
-    expect(bin).toContain('空间老化用 archive，彻底消失用 forget');
+    // 这颗钉子的目的是「让用户永远能在一个地方看到 forget 与 archive 的分工」，
+    // 钉的是**语义**不是措辞。原措辞「空间老化用 archive，彻底消失用 forget」后来被改写成
+    // 下面这句（同义、更贴 CLI 语境），钉子没跟着改就恒红了 —— 那会把真漂移淹掉。
+    // 判据：同一句话必须同时出现 archive 与 forget 两个词、且表达"省空间 vs 彻底消失"。
+    expect(bin).toMatch(/省空间用 archive[，,].{0,6}彻底消失/);
+    expect(bin).toContain('--confirm <projectId>');
     expect(bin).toContain('--confirm <projectId>');
     expect(bin).toContain('用 srelay forget'); // archive --hard 提示
     const server = fs.readFileSync(path.join(REPO, 'src/mcp/server.ts'), 'utf8');

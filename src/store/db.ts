@@ -780,7 +780,10 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
   // [fork 0924b] 不再过滤 state='confirmed'——长活会话（一直 active）的决策也要可见，
   // 否则决策列再新鲜也进不了简报（mc整合包 0924 实测：791 条消息的活跃会话 9 条决策不可见）。
   // 未确认会话的"半成品"风险由抽取守卫+origin 排除+简报 48h 窗三层兜住。
-  const conds = ['project_id = ?', 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')"];
+  // [1021 审查 #12] 隔离会话的决策**不得**进入正常已确认结论视图。
+  //   隔离导入只拦了正文，没拦 decisions —— 于是包里的不可信决策仍能被 listDecisions 返回。
+  //   现在按 state 排除：quarantine 的内容要经 release_quarantine 放行后才算数。
+  const conds = ['project_id = ?', 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')", "COALESCE(state, '') != 'quarantine'"];
   const params: unknown[] = [projectId];
   if (filter?.source) { conds.push('source = ?'); params.push(filter.source); }
   // ADR-001：按 kind 过滤。SQL 层用 JSON 函数不可靠（不同 Node/SQLite 版本的 json_each
@@ -902,7 +905,7 @@ export interface UnresolvedRow {
 
 export function listUnresolved(db: DB, projectId: string, limit = 20): UnresolvedRow[] {
   // [fork 0924] 同步排除 workflow 施工会话（与 listDecisions 同规，问题 4 的垃圾同源）
-  const rows = db.prepare(`SELECT id, source, title, created_at, key_questions FROM sessions WHERE project_id = ? AND key_questions IS NOT NULL AND (origin IS NULL OR origin != 'workflow') ORDER BY created_at DESC`).all(projectId) as Array<{
+  const rows = db.prepare(`SELECT id, source, title, created_at, key_questions FROM sessions WHERE project_id = ? AND key_questions IS NOT NULL AND (origin IS NULL OR origin != 'workflow') AND COALESCE(state, '') != 'quarantine' ORDER BY created_at DESC`).all(projectId) as Array<{
     id: string; source: string; title: string | null; created_at: string; key_questions: string;
   }>;
   const out: UnresolvedRow[] = [];
@@ -1016,6 +1019,15 @@ export interface ImportedSessionInput {
   messageCount: number; topics: string[]; decisions: Array<{ text: string; seq: number; at?: string; pinned?: boolean; kind?: 'decision' | 'negative'; msgId?: string | number }>;
   summaryRule: string | null; author: string | null; importedFrom: string | null; originProject: string | null;
   contentHash: string | null; sourceFile: string | null;
+  /**
+   * 隔离导入时置 true → 会话落成 state='quarantine'（[1021 审查 #12]）。
+   *
+   * 病历：隔离导入以前与普通导入**存得一模一样**（origin='imported', state='confirmed'），
+   * 只有 source_file 指向隔离目录。后果：正文确实没入库，但包里的 decisions / summary
+   * 仍以"已确认会话"的身份被 listDecisions 正常返回 —— 隔离只隔离了正文，没隔离不可信结论。
+   * 现在给隔离会话一个**显式状态**，决策/未决视图据此排除；release_quarantine 放行时再改回 confirmed。
+   */
+  quarantined?: boolean;
 }
 
 /** 导入（T21 归化 + 往返规则）：同身份同 hash 跳过；同身份不同 hash → 后缀保留双方 */
@@ -1041,8 +1053,8 @@ export function insertImportedSession(db: DB, s: ImportedSessionInput): { id: st
     INSERT INTO sessions (id, source, source_session_id, project_id, origin, state, title, created_at, last_event_at,
                           message_count, topics, decisions, summary_rule, meta_text, author, imported_from,
                           origin_project, content_hash, source_file, confirmed_at, extracted_version)
-    VALUES (?, ?, ?, ?, 'imported', 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, s.source, sid, s.projectId, s.title, s.createdAt, s.lastEventAt ?? s.createdAt,
+    VALUES (?, ?, ?, ?, 'imported', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, s.source, sid, s.projectId, s.quarantined ? 'quarantine' : 'confirmed', s.title, s.createdAt, s.lastEventAt ?? s.createdAt,
     s.messageCount, JSON.stringify(s.topics), JSON.stringify(s.decisions), s.summaryRule, metaText,
     s.author, s.importedFrom, s.originProject, s.contentHash, s.sourceFile, new Date().toISOString(), EXTRACT_VERSION);
   return { id, skipped: false };
@@ -1190,6 +1202,22 @@ export function getLinkedSessions(db: DB, sessionId: string): LinkedSessionBrief
 
 // ── AI 笔记会话（MCP 写域：结论性记忆，source='note'，可溯源可检索） ──
 
+/**
+ * 这条会话是不是**手写笔记**（[1021 审查 #01] 判据收敛）。
+ *
+ * 病历：笔记建时写的是 source='note' / origin='manual'。但
+ *   · capture/archive.ts 查的是 `origin === 'note'` → 永不成立 → 笔记照样被归档，正文被删；
+ *   · capture/rebuild.ts 只迁 `origin = 'imported'` → 笔记不在其列 → 重建后笔记从新库消失。
+ * 两处各自写了一套"什么是笔记"的猜测，而且都猜错了。
+ * 现在只留这一个判据，所有需要"笔记要特殊保护"的地方都必须调它。
+ *
+ * 为什么用 source 而不是 origin：source 是**谁产的**（note = MCP save_note 写的），
+ * origin 是**怎么进来的**（manual = 不是自动采集）。后者会把任何人工补录也误判成笔记。
+ */
+// 判据本体在 shared/session-kind.ts（中性层，core/compact 也要用，不能从 store 反向依赖）。
+// 这里转出口，保持既有的 import { isNoteSession } from '../store/db.js' 调用点不变。
+export { isNoteSession, isUnrebuildableSession } from '../shared/session-kind.js';
+
 export function createNoteSession(db: DB, o: { projectId: string; title: string; content: string; tags?: string[] }): string {
   const now = new Date();
   const nid = `note-${now.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -1274,6 +1302,35 @@ export function insertMessage(
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(m.sessionId, m.role, m.content, searchTextOf(idxSource), m.seqNum, m.createdAt ?? null);
   return info.changes;
+}
+
+/**
+ * 写入或**更新**一条消息（[1021 审查 #04]）。
+ *
+ * 病历：insertMessage 用的是 `INSERT OR IGNORE`，而 messages 上有 UNIQUE(session_id, seq_num)。
+ * 于是同一条消息**再次写入时被静默忽略** —— 这对流式回答是致命的：
+ * 让 ZCode 那种"同一条 part 的正文原地从半截变完整"的场景，永远只能存下第一次看到的半截，
+ * 结尾的修正/结论/失败说明全部丢失，而且**没有任何迹象**。
+ *
+ * 判据：内容或角色变了才 UPDATE，没变就一个字节都不动（避免无谓写放大与 FTS 重建）。
+ * 调用方负责决定"要不要重读"；这里只保证"重读了就能覆盖"。
+ */
+export function upsertMessage(
+  db: DB,
+  m: { sessionId: string; role: string; content: string; seqNum: number; createdAt?: string },
+): { changes: number; updated: boolean } {
+  const idxSource = m.content.length > 100_000 ? m.content.slice(0, 100_000) : m.content;
+  const prev = db.prepare(
+    'SELECT id, role, content FROM messages WHERE session_id = ? AND seq_num = ?',
+  ).get(m.sessionId, m.seqNum) as { id: number; role: string; content: string } | undefined;
+  if (!prev) {
+    const ins = insertMessage(db, m);
+    return { changes: ins, updated: false };
+  }
+  if (prev.role === m.role && prev.content === m.content) return { changes: 0, updated: false };
+  db.prepare('UPDATE messages SET role = ?, content = ?, search_text = ? WHERE id = ?')
+    .run(m.role, m.content, searchTextOf(idxSource), prev.id);
+  return { changes: 1, updated: true };
 }
 
 export function countMessages(db: DB, sessionId: string): number {

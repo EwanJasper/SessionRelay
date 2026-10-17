@@ -9,7 +9,7 @@ import {
   openExisting, createDb, getSessionFull, getLinkedSessions,
   insertTombstone, insertForgetLog, finalizeForgetLog, insertForgetDetail, getForgetHistory,
 } from '../store/db.js';
-import { appendSessionIgnoreRule } from '../capture/ignore.js';
+import { appendSessionIgnoreRule, loadIgnoreRules } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { die, pc, fmtDate } from './ui.js';
 import type { DB } from '../store/db.js';
@@ -263,13 +263,41 @@ async function cmdForgetAll(root: string, cfg: ReturnType<typeof loadConfig>, f:
 
   const main = dbFile(root);
   const stats = { sessions: 0, messages: 0, logs: 0 };
+  // [1021 审查 #06 修复] 需要先把每个「将被清掉」的会话身份拿出来：整库遗忘会连
+  //   forget_tombstones 表一起删（次级防线随库蒸发），而主防线 .sessionrelayignore 不会自己生成。
+  const identities: Array<{ id: string; source: string; sid: string }> = [];
   if (fs.existsSync(main)) {
     const db = openExisting(main);
     try {
       stats.sessions = (db.prepare('SELECT COUNT(*) n FROM sessions').get() as { n: number }).n;
       stats.messages = (db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number }).n;
       stats.logs = (db.prepare('SELECT COUNT(*) n FROM forget_log').get() as { n: number }).n;
+      for (const r of db.prepare('SELECT id, source, source_session_id FROM sessions').all() as Array<{ id: string; source: string; source_session_id: string }>) {
+        identities.push({ id: r.id, source: r.source, sid: r.source_session_id });
+      }
     } finally { db.close(); }
+  }
+
+  // ── [1021 审查 #06 修复] 防复活闸：删库**之前**先把身份落成持久规则 ──
+  //   病历：原实现"删库 → 建空库"，只保留原有 ignore 文件（通常为空）；下一次 sync 把源文件
+  //   原样收回来（实测 1 → 0 → 1），而摘要却写"源文件不会再被收录"——文案与实际行为相反。
+  //   现在：逐个写 session:<source>/<sid> 规则 → **回读校验** → 全写进去了才允许删库；
+  //   任何一条没写进去就中止（此时库还没删，数据还在），不许出现"宣称不复活、实际能复活"。
+  let rulesWritten = 0;
+  const ruleFailures: string[] = [];
+  for (const it of identities) {
+    try { appendSessionIgnoreRule(root, it.source, it.sid); rulesWritten++; }
+    catch (e) { ruleFailures.push(`${it.id}: ${(e as Error).message}`); }
+  }
+  if (identities.length > 0) {
+    const present = new Set(loadIgnoreRules(root));
+    const missing = identities.filter((it) => !present.has(`session:${it.source}/${it.sid}`));
+    if (missing.length > 0) {
+      die(
+        `防复活规则只写进了 ${identities.length - missing.length}/${identities.length} 条，已中止（库未删，数据还在）`,
+        `失败样例：${missing.slice(0, 3).map((m) => m.id).join('、')}${ruleFailures.length ? ' · ' + ruleFailures[0] : ''}`,
+      );
+    }
   }
 
   for (const ext of ['', '-wal', '-shm']) fs.rmSync(main + ext, { force: true });
@@ -280,11 +308,13 @@ async function cmdForgetAll(root: string, cfg: ReturnType<typeof loadConfig>, f:
   const ts = new Date();
   const summaryName = `forgot-at-${ts.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}.txt`;
   fs.writeFileSync(path.join(relayDir(root), summaryName),
-    `整库遗忘（srelay forget --all）\n时间：${ts.toISOString()}\n项目：${projectId}\n删除：${stats.sessions} 会话 / ${stats.messages} 消息 / ${stats.logs} 条遗忘审计\n注意：.sessionrelayignore（含全部 session: 防复活规则）已保留——源文件不会再被收录。\n`);
+    `整库遗忘（srelay forget --all）\n时间：${ts.toISOString()}\n项目：${projectId}\n删除：${stats.sessions} 会话 / ${stats.messages} 消息 / ${stats.logs} 条遗忘审计\n`
+    + `防复活：已为 ${rulesWritten} 个会话写入 session: 规则到 .sessionrelayignore——源文件不会被重新收录；\n`
+    + `  如需恢复其中某条：删除对应 session: 规则后跑 srelay rebuild（会从源文件重摄）。\n`);
 
   clearSnapshot(root);
-  if (f.json) { console.log(JSON.stringify({ ok: true, ...stats, summary: summaryName })); return; }
+  if (f.json) { console.log(JSON.stringify({ ok: true, ...stats, barriers: rulesWritten, summary: summaryName })); return; }
   console.log(pc.green('✓') + ` 整库遗忘完成：${stats.sessions} 会话 · ${stats.messages} 消息已抹除，空库已重建`);
   console.log(pc.dim(`  摘要：${summaryName}`));
-  console.log(pc.dim(`  .sessionrelayignore 已保留（防复活规则仍在，源文件不会重新入库）`));
+  console.log(pc.dim(`  防复活：${rulesWritten} 条 session: 规则已写入 .sessionrelayignore（源文件不会再被收回来；要恢复请先删规则再 rebuild）`));
 }

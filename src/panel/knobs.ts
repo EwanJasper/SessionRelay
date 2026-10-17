@@ -57,9 +57,14 @@ export const KNOB_SPECS: KnobSpec[] = [
   { path: 'search.auto_days', label: '自动检索回溯天数', type: 'number', min: 0, max: 3650, step: 1,
     hint: '简报自动召回时最多往回看多少天' },
   { path: 'privacy.ignore_file', label: '隐私排除文件名', type: 'string',
-    hint: '项目根下这个文件里的规则不会被采集（默认 .sessionrelayignore）' },
+    hint: '相对项目根的排除文件名（默认 .sessionrelayignore）。它同时作用于**采集**与**导出边界**；'
+      + '改了之后库里已有内容不会被删，只是之后不再被采集、也不会被导出带走' },
+  // [1021 审查 #08] 文案必须与实现一致：此前写"抹掉本机路径与密钥样式字符串"，
+  // 但 redact.ts 里**没有**路径规则（只有密钥/令牌/连接串）—— 声称得比做得多，比不做更危险。
   { path: 'privacy.export_redact', label: '导出时脱敏', type: 'boolean',
-    hint: '打开后导出/分享的内容会先抹掉本机路径与密钥样式字符串' },
+    hint: '导出/分享前抹掉：AWS 密钥、PEM 私钥、Bearer/JWT 令牌、键值型凭据（password/api_key/token 等，'
+      + '含 JSON 双引号、单引号、裸值三种写法）、带账号密码的数据库连接串。'
+      + '**不覆盖**自定义键名的凭据、被切段/编码过的密钥，也不脱敏本机路径——它是默认脱敏，不是安全边界' },
   { path: 'identity.project_id', label: '项目 ID 覆盖', type: 'string',
     hint: '留空=按项目路径推导。改了等于换一个身份，历史数据不会自动跟过来' },
   { path: 'identity.author', label: '作者署名', type: 'string', hint: '写进会话记录，多人共用一个库时用于区分' },

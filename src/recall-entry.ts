@@ -53,6 +53,15 @@ export { cleanDerivedColumns } from './core/extract/derived-cleanup.js';
 // 导出核心库这两个函数，工具才不会自己拼一份（拼错=把搜索面写坏）。
 export { metaTextOf, searchTextOf } from './store/db.js';
 
+// ── 采集：宿主事件钩子（DSH hooks）在**宿主进程内**做单项目增量采集 ──
+// [1021 审查 #17] 钩子（integrations/dsh/src/hooks.mjs）一直在等这两个导出，而本仓库只导出
+// runLifecycle ⇒ 事件驱动即时采集恒报「内核缺 loadConfig / runSync」，且那条日志只在
+// SRELAY_BRIEF_DEBUG=1 时才可见（=坏了没人知道；主路径 srelay watch 正常，所以表现是
+// "偶尔慢半拍"而不是"完全没采集"，更难发现）。
+// 契约在这里显式化：配置加载与增量采集都只有核心库这一份实现，钩子不自抄（铁律 1/2）。
+export { loadConfig } from './shared/config.js';
+export { runSync } from './capture/sync.js';
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

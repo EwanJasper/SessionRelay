@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { segment } from '../core/tokenize/tokenizer.js';
 import { loadConfig, claudeProjectsDir, zcodeDbPath } from '../shared/config.js';
 import { dbFile, findRelayRoot, ignoreFile } from '../shared/paths.js';
+import { ignoreFilePath } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { looksInjected } from '../core/extract/extract.js';
 import { EXTRACT_VERSION, extractVersionOf } from '../capture/recompute.js';
@@ -121,9 +122,16 @@ export async function cmdDoctor(): Promise<void> {
     } else {
       checks.push(c('relay.sqlite', 'warn', '不存在', 'srelay init'));
     }
-    checks.push(fs.existsSync(ignoreFile(root))
-      ? c('.sessionrelayignore', 'ok', '存在')
-      : c('.sessionrelayignore', 'warn', '不存在（无排除规则）'));
+    // [1021 审查 #07 连带] 排除文件路径必须走**唯一解析处**：用户可以在 config 里改 privacy.ignore_file，
+    // 这里若还写死 '.sessionrelayignore'，自定义文件存在时也会误报「不存在（无排除规则）」
+    // —— 和 #18「检查没覆盖被检查的东西」是同一种病。
+    {
+      const igPath = ignoreFilePath(root);
+      const igName = path.basename(igPath);
+      checks.push(fs.existsSync(igPath)
+        ? c(igName, 'ok', '存在')
+        : c(igName, 'warn', '不存在（无排除规则）'));
+    }
     const alive = isDaemonAlive(root);
     if (!alive.alive) {
       checks.push(c('守护进程', 'warn', '未运行', 'srelay watch --install-service 或 srelay sync 兜底'));

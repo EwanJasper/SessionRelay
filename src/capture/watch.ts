@@ -104,6 +104,64 @@ function releaseGlobalPipeLock(): void {
   }
 }
 
+// ── [1021 审查 #02 修复] 运行期配置：每轮热读 + 校验 + 「哪些改动必须重启」 ──
+//
+// 病历：cycle 里 runSync 用的是**启动时**那份 opts.config（cfgTick 只喂给了 digestSemantic）。
+//   于是把 capture.mode 改成 off 之后，守护照收不误——用户按文档"关了采集"，库里还在涨。
+//   这是本项目最忌的"看起来在工作/看起来关了其实没关"。
+// 现在：每个写周期先 loadConfig → 校验 → runSync / runJudge / digestSemantic **全用新配置**；
+//   只有「启动时就固化进定时器/监听器」的项变更才算"尚未生效"，并**明确打一行日志**。
+// 判据只一份：热读走 resolveTickConfig，启动固化项走 startupFixedConfig/diffStartupFixed。
+
+/** 启动时固化、改了必须重启守护才生效的配置项（每项一个可比较的字符串快照）。 */
+export function startupFixedConfig(cfg: RelayConfig): Record<string, string> {
+  return {
+    'capture.sources': JSON.stringify(cfg.capture?.sources ?? []),
+    'archive.enabled': String(cfg.archive?.enabled ?? true),
+    'archive.hot_days': String(cfg.archive?.hot_days ?? 60),
+    'archive.workflow_days': String(cfg.archive?.workflow_days ?? 7),
+    'archive.check_every_min': String(cfg.archive?.check_every_min ?? 60),
+    'recompute.check_every_min': String(cfg.recompute?.check_every_min ?? 360),
+  };
+}
+
+/** 返回「改了但需要重启才生效」的项（空数组 = 全部立即生效）。 */
+export function diffStartupFixed(startedWith: RelayConfig, now: RelayConfig): string[] {
+  const a = startupFixedConfig(startedWith);
+  const b = startupFixedConfig(now);
+  return Object.keys(a).filter((k) => a[k] !== b[k]);
+}
+
+/** 每一项「为什么必须重启」的准确说明（不许用一句笼统话糊过去 —— 说错同样是误导）。 */
+export const STARTUP_FIXED_NOTES: Record<string, string> = {
+  'capture.sources': '文件监听目录在启动时注册；定时周期采集已按新源跑，实时触发要重启',
+  'archive.enabled': '自动归档定时器按启动时的开关注册',
+  'archive.hot_days': '自动归档策略在启动时固化',
+  'archive.workflow_days': '自动归档策略在启动时固化',
+  'archive.check_every_min': '归档检查节奏在启动时固化',
+  'recompute.check_every_min': '重算检查节奏在启动时固化',
+};
+
+/** 运行期校验：真正会跑的那几个字段，非法值宁可沿用上一份，也不许悄悄照跑。 */
+export function validateRuntimeConfig(cfg: RelayConfig): string | null {
+  const mode = cfg.capture?.mode;
+  if (mode !== 'off' && mode !== 'meta' && mode !== 'full') return `capture.mode=${String(mode)} 不在 off|meta|full`;
+  if (!Array.isArray(cfg.capture?.sources)) return 'capture.sources 不是数组';
+  return null;
+}
+
+export interface TickConfig { config: RelayConfig; warnings: string[] }
+
+/** 每轮热读配置。读失败/校验不过 → 沿用上一份**并留痕**（不许静默继续用旧配置当没事）。 */
+export function resolveTickConfig(root: string, fallback: RelayConfig): TickConfig {
+  let cfg: RelayConfig;
+  try { cfg = loadConfig(root); }
+  catch (e) { return { config: fallback, warnings: [`配置读取失败，本轮沿用上一份（修改尚未生效）：${(e as Error).message}`] }; }
+  const invalid = validateRuntimeConfig(cfg);
+  if (invalid) return { config: fallback, warnings: [`配置非法（${invalid}），本轮沿用上一份（修改尚未生效）`] };
+  return { config: cfg, warnings: [] };
+}
+
 // ── [fork 0922] 可停 worker：单项目守护的全部生命周期（原 runWatch 主体，信号等待外提） ──
 export interface WatchWorker {
   root: string;
@@ -182,18 +240,44 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
   timers.push(heartbeat);
   const db = openExisting(dbFile(root));
   dbRef = db;                                   // [R9] 交给账本，失败时由 cleanup 关闭
-  const projectId = opts.config.identity.project_id ?? projectIdOf(root);
 
   let chain: Promise<void> = Promise.resolve(); // 串行化所有写周期（T23 的进程内体现）
   // [fork 0922] 接通本地匿名计数器：守护侧的 ignore 拦截/resumed/confirmed 原来从不计数，
   // status 面板"拦截 0 次"与实际不符
   const stats = new StatsCounter(statsFile(root));
+  // [修 #02] 上一份**可用**配置（热读失败时回落它，并留痕）；以及"只在变化时打一次"的提示状态
+  let lastCfg = opts.config;
+  let lastCfgWarn = '';
+  let warnedFixedSig = '';
+  let warnedMode = String(opts.config.capture.mode);
   const cycle = (why: string) => {
     chain = chain.then(async () => {
       try {
-        const s = await runSync({ projectRoot: root, config: opts.config, db, stats });
+        // ── [修 #02] 每轮热读配置：runSync / runJudge / digestSemantic 一律用它 ──
+        const tick = resolveTickConfig(root, lastCfg);
+        const warnText = tick.warnings.join(' | ');
+        if (warnText && warnText !== lastCfgWarn) { lastCfgWarn = warnText; log(`配置：${warnText}`); }
+        else if (!warnText) lastCfgWarn = '';
+        const cfgNow = tick.config;
+        lastCfg = cfgNow;
+        // 启动时固化的项：改了必须重启才生效 —— 明说，不许假装生效
+        const fixedChanged = diffStartupFixed(opts.config, cfgNow);
+        if (fixedChanged.length > 0) {
+          const sig = fixedChanged.join(',');
+          if (sig !== warnedFixedSig) {
+            warnedFixedSig = sig;
+            log(`⚠ 配置已改，但下列项**需重启守护才生效**（当前仍按启动时的值跑）：`
+              + fixedChanged.map((k) => `${k}（${STARTUP_FIXED_NOTES[k] ?? '启动时固化'}）`).join('、'));
+          }
+        } else if (warnedFixedSig) warnedFixedSig = '';
+        if (String(cfgNow.capture.mode) !== warnedMode) {
+          log(`采集模式已切换：${warnedMode} → ${cfgNow.capture.mode}（立即生效）`);
+          warnedMode = String(cfgNow.capture.mode);
+        }
+        const projectIdNow = cfgNow.identity.project_id ?? projectIdOf(root);
+        const s = await runSync({ projectRoot: root, config: cfgNow, db, stats });
         const spool = consumeHookEvents(root, db, new Date()); // R4：hook 事件 → 立即转 pending
-        const j = runJudge(db, { projectId, now: new Date(), idleMin: opts.config.capture.idle_threshold_min, cooldownH: opts.config.capture.cooldown_hours, stats });
+        const j = runJudge(db, { projectId: projectIdNow, now: new Date(), idleMin: cfgNow.capture.idle_threshold_min, cooldownH: cfgNow.capture.cooldown_hours, stats });
         if (s.newMessages > 0 || s.resumed > 0 || j.confirmed > 0 || spool.endSignals > 0 || why !== 'tick') {
           log(`${why}: +${s.newMessages} 消息 · resumed ${s.resumed} · pending ${j.toPending} · confirmed ${j.confirmed}${spool.endSignals ? ` · hook信号 ${spool.endSignals}` : ''}`);
         }
@@ -201,9 +285,7 @@ export async function startWatchWorker(opts: WatchOptions): Promise<WatchWorker 
         // [1017 夜] **每 tick 重读配置**：守护是常驻进程，缓存 config 会让"关掉语义档"不生效 ——
         // 用户关了开关，后台还在默默补嵌向量（调研件 §4 的头号风险：看起来在工作）。
         const { digestSemantic } = await import('../search-svc/semantic.js');
-        let cfgTick = opts.config;
-        try { cfgTick = loadConfig(root); } catch { /* 配置坏了沿用启动时那份 */ }
-        await digestSemantic(db, cfgTick, { projectId, limit: 20 });
+        await digestSemantic(db, cfgNow, { projectId: projectIdNow, limit: 20 });
       } catch (e) {
         log(`周期失败（不退出）: ${(e as Error).message}`);
       }

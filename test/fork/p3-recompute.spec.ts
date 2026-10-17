@@ -89,7 +89,12 @@ describe('P3 · 提取规则版本与分批重算', () => {
     expect(extractVersionOf(db)).toBe(EXTRACT_VERSION);
     const r = recomputeExtractions(db);
     // [v14] RecomputeResult 增加 failed 计数（提取抛异常被跳过的会话数），行为不变
-    expect(r).toEqual({ recomputed: 0, remaining: 0, failed: 0 });
+    // 不用 toEqual 把结果对象的**形状**钉死：每加一个计数（如 archivedCleaned）都会让这条
+    // 「零成本空转」的用例无辜变红，而那正是它最不该关心的东西。断言各项必须为 0 即可。
+    expect(r.recomputed).toBe(0);
+    expect(r.remaining).toBe(0);
+    expect(r.failed).toBe(0);
+    expect(r.archivedCleaned).toBe(0);
   });
 
   it('④ 归档会话（cleanup_at 非空）不进重算队列——正文已删，无从重算', () => {
