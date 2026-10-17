@@ -371,10 +371,16 @@ export function cleanArchivedDecisions(db: DB): number {
     for (const r of rows) {
       // 决策为空/NULL：没什么可清的，**只打戳**就走（否则会每轮被重扫）。
       if (r.decisions === null || r.decisions === undefined || r.decisions === '' || r.decisions === '[]') { markAttempted(db, r.id); continue; }
-      let arr: Array<{ text?: string }> = [];
+      // 需要 pinned 字段（见下方 T8 豁免），所以类型要带它，否则读不到。
+      let arr: Array<{ text?: string; pinned?: boolean }> = [];
       try { arr = JSON.parse(r.decisions); } catch { markAttempted(db, r.id); continue; }  // 坏 JSON 不阻塞，但要打戳防重试每轮重试
       if (!Array.isArray(arr)) { markAttempted(db, r.id); continue; }
-      const kept = arr.filter((d) => passesDecisionTextGuards(String(d?.text ?? '')));
+      // ── [1021 红队 T8 修复] **pinned 决策豁免** ──
+      //   红队合成复现：一条 pinned 的垃圾决策同样被删掉（removed=1）。
+      //   而 pinned 是**用户亲手置顶**的东西 —— 判断「它不是决策」的权力不该高于用户的手动选择。
+      //   本库当前 0 条 pinned（无现存受害），但这属于「一旦发生就找不回来」的删数据路径，必须提前堵上。
+      //   简报过滤器那边早就有 pin 豁免，这里漏了 —— 判据只许有一份，现在补齐。
+      const kept = arr.filter((d) => d?.pinned === true || passesDecisionTextGuards(String(d?.text ?? '')));
       if (kept.length !== arr.length) {
         removed += arr.length - kept.length;
         db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?').run(JSON.stringify(kept), r.id);
