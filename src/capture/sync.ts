@@ -116,9 +116,12 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   try {
     for (const source of cfg.capture.sources) {
       // 改动 1：从注册表取 adapter（不再 if/else）
-      const adapter = get(source);
+      // [1021 回归 P4] **显式带项目根**。不传 root 时 registry 只能退回那个**进程级**的 activeKey，
+      // 而全局守护是并发跑多项目的：两次 await 之间可能被别的项目的 ensureRegistered 改写，
+      // 结果拿到别人项目的同名 custom adapter（红队指出的架构残留）。传 root 就没这个窗口。
+      const adapter = get(source, root);
       if (!adapter) {
-        result.warnings.push(`未知会话源：${source}（可用：${list().map(a => a.id).join(', ')}）`);
+        result.warnings.push(`未知会话源：${source}（可用：${list(root).map(a => a.id).join(', ')}）`);
         sweepCompleted = false;   // [修 #15] 源都没认全，这一轮不算"完整扫描"
         continue;
       }

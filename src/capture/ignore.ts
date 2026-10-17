@@ -91,10 +91,38 @@ export function isSessionBlocked(patterns: string[], t: IgnoreTarget): boolean {
  * ⚠️ 必须走 ignoreFilePath：写 A 读 B 会让墓碑静默失效（本次一并修掉，原本写死 .sessionrelayignore）。
  */
 export function appendSessionIgnoreRule(projectRoot: string, source: string, sourceSessionId: string): void {
-  const rule = `session:${source}/${sourceSessionId}`;
+  appendSessionIgnoreRules(projectRoot, [{ source, sourceSessionId }]);
+}
+
+/**
+ * **批量**追加防复活规则（[1021 回归 P6]）。
+ *
+ * 病历：`forget --all` 原来对每个会话各调一次单条版本，而单条版本每次都
+ * 「读整个文件 → 解析 → 追加一行 → 写回」⇒ 1000 个会话就是 1000 次整文件读写，
+ * 实测 1848ms，且随库增大呈**平方**增长。整库遗忘本来就是最重的一次操作，
+ * 不该在这里再叠一层平方。
+ *
+ * 判据与单条版本逐字相同（幂等跳过已存在、只在需要时补换行），
+ * 区别只是**一次读、一次写**。返回实际新增的条数（供调用方回读校验用）。
+ */
+export function appendSessionIgnoreRules(
+  projectRoot: string,
+  items: Array<{ source: string; sourceSessionId: string }>,
+): number {
+  if (items.length === 0) return 0;
   const file = ignoreFilePath(projectRoot);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  if (parseIgnore(existing).includes(rule)) return; // 幂等：重复 forget / 重复导入不堆叠
-  fs.appendFileSync(file, `${existing.endsWith('\n') || existing === '' ? '' : '\n'}${rule}\n`);
+  const present = new Set(parseIgnore(existing));
+  const add: string[] = [];
+  for (const it of items) {
+    const rule = `session:${it.source}/${it.sourceSessionId}`;
+    if (present.has(rule)) continue;   // 幂等：重复 forget / 重复导入不堆叠
+    present.add(rule);
+    add.push(rule);
+  }
+  if (add.length === 0) return 0;
+  const lead = existing === '' || existing.endsWith('\n') ? '' : '\n';
+  fs.appendFileSync(file, lead + add.join('\n') + '\n');
+  return add.length;
 }

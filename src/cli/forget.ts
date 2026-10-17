@@ -10,7 +10,7 @@ import {
   insertTombstone, insertForgetLog, finalizeForgetLog, insertForgetDetail, getForgetHistory,
   isNoteSession,
 } from '../store/db.js';
-import { appendSessionIgnoreRule, loadIgnoreRules } from '../capture/ignore.js';
+import { appendSessionIgnoreRule, appendSessionIgnoreRules, loadIgnoreRules } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { die, pc, fmtDate } from './ui.js';
 import type { DB } from '../store/db.js';
@@ -287,11 +287,16 @@ async function cmdForgetAll(root: string, cfg: ReturnType<typeof loadConfig>, f:
   //   原样收回来（实测 1 → 0 → 1），而摘要却写"源文件不会再被收录"——文案与实际行为相反。
   //   现在：逐个写 session:<source>/<sid> 规则 → **回读校验** → 全写进去了才允许删库；
   //   任何一条没写进去就中止（此时库还没删，数据还在），不许出现"宣称不复活、实际能复活"。
+  // [1021 回归 P6] **一次读写**写完所有规则。
+  //   原实现逐条调 appendSessionIgnoreRule，而它每次都读整文件+解析+写回 ⇒
+  //   1000 个会话 = 1000 次整文件读写，实测 1848ms，且随库增大呈平方增长。
+  //   语义不变（幂等、失败可感知），只是把 N 次 IO 压成 1 次。
   let rulesWritten = 0;
   const ruleFailures: string[] = [];
-  for (const it of identities) {
-    try { appendSessionIgnoreRule(root, it.source, it.sid); rulesWritten++; }
-    catch (e) { ruleFailures.push(`${it.id}: ${(e as Error).message}`); }
+  try {
+    rulesWritten = appendSessionIgnoreRules(root, identities.map((it) => ({ source: it.source, sourceSessionId: it.sid })));
+  } catch (e) {
+    ruleFailures.push(String((e as Error)?.message ?? e));
   }
   if (identities.length > 0) {
     const present = new Set(loadIgnoreRules(root));
