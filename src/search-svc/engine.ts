@@ -124,7 +124,7 @@ export interface SearchOptions {
   /**
    * [1016 A5] 长度归一化：**默认开**（用户 2026-10-16 拍板）。`lengthNorm: false` 才关，用于 A/B。
    *
-   * 它做什么：`score *= 1 / (1 + log10(1 + message_count / 300))` —— 给"两三千条消息的巨无霸"降权。
+   * 它做什么：`score *= 1 / (1 + log10(1 + message_count / LEN_PENALTY_PIVOT))` —— 给"两三千条消息的巨无霸"降权。
    * 为什么必须在**打分阶段**做：那种会话什么词都碰得到，在每一条路上都是第一名；事后乘系数改不动这件事。
    *
    * 证据（两边都有，一并留档，别只引对自己有利的一半）：
@@ -132,7 +132,8 @@ export interface SearchOptions {
    *   · 20 问人类基准：关键词 15/16/20 不变；大白话 hit@1 10→11、hit@10 18→19；
    *   · **反向代价**：反向出题"答案恰好是那个巨无霸"时 hit@1 21.4%→9.5%；20 问里有一组短题面大白话 hit@1 −2。
    * 净判断：日常问法里"答案在巨型老会话里"是小概率，用户在 2026-10-16 明确选择开启；
-   * 但如果以后发现某些问法变差，第一个该动的是**衰减曲线的常数 300**（改大 = 更温和），不是这条开关。
+   * 但如果以后发现某些问法变差，第一个该动的是**衰减曲线的常数**（改大 = 更温和），不是这条开关。
+   * [1021] 那个常数已收敛为 `LEN_PENALTY_PIVOT`（见文件下方 lenPenaltyOf），别再内联写 300。
    */
   lengthNorm?: boolean;
   /**
@@ -241,7 +242,8 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
     try {
       const rows = db.prepare('SELECT id, message_count AS c FROM sessions WHERE id IN (' + ph + ')').all(...ids);
       const pen = new Map();
-      for (const r of rows as Array<{ id: string; c: number }>) pen.set(r.id, 1 / (1 + Math.log10(1 + Number(r.c || 0) / 300)));
+      // 用唯一实现 lenPenaltyOf()，不再内联一份（见函数定义处的 R10 说明）
+      for (const r of rows as Array<{ id: string; c: number }>) pen.set(r.id, lenPenaltyOf(Number(r.c || 0)));
       for (const h of hits) h.score = h.score * (pen.get(h.sessionId) || 1);
     } catch { /* 取不到就不惩罚 */ }
   }
@@ -419,13 +421,31 @@ function searchCore(db: DB, opts: SearchOptions): SearchHit[] {
  */
 export const DEFAULT_TAG_EXPAND = false;
 /** 会话长度惩罚：把「两三千条消息的巨无霸」压下去（它什么词都碰得到，是所有路的天然第一名） */
+/**
+ * 长度惩罚的**唯一实现**（1021 红队 R10 修复）。
+ *
+ * 原来这条公式在本文件里写了**两遍**：searchOnce 里内联一次、lengthPenalty 里又一次，
+ * 常数 300 也各写一遍。这正是之前 A-11 事故的复发现场 —— 当时的教训是
+ * 「长度惩罚由**融合**这一步统一做，子路必须关掉 searchOnce 的那次，否则二次乘罚」，
+ * 但公式本身仍是两份：改一处忘一处，主路和融合路就会用不同的曲线。
+ *
+ * 现在收敛到这一个函数 + 一个常量：
+ *   `score *= 1 / (1 + log10(1 + message_count / 300))`
+ * 给「两三千条消息的巨无霸」降权。常数 300 越小越激进；要调只改 `LEN_PENALTY_PIVOT`。
+ */
+export const LEN_PENALTY_PIVOT = 300;
+
+export function lenPenaltyOf(messageCount: number): number {
+  return 1 / (1 + Math.log10(1 + Math.max(0, messageCount) / LEN_PENALTY_PIVOT));
+}
+
 function lengthPenalty(db: DB, sids: string[]): Map<string, number> {
   const out = new Map<string, number>();
   if (sids.length === 0) return out;
   const ph = sids.map(() => '?').join(',');
   try {
     const rows = db.prepare('SELECT id, message_count AS c FROM sessions WHERE id IN (' + ph + ')').all(...sids) as Array<{ id: string; c: number }>;
-    for (const r of rows) out.set(r.id, 1 / (1 + Math.log10(1 + Number(r.c ?? 0) / 300)));
+    for (const r of rows) out.set(r.id, lenPenaltyOf(Number(r.c ?? 0)));
   } catch { /* 取不到就不惩罚 */ }
   return out;
 }

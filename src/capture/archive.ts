@@ -89,6 +89,14 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
     ORDER BY COALESCE(last_event_at, created_at) ASC
   `).all(...params) as SessionRow[];
 
+  // ── [1021 红队 R7 修复] 整个写入段包进事务 ──
+  //   原来：先 INSERT cleanup_log（记一笔「我要归档了」），再逐条删 messages、最后 UPDATE 统计。
+  //   全程**没有事务** ⇒ 崩在中途就留下「审计账说归档了 N 条，实际只删了一半」的账实不符，
+  //   而且没法重跑（`cleanup_at IS NULL` 条件会让删过的跳过、没删的继续删，但 bytes_freed 永远对不上）。
+  //   现在：BEGIN IMMEDIATE 包住「建账 → 删正文 → 记明细 → 结账」，异常整批回滚。
+  //   dry-run 不开事务（它本来就不写），所以用 willWrite 而不是无条件 BEGIN。
+  const willWrite = !opts.dryRun && candidates.length > 0;
+  if (willWrite) db.exec('BEGIN IMMEDIATE');
   // 记录 cleanup_log（如果不是 dry-run）
   let logId: number | null = null;
   if (!opts.dryRun && candidates.length > 0) {
@@ -99,6 +107,7 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
     });
   }
 
+  try {
   // 按体积限制（如果指定了 sizeMb；0 也按 0 尊重，同上）
   let bytesBudget = opts.sizeMb != null && Number.isFinite(opts.sizeMb) ? opts.sizeMb * 1024 * 1024 : Infinity;
 
@@ -126,9 +135,17 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
     // 估算释放字节数（每条消息约 5KB 含 search_text + FTS）
     const estBytes = msgCount * 5 * 1024;
 
+    // ── [1021 红队 R8 修复] dry-run 原来在这里**直接 continue，绕过了体积预算** ──
+    //   后果：`--dry-run --size 100` 报的比 `--size 100` 实际做的**多**，
+    //   而 dry-run 的全部意义就是「先看看会做什么」。两边口径必须一致，否则这个功能是骗人的。
+    //   修法：dry-run 也走**同一套**预算记账（archived 计数 + bytesFreed + bytesBudget 递减），
+    //   只是不真的删数据。这样 dry-run 的条数/字节数就是 apply 的忠实预演。
     if (opts.dryRun) {
       result.details.push({ sessionId: s.id, title: s.title, source: s.source, messageCount: msgCount, decisionCount: decisions });
       result.bytesFreed += estBytes;
+      result.archived++;
+      bytesBudget -= estBytes;
+      if (bytesBudget <= 0) break; // 体积够了（与 apply 同一条退出条件）
       continue;
     }
 
@@ -167,6 +184,11 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
   if (!opts.dryRun && logId !== null) {
     db.prepare('UPDATE cleanup_log SET sessions_affected = ?, sessions_skipped = ?, bytes_freed = ? WHERE id = ?')
       .run(result.archived, result.skipped, result.bytesFreed, logId);
+  }
+  if (willWrite) db.exec('COMMIT');   // 账与数据一起落地
+  } catch (e) {
+    if (willWrite) { try { db.exec('ROLLBACK'); } catch { /* 回滚失败也不掩盖原始错误 */ } }
+    throw e;
   }
 
   return result;
