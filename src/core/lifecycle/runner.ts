@@ -166,10 +166,26 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
 
   // ── ① 体检：完整性 + 记账 ──
   if (todue.some((s) => s.id === 'guard')) await runOne(specOf('guard'), () => {
-    const bad: string[] = [];
-    for (const r of roots) { const v = integrityOf(dbFileOf(r)); if (!v.ok) bad.push(base(r) + '(' + v.detail.slice(0, 30) + ')'); }
+    // ★ 三种「不 ok」必须分开说，别一律叫「完整性异常」（2026-10-18 修）：
+    //   corrupt / error 才是真异常；busy（库被别的进程占着）和 missing（这项目还没建库）**都是正常状态**。
+    //   原来把它们全写成「完整性异常」，后果是：一个没接入的新项目、或一个正在被 DSH 用的库，
+    //   都会在健康记录里留下一条「完整性异常」—— 假的警报比没有警报更糟，它会让真的那条没人看。
+    const bad: string[] = [], busy: string[] = [], missing: string[] = [];
+    for (const r of roots) {
+      const v = integrityOf(dbFileOf(r));
+      if (v.ok) continue;
+      const label = base(r) + '(' + v.detail.slice(0, 30) + ')';
+      if (v.kind === 'busy') busy.push(label);
+      else if (v.kind === 'missing') missing.push(label);
+      else bad.push(label);
+    }
     if (bad.length) { try { if (global) logHealthEvent(global, 'guard', 'warn', '完整性异常：' + bad.join(' / ')); } catch { /* 记账失败不阻塞 */ } }
-    return bad.length ? '异常 ' + bad.length + ' 个：' + bad.join(' / ') : roots.length + ' 个库全部完整';
+    else if (busy.length) { try { if (global) logHealthEvent(global, 'guard', 'info', '体检跳过 ' + String(busy.length) + ' 个被占用的库（不是损坏，未做任何改动）：' + busy.join(' / ')); } catch { /* 记账失败不阻塞 */ } }
+    const parts: string[] = [];
+    if (bad.length) parts.push('异常 ' + String(bad.length) + ' 个：' + bad.join(' / '));
+    if (busy.length) parts.push('被占用跳过 ' + String(busy.length) + ' 个（不是损坏）');
+    if (missing.length) parts.push('未建库 ' + String(missing.length) + ' 个（正常）');
+    return parts.length ? parts.join('；') : String(roots.length) + ' 个库全部完整';
   });
 
   // ── [1021 空间自愈] 守护断线核算（只加不改：不动上面的体检分支，也不动 guard.log 的写入方）──

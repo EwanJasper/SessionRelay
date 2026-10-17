@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { integrityOf, isBusyMessage, isCorruptMessage } from '../../src/core/lifecycle/repair.js';
+import { createDb, openReadonly } from '../../src/store/db.js';
 
 /**
  * 2026-10-18 事故回归：库被别的进程锁着时，integrityOf 必须报 kind='busy'，
@@ -56,5 +57,44 @@ describe('库体检 · 「读不了」不许当成「坏了」', () => {
       expect(v.ok).toBe(false);
       expect(v.kind).toBe('missing');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('体检必须用只读连接（2026-10-18 红队 🟡）', () => {
+  const mkDb = (dir: string): string => {
+    const f = path.join(dir, 'relay.sqlite');
+    const db = createDb(f);
+    db.close();
+    return f;
+  };
+
+  it('openReadonly 打开的库真的写不进去', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'srelay-ro-'));
+    const f = mkDb(dir);
+    const db = openReadonly(f);
+    let wrote = false;
+    try { db.exec('CREATE TABLE should_not_exist(a)'); wrote = true; } catch { /* 应该抛 */ }
+    db.close();
+    expect(wrote, '只读连接竟然写成功了 —— 那不是只读').toBe(false);
+  });
+
+  it('openReadonly 不创建、不迁移：库文件的 mtime 一个字都不该变', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'srelay-ro2-'));
+    const f = mkDb(dir);
+    const before = fs.statSync(f).mtimeMs;
+    const db = openReadonly(f);
+    db.prepare('PRAGMA integrity_check').get();
+    db.close();
+    expect(fs.statSync(f).mtimeMs, '体检改了库文件的 mtime —— 说明它不是在读，是在写').toBe(before);
+  });
+
+  it('integrityOf 对健康库不改 mtime（真体检，不是真写入）', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'srelay-ro3-'));
+    const f = mkDb(dir);
+    const before = fs.statSync(f).mtimeMs;
+    const v = integrityOf(f);
+    expect(v.ok).toBe(true);
+    expect(v.kind).toBe('ok');
+    expect(fs.statSync(f).mtimeMs).toBe(before);
   });
 });

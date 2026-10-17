@@ -319,6 +319,23 @@ export function createDb(file: string = ':memory:'): DB {
   return db;
 }
 
+/**
+ * 只读打开（体检 / 统计这类纯读用途）。**绝不迁移、绝不建表、绝不写一个字节。**
+ *
+ * 为什么要单独一个：`createDb` / `openExisting` 都会写（建表、跑迁移、抢写锁）。
+ *   而体检是**周期性**跑的读操作 —— 用可写连接做体检，等于体检自己制造了它要检测的锁冲突，
+ *   「自证预言」式的事故：库里一切正常，检查的人把它锁住了，然后报告「被占用」。
+ *   2026-10-18 那次误隔离虽然不是这条引起的（真根因是 schema 版本），但这把火一直在旁边烧。
+ *
+ * busy_timeout 给得比常规短：体检等不到就该说「本轮被占用，下轮再来」，
+ *   而不是跟着别的进程一起卡满 5 秒 —— 体检的职责是报告，不是排队。
+ */
+export function openReadonly(file: string): DB {
+  const db = new Database(file, { readonly: true, fileMustExist: true });
+  db.pragma('busy_timeout = 2000');
+  return db;
+}
+
 /** 打开已初始化的库（自动执行迁移；T30 探测同 createDb） */
 export function openExisting(file: string): DB {
   const db = new Database(file);

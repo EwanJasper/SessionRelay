@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createDb } from '../../store/db.js';
+import { createDb, openReadonly } from '../../store/db.js';
 import { loadConfig } from '../../shared/config.js';
 import { runSync } from '../../capture/sync.js';
 
@@ -62,13 +62,27 @@ export function isCorruptMessage(msg: string): boolean {
 export function integrityOf(file: string): IntegrityVerdict {
   if (!fs.existsSync(file)) return { ok: false, kind: 'missing', detail: '库不存在' };
   const sizeMb = Number((fs.statSync(file).size / 1048576).toFixed(1));
+  // ★ 体检是**读**操作，必须用只读连接。
+  //   用 createDb（可写）做体检 = 体检自己抢写锁 → 自己检测到「被占用」→ 自己判 busy。
+  //   这是「自证预言」：库里一切正常，检查的人把它锁住了，然后报告锁冲突。
+  //   只读打不开时**退一次可写**（WAL/-shm 缺失等场景只读会 CANTOPEN），但把这件事说出来——
+  //   绝不因为「只读失败」就直接判库有问题，那会变成另一种躺平（永远报错、永不修）。
+  let note = '';
   try {
-    const d = createDb(file);
+    let d: ReturnType<typeof createDb>;
+    try {
+      d = openReadonly(file);
+    } catch (eRo) {
+      const m = String((eRo as Error).message).slice(0, 80);
+      if (isBusyMessage(m) || isCorruptMessage(m)) throw eRo;   // 只读都打不开：按原逻辑走下面的分叉
+      d = createDb(file);
+      note = '（只读打开失败，已退回可写体检：' + m + '）';
+    }
     try {
       const v = String(Object.values(d.prepare('PRAGMA integrity_check').get() as Record<string, unknown>)[0]).slice(0, 80);
       const sessions = Number((d.prepare('SELECT count(*) c FROM sessions').get() as { c: number }).c);
       const messages = Number((d.prepare('SELECT count(*) c FROM messages').get() as { c: number }).c);
-      return { ok: v === 'ok', kind: v === 'ok' ? 'ok' : 'corrupt', detail: v, sessions, messages, sizeMb };
+      return { ok: v === 'ok', kind: v === 'ok' ? 'ok' : 'corrupt', detail: v + note, sessions, messages, sizeMb };
     } finally { try { d.close(); } catch { /* 已关 */ } }
   } catch (e) {
     const msg = String((e as Error).message).slice(0, 80);
@@ -122,8 +136,31 @@ export async function repairProject(root: string): Promise<RepairOutcome> {
   }
   if (!moved) {
     mode = 'in-place';
-    try { fs.copyFileSync(db, aside); }
-    catch (e) { return { ...before, repaired: false, note: '改名与复制都失败：' + String((e as Error).message).slice(0, 60) }; }
+    // ★ 改名失败 = 文件被占用 = 有别的进程正开着这个库。此时「原地截断」是**危险动作**：
+    //   你截掉的是别人正在用的文件。所以留证必须做全，且截断前要重新确认状态。
+    //
+    //   ① 留证要复制**三个文件**（db / -wal / -shm），不能只复制 db ——
+    //      只复制 db 会丢掉 -wal 里尚未 checkpoint 的事务，留下的是一份**撕裂的证据**：
+    //      事后拿它去抢救，会发现「明明有的数据不见了」，而且无从判断是本来就没有还是复制漏了。
+    //   ② 这份快照仍然是**尽力而为**（三个文件分三次复制，中途可能被改），不是一致性备份 ——
+    //      所以 note 必须这么说，别让人以为拿到了可靠归档。
+    const side = [
+      [db, aside],
+      [db + '-wal', aside + '-wal'],
+      [db + '-shm', aside + '-shm'],
+    ];
+    for (const [src, dst] of side) {
+      if (!fs.existsSync(src)) continue;
+      try { fs.copyFileSync(src, dst); }
+      catch (e) { return { ...before, repaired: false, note: '留证复制失败 ' + path.basename(src) + '（**未截断任何文件**）：' + String((e as Error).message).slice(0, 50) }; }
+    }
+    // ③ 截断前再验一次：复制期间别的进程可能已退出、库也许多数状态变了。
+    //    不是 corrupt 就**立刻停手** —— 破坏性动作只对「确实是坏库」才成立。
+    const recheck = integrityOf(db);
+    if (recheck.kind !== 'corrupt') {
+      return { ...recheck, repaired: false, mode,
+        note: '复制期间库状态变成 ' + recheck.kind + '，已放弃截断（**未做破坏性改动**）；留证在 ' + path.basename(aside) + '（尽力而为快照）' };
+    }
     for (const f of [db, db + '-wal', db + '-shm']) {
       if (!fs.existsSync(f)) continue;
       try { const fd = fs.openSync(f, 'r+'); fs.ftruncateSync(fd, 0); fs.closeSync(fd); }
