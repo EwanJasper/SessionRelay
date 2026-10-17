@@ -17,7 +17,7 @@ import Database from 'better-sqlite3';
 import type { DB } from '../store/db.js';
 import { listUnresolved, UBIQUITOUS_FILES } from '../store/db.js';
 import { zcodeDbPath, type RelayConfig } from '../shared/config.js';
-import { mapKanbanRows, renderMapMermaid } from '../map/bridge.js';
+import { mapKanbanRows, renderMapMermaid, mapBriefLine } from '../map/bridge.js';
 import { MAP_MODULE } from '../map/index.js';
 
 export interface KanbanInitResult {
@@ -159,6 +159,20 @@ function withKanbanLock<T>(file: string, fn: () => T, staleMs = 10_000): { ok: t
   }
 }
 
+/**
+ * 把地图摘要落成一行文件，供 DSH / ZCode / Codex 三处简报直接读。
+ * 三处适配器**不做任何判断**，只读这一行 —— 判据只在 mapBriefLine 一处（本仓头号病：判据只许一份）。
+ */
+function writeMapBrief(root: string): void {
+  try {
+    const dir = path.join(root, '.sessionrelay', 'map')
+    const line = mapBriefLine(root)
+    if (!line) return   // 没有地图就不落文件，适配器也就整行不渲染
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'brief.txt'), line + '\n', 'utf8')
+  } catch { /* 附属信息，失败不连坐看板 */ }
+}
+
 export function syncKanbanAuto(root: string, cfg: RelayConfig): { ok: boolean; reason: string; rows: number } {
   const file = path.join(root, 'progress.md')
   if (!fs.existsSync(file)) return { ok: false, reason: '没有 progress.md（先跑 srelay kanban init）', rows: 0 }
@@ -168,6 +182,9 @@ export function syncKanbanAuto(root: string, cfg: RelayConfig): { ok: boolean; r
     // 同内容去重时**地图优先**——它是被维护过的那一份。mapKanbanRows 永不抛：没有地图/图坏了
     // 都只是空行 + note，看板这一轮照旧刷新，不连坐。
     const proj = mapKanbanRows(root, {})
+    // 简报那一行：**每轮都刷新**（哪怕看板无变化），因为简报读的是文件不是看板。
+    //   失败绝不影响看板 —— 它是附属信息，不是主链路。
+    writeMapBrief(root)
     const todos = todoRowsOf(root, cfg)
     const seen = new Set(proj.rows.map((r) => normTask(r[0])))
     const fresh = [...proj.rows, ...renderTodoRows(todos).filter((r) => !seen.has(normTask(r[0])))]

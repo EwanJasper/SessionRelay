@@ -212,6 +212,42 @@ export function mapKanbanRows(root: string, opts: { page?: string; maxRows?: num
     return { rows: [], note: '地图投影失败（已兜住，不向外抛）：' + errorText(e) };
   }
 }
+// ─────────────────────── 简报一行（给三处适配器）───────────────────────
+
+/**
+ * 生成**一行**地图摘要，供 DSH / ZCode / Codex 三处简报读取。
+ *
+ * 为什么要它（用户 2026-10-18 拍板）：地图的「下一步」已经写进了 progress.md 的 auto:map 行，
+ *   但简报只取**前 2 个** 🔄/⛔ 行 —— 人写的两条占满名额，地图的 next 永远看不见。
+ *   等于这套自动化在你**不开口**的时候是隐形的。
+ *
+ * 为什么算在这里、而不是三处适配器各算一遍：
+ *   三处各写一份「读 map.json → 挑 next → 数待复验」就是**三份判据**（本仓头号病）。
+ *   这里算一次，守护每轮落成 `.sessionrelay/map/brief.txt`，三处只读文件、不做任何判断。
+ *   代价是一个小文件；收益是以后改格式只改这一处。
+ *
+ * 返回空串 = 没有地图 / 地图坏了 ⇒ 适配器整行不渲染（与看板同样的"绝不因为附属信息让简报消失"纪律）。
+ */
+export function mapBriefLine(root: string, opts: { page?: string; maxChars?: number } = {}): string {
+  try {
+    if (typeof root !== 'string' || root === '') return '';
+    const read = readPageIfExists(root, opts.page);
+    if (!read.ok || read.value === undefined) return '';
+    const pg = read.value.page;
+    const nodes = Array.isArray(pg.nodes) ? pg.nodes : [];
+    const edges = Array.isArray(pg.edges) ? pg.edges : [];
+    const stale = stalePathsOf(root, pg);
+    const next = flatText(pg.context?.next);
+    const parts: string[] = ['🗺 地图：' + nodes.length + ' 节点 / ' + edges.length + ' 边'];
+    if (next !== '') parts.push('下一步：' + next);
+    if (stale.size > 0) parts.push('⚠ 待复验 ' + stale.size);
+    let line = parts.join(' · ');
+    const cap = opts.maxChars ?? 200;
+    if (line.length > cap) line = line.slice(0, Math.max(0, cap - 1)) + '…';
+    return line;
+  } catch { return ''; }
+}
+
 // ─────────────────────────── Mermaid ───────────────────────────
 
 /**
