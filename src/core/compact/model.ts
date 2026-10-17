@@ -41,6 +41,13 @@ export interface CompressConfig {
   topic_overlap?: number;
   /** 只压这个天数之前的条目（默认 7 天；新条目还在长，压了会丢上下文） */
   min_age_days?: number;
+  /** 收益闸门：合并结果必须比原簇省够这个比例（0~1，默认 0.5），否则不落地。
+   *  [1020 借鉴 memcore] 他们实测做法：卡片必须比原文省 >50% 才允许替换。
+   *  我们此前**缺这一层** ⇒ 模型合出来的东西无论省多少都算「合并成功」，
+   *  一堆「合了但没省」的白花调用被记成成果。这不是分簇问题，是**没有收益判据**。 */
+  min_saved_ratio?: number;
+  /** 收益闸门：原簇总字节小于此值就不调模型（默认 256）——太小合了也没意义 */
+  min_utf8_bytes?: number;
   /** 项目库旧 decisions */
   projects?: boolean;
   /** 全局库旧 lessons */
@@ -66,6 +73,12 @@ export function compressPolicyOf(cfg: { compress?: CompressConfig } | null | und
     minCluster: Math.max(2, Number(c.min_cluster ?? 3)),
     topicOverlap: Number(c.topic_overlap ?? 0.30),
     minAgeDays: Math.max(0, Number(c.min_age_days ?? 7)),
+    // ── 收益闸门（1020 从 memcore 借鉴）：折叠前先量「省不省得够」──
+    //   他们实测的做法：卡片必须比原文省 >50% 才允许替换，太小（<256B）根本不尝试。
+    //   我们此前缺这一层 ⇒ 模型合出来的东西无论省多少都算「合并成功」，
+    //   于是一堆「合了但没省」的白花调用被记成成果。这不是分簇问题，是**没有收益判据**。
+    minSavedRatio: Math.min(0.99, Math.max(0, Number(c.min_saved_ratio ?? 0.5))),
+    minUtf8Bytes: Math.max(0, Number(c.min_utf8_bytes ?? 256)),
     projects: c.projects !== false,
     lessons: c.lessons !== false,
   };

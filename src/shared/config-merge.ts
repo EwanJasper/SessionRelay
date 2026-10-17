@@ -73,6 +73,10 @@ export interface RelayConfig {
     min_cluster?: number;
     topic_overlap?: number;
     min_age_days?: number;
+    /** 收益闸门：合并结果必须比原簇省够这个比例（0~1，默认 0.5），否则不落地。1020 从 memcore 借鉴。 */
+    min_saved_ratio?: number;
+    /** 收益闸门：原簇总字节小于此值就不调模型（默认 256）——太小合了也没意义。 */
+    min_utf8_bytes?: number;
     projects?: boolean;
     lessons?: boolean;
   };

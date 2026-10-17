@@ -137,6 +137,20 @@ export async function compressProject(db: DB, projectId: string, p: CompressPoli
       const raw = await provider.complete(buildPrompt(c.items));
       const out = mergeCluster(c.items, raw);
       if (out.merged.length === 0) { log('簇 ' + c.key.slice(0, 8) + '：模型没给出可用合并（丢弃 ' + out.discarded + ' 条），跳过'); discarded += out.discarded; continue; }
+      // ── 收益闸门（1020 从 memcore 借鉴：min_saved_ratio / min_utf8_bytes）──
+      //   没有这层时，模型合出来的东西**无论省多少都算成功** ⇒ 一堆「合了但没省」
+      //   的白花调用被记成成果。判据：整个簇的原文总字节 → 合并后总字节，省够才落地。
+      const origBytes = c.items.reduce((s, it) => s + Buffer.byteLength(String(it.text ?? ''), 'utf8'), 0);
+      const mergedBytes = out.merged.reduce((s, m) => s + Buffer.byteLength(m.text, 'utf8'), 0);
+      const savedRatio = origBytes > 0 ? 1 - mergedBytes / origBytes : 0;
+      if (origBytes < p.minUtf8Bytes) {
+        log('簇 ' + c.key.slice(0, 8) + '：原簇只有 ' + origBytes + ' 字节（门槛 ' + p.minUtf8Bytes + '），太小不压');
+        continue;
+      }
+      if (savedRatio < p.minSavedRatio) {
+        log('簇 ' + c.key.slice(0, 8) + '：合并只省 ' + (savedRatio * 100).toFixed(1) + '%（门槛 ' + (p.minSavedRatio * 100).toFixed(0) + '%），不落地');
+        continue;
+      }
       for (const m of out.merged) {
         details.push({ clusterKey: c.key, mergedText: m.text, evidenceIds: m.evidenceIds, originals: c.items });
         merged++; itemsOut++;
