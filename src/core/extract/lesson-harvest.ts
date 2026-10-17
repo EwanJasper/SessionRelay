@@ -8,7 +8,7 @@
 //
 // 为什么不做成守护自动跑：抽错一句话就会污染**所有项目**的注入。让它是个显式命令，
 // 人（或排程）决定什么时候跑、跑完要不要收。
-import { addLesson } from '../../store/global.js';
+import { addLesson, visibleWhere } from '../../store/global.js';
 import { isNearDuplicate } from '../compact/dedup.js';
 
 const PATTERNS = [
@@ -136,7 +136,13 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   } catch { msgs = []; }   // 老库没有 seq_num 之类 —— 采集失败不该让生命周期红
 
   const cands = harvestCandidates(msgs.map((m) => ({ role: m.role, content: m.content, seqNum: m.seq, sessionId: m.sid })));
-  const existingTexts = (gdb.prepare('SELECT text FROM lessons').all() as Array<{ text?: string }>)
+  // [红队 S1] 去重**必须按可见性过滤**，不能全库按 text 比。
+  //   病历：原来 SELECT text FROM lessons 不带任何 scope 条件 ⇒ A 项目先采到某句经验后，
+  //   B 项目再采到同一句就被判"已存在"，于是 B 自己那条 scope=project 的经验**永远写不进去**，
+  //   而 hits+1 还记到了 A 名下。实测两个项目跑同一批消息：A written=9，B written=0 且 A 的 hits 全 +1。
+  //   这直接违反"逐项目独立"。现在只跟**它自己看得见的那部分库**比（可见性判据只有 visibleWhere 一份）。
+  const vis = visibleWhere({ workspaceId, domain: opts.domain });
+  const existingTexts = (gdb.prepare('SELECT text FROM lessons WHERE ' + vis.sql).all(...(vis.params as never[])) as Array<{ text?: string }>)
     .map((r) => String(r.text ?? ''))
     .filter((t) => t.length > 0);
   const existing = new Set(existingTexts);
@@ -186,15 +192,16 @@ export function harvestLessons(gdb: AnyDb, pdb: AnyDb, workspaceId: string, opts
   let repeated = 0;
   if (!opts.dry) {
     if (hitTexts.size) {
-      const bump = gdb.prepare('UPDATE lessons SET hits = MIN(hits + 1, ?), updated_at = ? WHERE text = ?');
+      // 写侧同样按可见性收窄，否则会 bump 到别的项目的同名行
+      const bump = gdb.prepare('UPDATE lessons SET hits = MIN(hits + 1, ?), updated_at = ? WHERE text = ? AND (' + vis.sql + ')');
       const nowIso = new Date().toISOString();
-      for (const t of hitTexts) { bump.run?.(HITS_CAP, nowIso, t); repeated++; }
+      for (const t of hitTexts) { bump.run?.(HITS_CAP, nowIso, t, ...(vis.params as never[])); repeated++; }
     }
     // 近重复：给**库里那条旧经验**打待复核，不碰 status、不碰分数
     if (nearLike.size) {
-      const mark = gdb.prepare('UPDATE lessons SET needs_review = 1, updated_at = ? WHERE text = ?');
+      const mark = gdb.prepare('UPDATE lessons SET needs_review = 1, updated_at = ? WHERE text = ? AND (' + vis.sql + ')');
       const nowIso = new Date().toISOString();
-      for (const t of new Set(nearLike.values())) mark.run?.(nowIso, t);
+      for (const t of new Set(nearLike.values())) mark.run?.(nowIso, t, ...(vis.params as never[]));
     }
   }
 

@@ -51,7 +51,11 @@ function recordLessonUse(file, ids) {
   if (!DatabaseSync || !Array.isArray(ids) || !ids.length) return;
   let w = null;
   try {
-    w = new DatabaseSync(file);
+    // [红队 M2] 必须带 timeout。核心仓用 better-sqlite3 写同一个库，它持写锁时
+    // node:sqlite **默认不等锁**，实测 6ms 就抛 database is locked(errcode=5)，
+    // 被下面的 catch 静默吞掉 ⇒ 这一轮 uses 白丢。{ timeout: 3000 } 会等锁（实测有效）。
+    // 计数是旁路、丢一轮不致命，但"静默降级"不许有 —— 等一等就能拿到的东西不该丢。
+    w = new DatabaseSync(file, { timeout: 3000 });
     const stmt = w.prepare('UPDATE lessons SET uses = MIN(uses + 1, ?), updated_at = ? WHERE id = ?');
     const now = new Date().toISOString();
     for (const id of ids) stmt.run(USES_CAP, now, Number(id));

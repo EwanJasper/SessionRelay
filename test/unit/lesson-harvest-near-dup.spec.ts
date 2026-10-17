@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createDb } from '../../src/store/db.js';
 import { dbFile } from '../../src/shared/paths.js';
-import { openGlobal, addLesson } from '../../src/store/global.js';
+import { openGlobal, addLesson, maintainLessons } from '../../src/store/global.js';
 import { harvestCandidates, harvestLessons } from '../../src/core/extract/lesson-harvest.js';
 
 let tmp = '';
@@ -80,6 +80,26 @@ describe('经验采集 · 近重复只标注不丢弃', () => {
     expect(old.status).toBe('draft');
   });
 
+  // [红队 S1] 去重必须按可见性过滤，否则先采集的项目会把后采集项目自己的经验吞掉。
+  it('两个项目采到同一句：各自都要写进自己的库（不许 A 吞掉 B）', () => {
+    const gdb = openGlobal();
+    const a = seedProject(path.join(tmp, 'projA'), MSG);
+    const b = seedProject(path.join(tmp, 'projB'), MSG);
+
+    const ra = harvestLessons(gdb as never, a as never, 'ws-A', { days: 7 });
+    const rb = harvestLessons(gdb as never, b as never, 'ws-B', { days: 7 });
+
+    expect(ra.written).toBeGreaterThan(0);
+    // 修复前这里是 0：A 写过之后，B 的候选被判"已存在"，自己那条永久写不进去
+    expect(rb.written).toBe(ra.written);
+
+    const rows = gdb.prepare("SELECT workspace_id, COUNT(*) AS n FROM lessons WHERE scope='project' GROUP BY workspace_id")
+      .all() as Array<{ workspace_id?: string; n: number }>;
+    const map = new Map(rows.map((r) => [String(r.workspace_id), Number(r.n)]));
+    expect(map.get('ws-A')).toBe(ra.written);
+    expect(map.get('ws-B')).toBe(rb.written);
+  });
+
   it('精确重复走另一条路：bump hits，不写新行', () => {
     const cands = harvestCandidates([{ role: 'user', content: MSG, seqNum: 1, sessionId: 's1' }]);
     const text = cands[0]!.text;
@@ -96,5 +116,35 @@ describe('经验采集 · 近重复只标注不丢弃', () => {
     expect(rep.repeated).toBe(1);
     const row = gdb.prepare('SELECT hits FROM lessons WHERE text = ?').get(text) as { hits?: number };
     expect(Number(row?.hits ?? 0)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('经验维护 · [红队 S2] 反悔次数必须能累加', () => {
+  it('source_ref 很长时 ×N 也不能被截断吃掉（否则 30 轮上限永不触发）', () => {
+    const gdb = openGlobal();
+    const longRef = 'D:/some/very/long/path/'.repeat(18).slice(0, 390); // 390 字符，正是红队实测的边界
+    const ins = addLesson(gdb as never, {
+      text: '这是一条反复出现的推断经验',
+      quote: '原句',
+      sourceRef: longRef,
+      route: 'none',
+      grade: 'inferred',
+      scope: 'global',
+      status: 'draft',
+    } as never);
+    // 让它够格被"拦下"：inferred + hits 达标
+    gdb.prepare('UPDATE lessons SET hits = 5, needs_review = 0, created_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), ins.id);
+
+    maintainLessons(gdb as never);
+    const r1 = gdb.prepare('SELECT source_ref FROM lessons WHERE id = ?').get(ins.id) as { source_ref?: string };
+    const s1 = String(r1?.source_ref ?? '');
+    expect(s1.length).toBeLessThanOrEqual(400);
+    // 修复前：整串 slice(0,400) 把末尾的 ×1 切掉，这里会是 false，计数永远回到 0
+    expect(/×1$/.test(s1)).toBe(true);
+
+    maintainLessons(gdb as never);
+    const r2 = gdb.prepare('SELECT source_ref FROM lessons WHERE id = ?').get(ins.id) as { source_ref?: string };
+    expect(/×2$/.test(String(r2?.source_ref ?? ''))).toBe(true);
   });
 });

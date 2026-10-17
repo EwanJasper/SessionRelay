@@ -68,6 +68,12 @@ export function addLesson(db: Database.Database, input: AddInput): { id: number;
   const scope: Scope = input.scope ?? 'project';
   const text = String(input.text ?? '').trim();
   if (!text) throw new Error('经验正文不能为空');
+  // [红队 M1] scope 必须校验枚举：原来只校验 project/domain 的配套字段，
+  //   传一个拼错的 scope（如 --scope bogus）会**静默写进去**，而 visibleWhere 只认
+  //   global/project/domain ⇒ 那条经验任何入口都看不见，等于凭空吞掉一条。
+  if (scope !== 'global' && scope !== 'project' && scope !== 'domain') {
+    throw new Error('未知 scope: ' + String(input.scope) + '（只允许 global / project / domain）');
+  }
   if (scope === 'project' && !input.workspaceId) throw new Error('scope=project 必须给 workspaceId');
   if (scope === 'domain' && !input.domain) throw new Error('scope=domain 必须给 domain');
   const now = new Date().toISOString();
@@ -198,10 +204,22 @@ function keepAlive(db: Database.Database, r: LessonRow, now: string): boolean {
   const used = m ? Number(m[1]) : 0;
   if (used >= KEEP_ALIVE_MAX_ROUNDS) return false;
   const base = String(r.source_ref || '').replace(/ ?×\d+$/, '');
-  const note = (base ? base + ' · ' : '') + '反复出现(hits=' + Number(r.hits || 0) + ') 待人工确认 ×' + (used + 1);
+  const suffix = '反复出现(hits=' + Number(r.hits || 0) + ') 待人工确认 ×' + (used + 1);
+  // [红队 S2] **保尾截断**。原来写的是整串 note.slice(0, 400) —— ref 一长就把末尾的 ×N 切掉，
+  //   /×(d+)$/ 永远匹配不上 ⇒ 计数恒为 0 ⇒ KEEP_ALIVE_MAX_ROUNDS=30 **永不触发**，
+  //   条目可以被无限次"拦下"却不退休。实测 ref=390 字符时末尾被切成 "...反复出现(hi"。
+  //   现在只在 base 过长时截 base，×N 一律保住（保留"不新增列"的取舍，但把取舍做对）。
+  const LIMIT = 400;
+  let note = (base ? base + ' · ' : '') + suffix;
+  if (note.length > LIMIT) {
+    // 4 = ' ·' + '…' 的那点余量，留够才能保证截完不超长（这里差一个字符都会让 /×N$/ 匹配失败）
+    const room = Math.max(0, LIMIT - suffix.length - 4);
+    const head = room > 0 ? (base.length > room ? base.slice(0, room) + '…' : base) : '';
+    note = (head ? head + ' · ' : '') + suffix;
+  }
   // 只标 needs_review + 记次数；**status 一个字都不动** ⇒ 进不了注入层
   db.prepare('UPDATE lessons SET needs_review = 1, updated_at = ?, source_ref = ? WHERE id = ?')
-    .run(now, note.slice(0, 400), r.id);
+    .run(now, note, r.id);
   return true;
 }
 
