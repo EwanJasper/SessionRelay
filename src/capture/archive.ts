@@ -104,11 +104,20 @@ export function runArchive(db: DB, opts: ArchiveOptions): ArchiveResult {
   // 记录 cleanup_log（如果不是 dry-run）
   let logId: number | null = null;
   if (!opts.dryRun && candidates.length > 0) {
-    logId = insertCleanupLog(db, {
-      triggeredBy: opts.triggeredBy ?? 'manual',
-      mode: opts.hard ? 'hard' : 'archive',
-      criteria: JSON.stringify({ days: opts.days, before: opts.before, source: opts.source, origin: opts.origin }),
-    });
+    // ⚠️ 建账这一步也必须受事务保护（红队 P2#10，代码推断）：
+    //   BEGIN IMMEDIATE 已经拿到写锁，而这条 INSERT 原本在 try **之外** ——
+    //   它一旦抛错，事务不回滚、写锁不放 ⇒ 之后每轮归档都拿不到锁 ⇒ **归档永久失败**。
+    //   这不是数据错误，是把一个功能永久卡死，所以宁可多一层 try。
+    try {
+      logId = insertCleanupLog(db, {
+        triggeredBy: opts.triggeredBy ?? 'manual',
+        mode: opts.hard ? 'hard' : 'archive',
+        criteria: JSON.stringify({ days: opts.days, before: opts.before, source: opts.source, origin: opts.origin }),
+      });
+    } catch (e) {
+      if (willWrite) { try { db.exec('ROLLBACK'); } catch { /* 回滚失败也不掩盖原始错误 */ } }
+      throw e;
+    }
   }
 
   try {

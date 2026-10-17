@@ -5,7 +5,9 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { segment } from '../core/tokenize/tokenizer.js';
 import { loadConfig, claudeProjectsDir, zcodeDbPath } from '../shared/config.js';
-import { dbFile, findRelayRoot, ignoreFile } from '../shared/paths.js';
+// ignoreFile 已不从这里取 —— 判据只走 capture/ignore.js 的 ignoreFilePath（会读 privacy.ignore_file）。
+// 留着这个 import 就等于留第二个「排除文件在哪」的入口，迟早有人用错那个。
+import { dbFile, findRelayRoot } from '../shared/paths.js';
 import { ignoreFilePath } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { looksInjected } from '../core/extract/extract.js';
