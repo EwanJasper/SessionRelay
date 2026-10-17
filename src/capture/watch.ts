@@ -16,7 +16,7 @@ import { loadConfig } from '../shared/config.js';
 import { projectIdOf, dbFile, statsFile, watchLogPath } from '../shared/paths.js';
 import { rotateLogFile } from '../shared/logrotate.js';
 import { StatsCounter } from '../core/stats/counter.js';
-import { acquireLock, touchLock, releaseLock, isDaemonAlive } from '../shared/lock.js';
+import { acquireLock, touchLock, releaseLock, isDaemonAlive, HEARTBEAT_MS } from '../shared/lock.js';
 import { runLifecycle } from '../core/lifecycle/runner.js';
 import { watchDir } from '../adapters/claude-code/watcher.js';
 import { runSync } from './sync.js';
@@ -391,7 +391,7 @@ export async function runWatchGlobal(opts: { log?: (msg: string) => void } = {})
       } catch { /* 心跳失败不影响采集 */ }
     };
     hb();
-    setInterval(hb, 60_000);
+    setInterval(hb, HEARTBEAT_MS);   // [1021] 与判活阈值共用同一份常量（见 shared/lock.ts）
   }
 
   // [fork 1011] 启动即轮转一次：双写让每个收编项目的 watch.log 都会增长，

@@ -356,18 +356,23 @@ function remainingCount(db: DB): number {
  *   · 返回清理条数，调用方负责打日志（**不许静默**）。
  */
 export function cleanArchivedDecisions(db: DB): number {
+  // ⚠️ [1021 红队 T6 补充] 原来 WHERE 里还有 `AND decisions IS NOT NULL AND decisions != '[]'` ——
+  //   于是**决策为空的归档会话永远选不中，也就永远打不上版本戳** ⇒ 每轮都被重扫一遍，
+  //   实测 502 场归档会话里 310 场卡在 <25 就是这个原因。
+  //   现在把所有版本落后的归档会话都选出来：有决策的重筛，没决策的**只打戳**（不做事、不重扫）。
   const rows = db.prepare(
     `SELECT id, decisions FROM sessions
-     WHERE extracted_version < ? AND (cleanup_at IS NOT NULL OR message_count = 0)
-       AND decisions IS NOT NULL AND decisions != '[]'`,
-  ).all(EXTRACT_VERSION) as Array<{ id: string; decisions: string }>;
+     WHERE extracted_version < ? AND (cleanup_at IS NOT NULL OR message_count = 0)`,
+  ).all(EXTRACT_VERSION) as Array<{ id: string; decisions: string | null }>;
   if (rows.length === 0) return 0;
   let removed = 0;
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const r of rows) {
+      // 决策为空/NULL：没什么可清的，**只打戳**就走（否则会每轮被重扫）。
+      if (r.decisions === null || r.decisions === undefined || r.decisions === '' || r.decisions === '[]') { markAttempted(db, r.id); continue; }
       let arr: Array<{ text?: string }> = [];
-      try { arr = JSON.parse(r.decisions); } catch { markAttempted(db, r.id); continue; }  // 坏 JSON 不阻塞，但要打戳防每轮重试
+      try { arr = JSON.parse(r.decisions); } catch { markAttempted(db, r.id); continue; }  // 坏 JSON 不阻塞，但要打戳防重试每轮重试
       if (!Array.isArray(arr)) { markAttempted(db, r.id); continue; }
       const kept = arr.filter((d) => passesDecisionTextGuards(String(d?.text ?? '')));
       if (kept.length !== arr.length) {
@@ -390,11 +395,14 @@ export function recomputeExtractions(db: DB, batch = BATCH_SIZE): RecomputeResul
   // [1021] 归档会话的存量决策清理必须在**早退之前**跑 —— 否则版本一旦追平就永远轮不到它。
   //   这也是 226 行那段清理一直够不着归档会话的根本原因（它排在早退之后）。
   //   失败不阻塞主流程（归档清理是增量修复，不是主链路），但要把数字**带出去**让人看得见，不许静默。
+  // [1021 红队 T6 修复] 原来这里还套了一层**库级**闸门 `if (cur < EXTRACT_VERSION)`。
+  //   问题：库级版本一追平（extract_meta.version == 当前版本）就再也不跑清理，
+  //   而归档会话的**逐行**版本可能仍然落后 —— 实测库版本 25 时仍有 310 场归档会话 < 25。
+  //   现在无条件跑：`cleanArchivedDecisions` 自己按逐行版本筛、跑过打戳，天然幂等，
+  //   所以每轮多付的代价只是「一条走索引的空查询」。
   let archivedCleaned = 0;
-  if (cur < EXTRACT_VERSION) {
-    try { archivedCleaned = cleanArchivedDecisions(db); }
-    catch { archivedCleaned = -1; }   // -1 = 清理失败（调用方可据此告警）；0 = 没有要清的
-  }
+  try { archivedCleaned = cleanArchivedDecisions(db); }
+  catch { archivedCleaned = -1; }   // -1 = 清理失败（调用方据此告警）；0 = 没有要清的
 
   const total = remainingCount(db);
   if (total === 0) {

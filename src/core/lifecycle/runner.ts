@@ -199,17 +199,30 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   // ── ④ 抽取/重算（light）──
   if (todue.some((s) => s.id === 'extract')) await runOne(specOf('extract'), () => {
     const res = eachProject((root, db) => {
-      let total = 0, failed = 0, guard = 0;
+      let total = 0, failed = 0, guard = 0, archivedCleaned = 0, archivedFailed = 0;
       for (;;) {
         const r = recomputeExtractions(db, 300);
         total += r.recomputed; failed += r.failed;
+        // [1021 红队 T7 修复] `archivedCleaned` 原来**没有任何调用方读** ——
+        //   `-1` 那个「清理失败」哨兵永远没人看，注释写的「调用方负责打日志，不许静默」没兑现。
+        //   现在在这里读出来并聚合；失败单独计数（不混进 failed：那是抽取失败，不是清理失败）。
+        if (r.archivedCleaned === -1) archivedFailed++;
+        else if (r.archivedCleaned > 0) archivedCleaned += r.archivedCleaned;
         if ((r.recomputed === 0 && r.remaining === 0) || ++guard > 2000) break;
       }
-      return { total, failed };
+      return { total, failed, archivedCleaned, archivedFailed };
     });
     const total = res.reduce((a, x) => a + (x.r?.total ?? 0), 0);
     const failed = res.reduce((a, x) => a + (x.r?.failed ?? 0), 0);
-    return total ? '重算 ' + total + ' 场' + (failed ? '（其中 ' + failed + ' 场抽取异常，已打版本戳跳过）' : '') : '没有需要重算的';
+    const archCleaned = res.reduce((a, x) => a + (x.r?.archivedCleaned ?? 0), 0);
+    const archFailed = res.reduce((a, x) => a + (x.r?.archivedFailed ?? 0), 0);
+    const bits: string[] = [];
+    if (total) bits.push('重算 ' + total + ' 场');
+    if (failed) bits.push(failed + ' 场抽取异常（已打版本戳跳过）');
+    if (archCleaned) bits.push('归档会话清掉 ' + archCleaned + ' 条陈旧决策');
+    // 清理失败必须显形：这条通道删的是数据，静默失败等于「以为清过了其实没清」。
+    if (archFailed) bits.push('警告 ' + archFailed + ' 个库的归档清理失败（原因见日志）');
+    return bits.length ? bits.join(' · ') : '没有需要重算的';
   });
 
   // ── ⑤ 经验衰减/退休/冲突（light，全局库）──
@@ -245,17 +258,20 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
 
     // ⚠️ `eachProject` 已经把回调返回值放进 `r` 了 —— 回调**直接返回 stats**，不要再套一层 {r:...}，
     //   否则读的是 `x.r.tags` = undefined（我第一版就写错成双重包装，实测一直报「0 个标签」）。
-    type TagStats = { tags?: number; edges?: number; reused?: boolean };
-    const res = eachProject<TagStats | null>((_root, db) => {
-      try { return buildTagGraph(db) as TagStats; } catch { return null; }
-    });
+    type TagStats = { tags?: number; edges?: number; reused?: boolean; sessions?: number };
+    // [1021 红队 T4 修复] 原来回调里 `try { ... } catch { return null }` —— **异常被就地吞掉**，
+    //   `eachProject` 的 `err` 永远拿不到原因，上层只能看到「失败 N 个库」，**不知道是什么错**。
+    //   现在不就地 catch：让异常冒到 eachProject，由它记进 `err`，下面把原因打出来。
+    const res = eachProject<TagStats>((_root, db) => buildTagGraph(db) as TagStats);
     let tags = 0, edges = 0, failed = 0, reused = 0;
+    const failReasons: string[] = [];
     for (const x of res) {
-      if (x.err || !x.r) { failed++; continue; }
+      if (x.err || !x.r) { failed++; if (x.err) failReasons.push(x.err); continue; }
       if (x.r.reused) { reused++; continue; }   // 会话数没变 ⇒ buildTagGraph 自己跳过，不是失败
       tags += x.r.tags ?? 0; edges += x.r.edges ?? 0;
     }
-    if (failed > 0) return '⚠️ ' + failed + ' 个库重建失败（图是增强，不影响检索）';
+    // 失败必须带原因：只说「N 个库失败」等于没说，接手的人还得重跑一遍才知道为什么。
+    if (failed > 0) return '警告 ' + failed + ' 个库重建失败（图是增强，不影响检索）：' + (failReasons.slice(0, 2).join(' / ') || '原因未知');
     // 报文必须区分「跳过」和「建了 0 个」—— 原来一律写 0，看起来像坏了（实测我自己就被骗了一次）
     if (tags === 0 && edges === 0 && reused > 0) return '已是最新（' + reused + ' 个库跳过，图未变）';
     return tags + ' 个标签 / ' + edges + ' 条共现边已刷新';

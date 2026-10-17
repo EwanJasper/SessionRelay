@@ -28,6 +28,7 @@ import { EXTRACT_VERSION } from '../core/extract/version.js';
 import { STAGES, loadLifecycle, dueStages, heartbeatAgeMs, type LifecycleDb } from '../core/lifecycle/stages.js';
 import { KNOB_SPECS, knobStates, validateKnob, setPath, type KnobState } from './knobs.js';
 import { withDb, openReadonly, type ReadonlyDb } from './db.js';
+import { DAEMON_STALE_MS } from '../shared/lock.js';
 import { readSemanticStatus, describeSemantic, type SemanticRuntimeStatus } from '../search-svc/semantic-status.js';
 
 /**
@@ -202,7 +203,9 @@ export function watchdogOnline(nowMs = Date.now()): { online: boolean; ageMs: nu
   if (!fs.existsSync(f)) return { online: false, ageMs: null };
   const got = withDb(f, (db) => heartbeatAgeMs(db as unknown as LifecycleDb, 'watch'), () => undefined);
   const ageMs = typeof got === 'number' ? got : null;
-  return { online: ageMs !== null && ageMs < 15 * 60 * 1000, ageMs };
+  // [1021] 原来这里是硬编码 `15 * 60 * 1000`，而 `isDaemonAlive` 用的是 60s —— 两套判据差 15 倍。
+  //   现在统一读 `DAEMON_STALE_MS`（= 3 个心跳周期）。见 shared/lock.ts 的说明。
+  return { online: ageMs !== null && ageMs < DAEMON_STALE_MS, ageMs };
 }
 
 // ─────────────────────────── 总览 ───────────────────────────
