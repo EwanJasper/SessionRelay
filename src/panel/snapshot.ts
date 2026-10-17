@@ -286,7 +286,19 @@ export interface CompressionLayer {
 export interface PanelCompression {
   root: string; generatedAt: string; ok: boolean; error: string | null;
   deep: boolean;
-  l0: { dupEntries: number; merged: number; changedSessions: number; bytesBefore: number | null; bytesAfter: number | null } | null;
+  l0: {
+    /** 库里**决策条目总数**（面板「结论总数」的正确取数）。此前契约缺这个字段，
+     *  前端写 `l0.totalDecisions ?? l0.merged` 静默回落成 merged（=被合并的重复条数）
+     *  ⇒ 界面上「结论总数」永远显示 0，而实际有几百上千条。1018 实测补上。 */
+    totalDecisions: number;
+    dupEntries: number;
+    merged: number;
+    /** merged / totalDecisions（0~1）。面板「去重压缩率」用它；此前缺字段导致显示「—」。 */
+    dupRatio: number;
+    changedSessions: number;
+    bytesBefore: number | null;
+    bytesAfter: number | null;
+  } | null;
   l2: {
     rounds: number; archived: number; skipped: number; bytesFreed: number; lastAt: string | null;
     latest: Array<{ at: string; sessions: number; bytesFreed: number; criteria: string }>;
@@ -316,6 +328,20 @@ const LAYERS: CompressionLayer[] = [
 ];
 
 /** 某项目库的压缩现状。deep=false（默认）只读现成证据；deep=true 才跑一次 L0 全量测量 */
+/** 决策条目总数 + 重复占比（面板「结论总数」「去重压缩率」的权威取数）。
+ *  1018 实测：契约原先没有这两个字段，前端 `?? l0.merged` 静默回落成 0，
+ *  于是界面上「结论总数」永远是 0 —— 这不是显示小问题，是**指标取错了源**。 */
+function l0Counts(db: { prepare: (s: string) => { all: () => unknown[] } }): { totalDecisions: number; dupRatio: number } {
+  let total = 0, dup = 0;
+  try {
+    const rows = db.prepare("SELECT decisions FROM sessions WHERE decisions IS NOT NULL AND json_valid(decisions)").all() as Array<{ decisions: string }>;
+    for (const r of rows) {
+      try { for (const d of JSON.parse(r.decisions) as Array<{ dupCount?: number }>) { total++; if (Number(d?.dupCount ?? 0) > 1) dup++; } } catch { /* 单行坏 JSON 跳过，不影响总数口径以外的行 */ }
+    }
+  } catch { /* 拿不到就报 0，不抛 */ }
+  return { totalDecisions: total, dupRatio: total > 0 ? dup / total : 0 };
+}
+
 export function panelCompression(root: string, opts: { deep?: boolean } = {}): PanelCompression {
   const deep = opts.deep === true;
   const out: PanelCompression = {
@@ -337,9 +363,13 @@ export function panelCompression(root: string, opts: { deep?: boolean } = {}): P
       // 全量干跑：与生命周期 compact 阶段同一个函数的 apply=false 路径
       const rep = compactExactSessions(db as never, { apply: false });
       bytesBefore = rep.bytesBefore; bytesAfter = rep.bytesAfter;
-      out.l0 = { dupEntries: rep.merged, merged: rep.merged, changedSessions: rep.changed, bytesBefore, bytesAfter };
+      out.l0 = {
+        ...l0Counts(db),
+        dupEntries: rep.merged, merged: rep.merged, changedSessions: rep.changed, bytesBefore, bytesAfter,
+      };
     } else {
       out.l0 = {
+        ...l0Counts(db),
         dupEntries: Number(dup?.n ?? 0), merged: Number(dup?.m ?? 0),
         changedSessions: Number(dup?.s ?? 0), bytesBefore, bytesAfter,
       };
