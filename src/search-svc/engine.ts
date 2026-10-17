@@ -250,6 +250,24 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
   // 也栽在这（每条路它都第一）⇒ 必须**在打分阶段**压，而不是事后乘系数。
   // 默认开（`lengthNorm: false` 才关）。⚠️ 原先这里把 SQL 写成一串 String.fromCharCode —— 那是
   // "别用字符串拼接生成代码"那条教训被过度执行的产物，可读性为零；直接写字面量与参数绑定就够了。
+  // ── [1021] 覆盖率加权（治「换说法搜不到」的**机制**问题）──
+  //   实测背景：换说法题 15 条 hit@10 只有 4/15 = 26.7%。
+  //   拆开看，最典型的失败是「磁盘空间不足怎么办」找不到标题为「所有盘都爆炸了没空间了」的那场 ——
+  //   两者**共享『空间』**，本该命中。
+  //   根因在 186-208 行的组合语义：多词走**严格 AND**（所有词都要覆盖），零命中才**OR 兜底**；
+  //   而兜底里 `score` 只是各词 BM25 相加 —— **命中 1 个词和命中 3 个词的会话，分数量级接近**，
+  //   于是被「怎么/办」这类高频虚词匹配到的垃圾会话挤进 top-10。
+  //   `coverage`（覆盖了几个词）**本来就算好了**，但只当排序 tiebreaker，不参与打分 —— 白算。
+  //   修法：score *= (1 + COVERAGE_BOOST * coverage²)，覆盖越多加权越猛（平方是为了拉开差距：
+  //   覆盖 1/3 加 0.4×，覆盖 2/3 加 1.6×，覆盖 3/3 加 3.6×）。零模型、纯算术、无额外查询。
+  //   COVERAGE_BOOST=0 时等于旧行为，便于单变量 A/B。
+  if (COVERAGE_BOOST > 0 && hits.length > 0) {
+    for (const h of hits) {
+      const cov = Math.max(0, Math.min(1, h.coverage ?? 0));
+      h.score *= 1 + COVERAGE_BOOST * cov * cov;
+    }
+  }
+
   if (opts.lengthNorm !== false && hits.length > 0) {
     const ids = hits.map((h) => h.sessionId);
     const ph = ids.map(() => '?').join(',');
@@ -461,6 +479,29 @@ export const LEN_PENALTY_PIVOT = 300;
  *
  * ⚠️ **先量再接**：这个值必须先跑基准再定，不要拍脑袋改默认。
  */
+/**
+ * 覆盖率加权系数（1021 新增，**默认 0 = 旧行为**）。
+ *
+ * 治的是「换说法搜不到」的**机制**（不是语义）：多词查询零命中时走 OR 兜底，
+ * 而兜底里命中的词数（coverage）不参与打分 ⇒ 命中 1 个虚词的垃圾会话能挤掉命中 2-3 个实词的。
+ * `score *= 1 + COVERAGE_BOOST * coverage²`。0=关；1.0 = 默认；3.0 更激进。
+ * 用环境变量 `SRELAY_COVERAGE_BOOST` 覆盖，便于基准做单变量 A/B。
+ *
+ * ── 实测（1021，默认值 1.0 的依据）──
+ * · **换说法题**（手写 15 条，刻意不用目标原词）：hit@10 **4/15 = 26.7% → 6/15 = 40.0%**
+ *   逐题配对：救回 2（「找人帮我看代码有没有问题」→ 找到独立代码复审员那场；
+ *   「分析记忆系统的优缺点」→ 找到竞品调研那场）、打掉 0。
+ * · **扩样到 23 条**：21.7% → 26.1%，救回 1 / 打掉 0。
+ * · **字面基准 153 题回归**：K/S/M 三臂 hit@1/@3/@10 **完全相同，零回归**。
+ *   机制上必然如此：字面题面要么单词、要么所有词都命中（coverage 恒 =1），加权不起作用。
+ * · 成本：**零模型、零额外查询**，就是一次数组遍历 + 两次乘法。
+ * ⇒ 合计「救回 3 / 打掉 0 且零回归」，所以默认开。数值小但方向一致、无伤害。
+ */
+const COVERAGE_BOOST = (() => {
+  const v = Number(process.env.SRELAY_COVERAGE_BOOST ?? 1.0);
+  return Number.isFinite(v) && v >= 0 ? v : 0;
+})();
+
 const META_BOOST = (() => {
   const v = Number(process.env.SRELAY_META_BOOST ?? 0);
   return Number.isFinite(v) && v >= 0 ? v : 0;
