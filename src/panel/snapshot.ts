@@ -28,7 +28,7 @@ import { EXTRACT_VERSION } from '../core/extract/version.js';
 import { STAGES, loadLifecycle, dueStages, heartbeatAgeMs, type LifecycleDb } from '../core/lifecycle/stages.js';
 import { KNOB_SPECS, knobStates, validateKnob, setPath, type KnobState } from './knobs.js';
 import { withDb, openReadonly, type ReadonlyDb } from './db.js';
-import { registryHeartbeatFresh } from '../shared/lock.js';
+import { registryHeartbeatFresh , isDaemonAlive } from '../shared/lock.js';
 import { readSemanticStatus, describeSemantic, type SemanticRuntimeStatus } from '../search-svc/semantic-status.js';
 
 /**
@@ -197,16 +197,34 @@ export function panelLifecycle(): PanelLifecycle {
   return got ?? { ...empty, error: '生命周期表读不到（全局库 schema 可能过旧）' };
 }
 
-/** 守护是否在线：直接读 runtime 心跳（与生命周期让位判据同源），不查进程表 */
+/** 守护是否在线：注册表心跳**或**任一项目锁新鲜即为在线 */
 export function watchdogOnline(nowMs = Date.now()): { online: boolean; ageMs: number | null } {
   const f = globalDbFile();
-  if (!fs.existsSync(f)) return { online: false, ageMs: null };
-  const got = withDb(f, (db) => heartbeatAgeMs(db as unknown as LifecycleDb, 'watch'), () => undefined);
-  const ageMs = typeof got === 'number' ? got : null;
-  // [1021] 原来这里是硬编码 `15 * 60 * 1000`，而 `isDaemonAlive` 用的是 60s —— 两套判据差 15 倍。
-  //   现在统一读 `DAEMON_STALE_MS`（= 3 个心跳周期）。见 shared/lock.ts 的说明。
-  // 判据是**函数**不是常量：生命周期那边读同一个函数，否则下一个人还会再写一遍比较式、再分叉一次。
-  return { online: registryHeartbeatFresh(ageMs), ageMs };
+  let ageMs: number | null = null;
+  if (fs.existsSync(f)) {
+    const got = withDb(f, (db) => heartbeatAgeMs(db as unknown as LifecycleDb, 'watch'), () => undefined);
+    ageMs = typeof got === 'number' ? got : null;
+  }
+  // ── [1021] 判活改成 **OR**，治「重启后前 1~3 分钟面板必显示离线」──
+  //
+  // 实测：注册表心跳 `REGISTRY_HEARTBEAT_MS = 60s` 一拍、180s 过期。
+  //   而守护重启后**旧值还留在库里**（实测读到前一任守护 pid 42448、293 秒前的残值），
+  //   于是重启后最长 1~3 分钟面板一定显示离线 —— 用户看到的就是「每次重启都离线」。
+  //   但同一时刻**项目锁**是每 15 秒刷的、pid 也在里面，那条信号一直是新鲜且准确的。
+  //
+  // 所以：两条信号**任一新**即判在线。
+  //   · 锁（15s 一拍）负责**灵敏** —— 重启后几秒内就恢复显示；
+  //   · 注册表（60s 一拍）负责**全局** —— 覆盖已有锁文件但没登记的旧项目。
+  //   两者都是「pid 活着 + 心跳新鲜」，所以放宽不会把真死判成活。
+  const registryFresh = registryHeartbeatFresh(ageMs);
+  if (registryFresh) return { online: true, ageMs };
+  let lockFresh = false;
+  try {
+    for (const c of registryCandidates()) {
+      if (isDaemonAlive(c.root).alive) { lockFresh = true; break; }
+    }
+  } catch { /* 注册表读不到就只信注册表心跳 */ }
+  return { online: lockFresh, ageMs };
 }
 
 // ─────────────────────────── 总览 ───────────────────────────
