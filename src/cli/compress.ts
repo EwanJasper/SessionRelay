@@ -19,6 +19,9 @@ import { pc, die } from './ui.js';
 export interface CompressFlags {
   dryRun?: boolean;
   apply?: boolean;
+  /** 1020 · P1：把合并结果写回 sessions.decisions（压缩不掉召回）。
+   *  **必须配 --apply**；会改数据，门禁是「先跑基准记 hit@1，跑完再比」。 */
+  writeBack?: boolean;
   logs?: boolean;
   rollback?: string;
   json?: boolean;
@@ -79,8 +82,9 @@ export async function cmdCompress(f: CompressFlags): Promise<void> {
     if (!apply && !f.dryRun) { console.log(pc.dim('\n  加 --dry-run 看它会合并什么；加 --apply 真跑（写审计）。')); return; }
     const provider = blocked ? undefined : openAiCompatProvider(p);
     if (!provider && apply) { console.log(pc.yellow('  没有可用的模型提供方，apply 中止（不留半开状态）')); return; }
+    if (f.writeBack && !apply) { console.log(pc.yellow('  --write-back 必须配 --apply（dry-run 不写任何东西）')); return; }
     const r = await compressProject(db, cfg.identity.project_id ?? root, p, {
-      apply, provider, log: (s) => console.log(pc.dim('  ' + s)),
+      apply, writeBack: f.writeBack === true, provider, log: (s) => console.log(pc.dim('  ' + s)),
     });
     console.log('');
     if (r.blocked) { console.log(pc.yellow('  未执行：' + r.blocked)); return; }

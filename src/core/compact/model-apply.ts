@@ -3,6 +3,7 @@
 // 分工：model.ts 是**纯函数**（分簇、提示词、解析、证据校验），本文件负责 IO 与账。
 // 这样分是因为"抽不出证据就丢弃"这条边界必须能**单独测**（不需要起模型、不需要库）。
 
+import { createHash } from 'node:crypto';
 import type { DB } from '../../store/db.js';
 import {
   type ClusterItem, type CompressPolicy, type CompressProvider,
@@ -61,6 +62,64 @@ export function writeCompressDetail(db: DB, logId: number, d: CompressDetailInpu
       JSON.stringify(d.evidenceIds), JSON.stringify(d.originals), new Date().toISOString());
 }
 
+/**
+ * 把合并结果**写回数据**（1020 · P1：压缩不掉召回）。
+ *
+ * 设计依据 `docs/1020-外部仓库调研-Akane-MemCore-memory-kit.md` §3-A（memcore 的「结算卡片 + source_id 回读」）：
+ *   压缩**不删原文**，只做三件事 ——
+ *     ① 追加一条「卡片」条目（带 compressedFrom 指回原文条数）；
+ *     ② 给簇里每条原始条目打 `compressed_into: <卡片id>`；
+ *     ③ **简报过滤链跳过**带标记的，**检索路径不跳过**。
+ *   ⇒ 简报变短了，搜索一条不少。
+ *
+ * ⚠️ 这是**会改数据**的一步，所以：
+ *   · 必须有事务（`BEGIN IMMEDIATE`）—— 中途异常整批回滚，绝不留半截；
+ *   · 原文只**加字段**不删不改文本（`KEEP_ORIGINAL_ALWAYS` 的落地形式）；
+ *   · 调用方必须**先跑基准记 hit@1**，跑完再跑一次比 —— 掉了就 `--rollback`（见 compress.ts 门禁）。
+ *
+ * 返回：写入的卡片数与打标记的原文条数。
+ */
+export function applyCompressionToData(
+  db: DB,
+  details: Array<{ mergedText: string; evidenceIds: string[]; originals: Array<{ text: string }> }>,
+  now = new Date().toISOString(),
+): { cards: number; marked: number } {
+  let cards = 0, marked = 0;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (const d of details) {
+      // 卡片的宿主会话：取簇里第一条原文所在的会话（evidenceIds 形如 `sessionId#N`）
+      const sid = String(d.evidenceIds[0] ?? '').split('#')[0];
+      if (!sid) continue;
+      const row = db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(sid) as { decisions?: string } | undefined;
+      if (!row || !row.decisions) continue;
+      let decs: Array<Record<string, unknown>> = [];
+      try { decs = JSON.parse(row.decisions); } catch { continue; }
+      if (!Array.isArray(decs)) continue;
+      // 卡片 id：稳定（同文本同 id），便于回滚时精确定位
+      const cardId = 'c' + createHash('sha1').update(d.mergedText).digest('hex').slice(0, 12);
+      const origTexts = new Set(d.originals.map((o) => String(o?.text ?? '')));
+      let changed = false;
+      for (const dec of decs) {
+        if (dec.compressed_into) continue;                       // 已标记过，不重复打
+        if (!origTexts.has(String(dec.text ?? ''))) continue;    // 只标本簇的原文
+        dec.compressed_into = cardId;
+        marked++; changed = true;
+      }
+      if (!changed) continue;
+      decs.push({ text: d.mergedText, at: now, kind: 'compressed', id: cardId,
+        compressedFrom: d.originals.length });
+      cards++;
+      db.prepare('UPDATE sessions SET decisions = ? WHERE id = ?').run(JSON.stringify(decs), sid);
+    }
+    db.exec('COMMIT');
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch { /* 回滚失败也不能掩盖原始错误 */ }
+    throw e;
+  }
+  return { cards, marked };
+}
+
 /** 最近几次合并（面板/CLI 用；--json 可直接回滚） */
 export function listCompressLogs(db: DB, limit = 20): Array<Record<string, unknown>> {
   try {
@@ -81,6 +140,9 @@ export function compressDetailOf(db: DB, logId: number): Array<Record<string, un
 
 export interface ProjectCompressOptions {
   apply?: boolean;
+  /** 1020 · P1：把合并结果写回 sessions.decisions（压缩不掉召回）。**默认 false** ——
+   *  这是会改数据的一步，必须显式开启，且调用方要先跑基准记 hit@1。 */
+  writeBack?: boolean;
   log?: (s: string) => void;
   now?: number;
   provider?: CompressProvider;
@@ -186,6 +248,14 @@ export async function compressProject(db: DB, projectId: string, p: CompressPoli
       });
     }
     log('已写入审计 compress_log#' + logId + '（' + details.length + ' 条合并，原文快照可回滚）');
+    // ── 1020 · P1：把合并结果**写回数据**（压缩不掉召回）──
+    //   必须显式 opts.writeBack 才做：这是**会改数据**的一步，默认不做。
+    //   调用方（CLI）的责任：先跑基准记 hit@1 ⇒ 再 --apply --write-back ⇒ 再跑基准比对。
+    if (opts.writeBack) {
+      const w = applyCompressionToData(db, details as never, new Date().toISOString());
+      log('已写回数据：新增卡片 ' + w.cards + ' 条、标记原文 ' + w.marked + ' 条');
+      log('  ⇒ 简报只显示卡片（带 compressed_into 的原文被跳过），检索仍能搜到全部原文');
+    }
   } else if (!opts.apply) {
     log('（dry-run：没有写任何东西；加 apply 才落盘）');
   }

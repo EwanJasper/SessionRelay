@@ -38,7 +38,13 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
   // 呈现层折叠（ADR-003 D3）：近重复只折叠"这一次显示"，存储一条不动 —— 简报里 5 个名额
   // 应该给 5 件不同的事，而不是同一件事说 3 遍。判据复用核心 isNearDuplicate（含长度比门，
   // 修掉生产前缀键误杀「采用 Vite 作为前端构建工具」那个 bug）。
-  const rawDecisions = listDecisions(db, projectId, {}).slice(-limit).reverse();
+  const rawDecisions = listDecisions(db, projectId, {}).slice(-limit).reverse()
+    // ── 1020 · P1：压缩卡片机制（压缩不掉召回）──
+    //   L3 压缩写回后：原始条目带 `compressed_into: <卡片id>`，同时追加了一条卡片。
+    //   **简报跳过带标记的**（否则同一件事显示两遍：一次原文一次卡片）；
+    //   **检索路径绝不跳**（cli/search.ts 走的是 messages/decisions 全量，不经这里）
+    //   ⇒ 简报变短，搜索一条不少。这正是 memcore 那套「结算卡片 + source_id 回读」的落地形式。
+    .filter((d) => !(d as { compressed_into?: string }).compressed_into);
   const { rows: decisions, folded } = foldNearDuplicates<DecisionRow>(rawDecisions, 0.8, lengthRatioGate);
   const cutoff = Date.now() - 14 * 86_400_000;
   // [1017 夜 U-A] 渲染侧过滤：以前这里**一条判据都没有**，于是 `srelay brief` 显示的内容

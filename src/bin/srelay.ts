@@ -83,6 +83,7 @@ program
   .description('L3 模型压缩：用生成模型把旧决策/旧经验合成上级条目（默认关；原文永不删；可审计可回滚）')
   .option('--dry-run', '看它会合并什么（不调模型、不写库）')
   .option('--apply', '真跑：调模型 + 写审计（原文快照进 compress_detail）')
+  .option('--write-back', '配 --apply：把合并结果写回数据（原文只加 compressed_into 标记，不删不改；简报跳过、检索照旧）')
   .option('--logs', '看历史合并记录')
   .option('--rollback <id>', '列出某次合并的回滚依据（不改库）')
   .option('--json', '机器格式')
