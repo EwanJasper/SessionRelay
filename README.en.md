@@ -46,12 +46,6 @@ You spent three days settling an architecture with your AI. That shouldn't vanis
 
 The fixes follow three rules: **errors must be visible** (`withDb` gained `onError`), **a decision has exactly one home** (liveness/threshold/filter logic collapsed into shared functions), **a number must carry its definition** (counts gained semantic filters).
 
-## 60-second demo
-
-![SessionRelay demo](assets/demo-en.gif)
-
-The GIF is silent — full narrated versions (English / 中文, plus a 9:16 vertical cut) are playable directly on the [Releases · v0.2.2](https://github.com/rui08984-dot/SessionRelay/releases/tag/v0.2.2) page.
-
 ## Design philosophy: light, but correct
 
 Most "AI memory" projects take the same road: **embeddings + a local LLM that summarises**.
@@ -102,23 +96,30 @@ Not "more powerful" — **a better fit for this job**:
 > We ask "**how do a human and the next model get the unmodified facts, on demand**".
 > The first bets that models keep improving; the second bets that your data does not rot. We take the second bet.
 
-## What you actually see (real screenshots)
+## What you actually see (real panel screenshots, not mockups)
 
-Upstream ships a CLI only. We made it **visible** — both images below are real data from this project, not mockups:
+Upstream ships a CLI only. We made it **visible**.
 
-### Project board · `progress.md`
+### Panel · tag graph
+
+100 tags / 971 co-occurrence edges, force-directed: repulsion spreads, springs cluster, centering keeps it on screen.
+**Hand-written Canvas, zero third-party deps**, auto-refreshes every 15s; drag, hover to highlight neighbours.
+
+![DSH panel · graph page](assets/panel-graph.webp)
+
+### Panel · project board
 
 The `auto:todos` rows refresh on every capture cycle (human-written rows are never touched), and concurrent writes are protected by an atomic file lock.
 
-![Project board](assets/kanban.png)
+![Project board progress.md](assets/kanban.webp)
 
-### Tag graph · force-directed
+## 60-second demo (upstream era)
 
-100 nodes / 1,200 co-occurrence edges. Repulsion spreads, springs cluster, centering keeps it on screen — **hand-written Canvas, zero third-party deps**, auto-refreshes every 15s.
+The clip below is from the upstream period and explains how the **memory layer itself** works; for the UI, trust the screenshots above.
 
-![Tag graph](assets/tag-graph.png)
+![SessionRelay demo](assets/demo-en.gif)
 
-> Both views are fully interactive inside the DSH panel (drag, hover-to-highlight neighbours, zoom). What you see here is a static snapshot.
+The GIF is silent — full narrated versions (English / 中文, plus a 9:16 vertical cut) are playable directly in [Releases · v0.2.2](https://github.com/rui08984-dot/SessionRelay/releases).
 
 ## What it solves
 
