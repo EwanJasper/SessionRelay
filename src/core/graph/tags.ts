@@ -228,7 +228,7 @@ export function contentFingerprint(db: DB): string {
   try {
     const r = db.prepare(
       'SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(extracted_version, 0)), 0) AS v,'
-      + ' MAX(COALESCE(updated_at, created_at, \'\')) AS t FROM sessions',
+      + ' MAX(COALESCE(created_at, \'\')) AS t FROM sessions',
     ).get() as { n?: number; v?: number; t?: string | null } | undefined;
     return String(r?.n ?? 0) + ':' + String(r?.v ?? 0) + ':' + String(r?.t ?? '');
   } catch { return 'unknown'; }   // 算不出就给固定值 ⇒ 下次必不匹配 ⇒ 重建一次（宁多建，不复用错的）

@@ -586,17 +586,29 @@ export function panelGraph(root: string, limit = 20): PanelGraph {
       const m = db.prepare('SELECT built_at, session_count FROM graph_meta WHERE id = 1').get() as { built_at?: string; session_count?: number } | undefined;
       builtAt = m?.built_at ?? null; builtSessions = m?.session_count ?? null;
     } catch { /* 老库没有这张表：当作没建过（stale=true），不静默 */ }
+    // ⚠️ [1021 修 图谱页从来没工作过] 这张表的列是 **a / b / w**（见 ensureGraphSchema 的建表语句），
+    //   而这里原来写的是 `e.tag_a` / `e.tag_b` —— **两个列都不存在**。
+    //   后果：整句抛 `no such column: e.tag_b` → withDb catch 掉返回 null → 面板显示「图谱还没建过」。
+    //   而库里其实有 5037 个标签 / 44617 条边。也就是说**图谱页从做出来那天起就没显示过一次**，
+    //   而且因为 withDb 没传 onError，错误被静默吞掉，谁都看不见 —— 又一个「容错不许静默」的受害者。
     const hubs = db.prepare(
-      'SELECT t.name AS name, COUNT(DISTINCT ts.session_id) AS sessions, COUNT(DISTINCT e.tag_b) AS degree'
+      'SELECT t.name AS name, COUNT(DISTINCT ts.session_id) AS sessions, COUNT(DISTINCT e.b) AS degree'
       + ' FROM graph_tags t'
       + ' LEFT JOIN graph_tag_sessions ts ON ts.tag_id = t.id'
-      + ' LEFT JOIN graph_tag_edges e ON e.tag_a = t.id'
+      + ' LEFT JOIN graph_tag_edges e ON e.a = t.id'
       + ' GROUP BY t.id ORDER BY sessions DESC, degree DESC LIMIT ?',
     ).all(limit) as Array<{ name: string; sessions: number; degree: number }>;
     const stale = builtSessions === null ? true : builtSessions !== sess;
     return { tags, edges, sess, builtAt, builtSessions, stale, hubs };
-  });
-  if (!got) { out.error = '图谱还没建过：生命周期每天会自动建一次，也可手动跑 scripts/graph-tag-build.ts'; return out; }
+  },
+  // ⚠️ [1021] **必须传 onError**：不传时 withDb 把异常吞成 null，于是「查询报错」和「没建过图谱」
+  //   长得一模一样。上面那个 `e.tag_b` 列名错误（真实列是 `a`/`b`/`w`）就靠这个躲了一整个版本，
+  //   面板一直显示「还没建过」，而库里躺着 5037 个标签。现在两种情形分开显示。
+  (msg) => { out.error = '读取图谱失败：' + String(msg).slice(0, 200); });
+  if (!got) {
+    if (!out.error) out.error = '图谱还没建过：生命周期每天会自动建一次，也可手动跑 scripts/graph-tag-build.ts';
+    return out;
+  }
   out.ok = true;
   out.stats = { tags: got.tags, edges: got.edges, sessions: got.sess, builtAt: got.builtAt, builtSessions: got.builtSessions, stale: got.stale };
   out.hubs = got.hubs.map((h) => ({ name: String(h.name ?? ''), sessions: Number(h.sessions ?? 0), degree: Number(h.degree ?? 0) }));
