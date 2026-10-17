@@ -108,6 +108,13 @@ export const KNOB_SPECS: KnobSpec[] = [
     hint: '守护多久检查一次归档' },
   { path: 'recompute.check_every_min', label: '重算检查间隔（分钟）', type: 'number', min: 1, max: 1440, step: 1,
     hint: '提取规则版本落后时的后台重算节奏（默认 360）' },
+  // ── [1021] 时间衰减（模块 main/core/decay/，默认开）──
+  { path: 'decay.enabled', label: '时间衰减', type: 'boolean',
+    hint: '让「最近发生的事」在检索里排得更前。**只乘排序分数、不过滤** —— 老记录仍能搜到，只是排后面；floor 保底 0.25' },
+  { path: 'decay.mode', label: '衰减曲线', type: 'string',
+    hint: 'exponential = 指数衰减（默认，半衰期处正好减半）；power = 幂律衰减（更贴合人类遗忘，但尾巴更长）' },
+  { path: 'decay.floor', label: '衰减保底系数', type: 'number', min: 0.05, max: 1, step: 0.05,
+    hint: '再老的记录最多被打到几折。默认 0.25 = 2 个半衰期处的自然值；调到 1 = 等于关掉衰减' },
 ];
 
 export const KNOB_BY_PATH = new Map(KNOB_SPECS.map((k) => [k.path, k]));

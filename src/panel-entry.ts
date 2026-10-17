@@ -10,11 +10,13 @@
 export {
   panelOverview, panelProjectCard, panelLessons, panelLifecycle, watchdogOnline,
   panelCompression, panelConfigView, panelApplyConfig,
+  panelGraph,
   PANEL_CRITERIA,
 } from './panel/snapshot.js';
 export type {
   PanelOverview, PanelProject, PanelLessons, PanelLessonItem, PanelLifecycle,
   PanelCompression, CompressionLayer, PanelConfigView, ApplyResult,
+  PanelGraph, PanelGraphTag,
 } from './panel/snapshot.js';
 export { openReadonly, withDb } from './panel/db.js';
 export type { ReadonlyDb, ReadonlyStmt, OpenReport } from './panel/db.js';

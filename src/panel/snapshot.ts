@@ -493,3 +493,60 @@ export function panelApplyConfig(root: string, patch: Record<string, unknown>): 
 
 export { KNOB_SPECS };
 
+
+// ─────────────────────────── [1021] 知识图谱面板 ───────────────────────────
+//
+// 设计取舍（重要，别改成「力导向图」）：
+//   本库实测 5036 标签 / 44604 共现边。**画成一张力导向图毫无用处** ——
+//   那是一团毛线球，用户看不出任何东西，还得为它加载图形库（1000+ 节点会卡）。
+//   真正有用的只有三件：
+//     ① **新鲜度**：什么时候重建的、会话数对不对得上（它现在是生命周期的一个阶段，烂了没人知道）；
+//     ② **枢纽**：哪些标签串起最多会话（这才是图谱的价值 —— 看出什么在主导）；
+//     ③ **追溯**：给一个词看它连到谁（`graph-explain.ts` 的图形版，后续可加）。
+//   还有一条**必须诚实说**：图谱默认**不参与检索**（实测对召回零收益）。
+//   面板不能假装它是「检索增强」—— 那谎话用户试两次就发现了。
+export interface PanelGraphTag { name: string; sessions: number; degree: number }
+export interface PanelGraph {
+  root: string; generatedAt: string; ok: boolean; error: string | null;
+  stats: { tags: number; edges: number; sessions: number; builtAt: string | null; builtSessions: number | null; stale: boolean };
+  hubs: PanelGraphTag[];
+  roleNote: string;
+}
+
+export function panelGraph(root: string, limit = 20): PanelGraph {
+  const out: PanelGraph = {
+    root, generatedAt: new Date().toISOString(), ok: false, error: null,
+    stats: { tags: 0, edges: 0, sessions: 0, builtAt: null, builtSessions: null, stale: false },
+    hubs: [],
+    roleNote: '图谱默认不参与检索（实测对召回零收益）。这里用它追溯「哪些会话围绕同一个东西」。',
+  };
+  const f = dbFile(root);
+  if (!fs.existsSync(f)) { out.error = '这个项目还没有库文件'; return out; }
+  type Got = { tags: number; edges: number; sess: number; builtAt: string | null; builtSessions: number | null; stale: boolean; hubs: Array<{ name: string; sessions: number; degree: number }> };
+  const got = withDb(f, (db): Got | null => {
+    const has = (t: string): boolean => { try { db.prepare('SELECT 1 FROM ' + t + ' LIMIT 1').get(); return true; } catch { return false; } };
+    if (!has('graph_tags')) return null;
+    const tags = Number((db.prepare('SELECT COUNT(*) AS c FROM graph_tags').get() as { c?: number })?.c ?? 0);
+    const edges = Number((db.prepare('SELECT COUNT(*) AS c FROM graph_tag_edges').get() as { c?: number })?.c ?? 0);
+    const sess = Number((db.prepare('SELECT COUNT(*) AS c FROM sessions').get() as { c?: number })?.c ?? 0);
+    let builtAt: string | null = null, builtSessions: number | null = null;
+    try {
+      const m = db.prepare('SELECT built_at, session_count FROM graph_meta WHERE id = 1').get() as { built_at?: string; session_count?: number } | undefined;
+      builtAt = m?.built_at ?? null; builtSessions = m?.session_count ?? null;
+    } catch { /* 老库没有这张表：当作没建过（stale=true），不静默 */ }
+    const hubs = db.prepare(
+      'SELECT t.name AS name, COUNT(DISTINCT ts.session_id) AS sessions, COUNT(DISTINCT e.tag_b) AS degree'
+      + ' FROM graph_tags t'
+      + ' LEFT JOIN graph_tag_sessions ts ON ts.tag_id = t.id'
+      + ' LEFT JOIN graph_tag_edges e ON e.tag_a = t.id'
+      + ' GROUP BY t.id ORDER BY sessions DESC, degree DESC LIMIT ?',
+    ).all(limit) as Array<{ name: string; sessions: number; degree: number }>;
+    const stale = builtSessions === null ? true : builtSessions !== sess;
+    return { tags, edges, sess, builtAt, builtSessions, stale, hubs };
+  });
+  if (!got) { out.error = '图谱还没建过：生命周期每天会自动建一次，也可手动跑 scripts/graph-tag-build.ts'; return out; }
+  out.ok = true;
+  out.stats = { tags: got.tags, edges: got.edges, sessions: got.sess, builtAt: got.builtAt, builtSessions: got.builtSessions, stale: got.stale };
+  out.hubs = got.hubs.map((h) => ({ name: String(h.name ?? ''), sessions: Number(h.sessions ?? 0), degree: Number(h.degree ?? 0) }));
+  return out;
+}
