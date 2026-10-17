@@ -321,8 +321,8 @@ const LAYERS: CompressionLayer[] = [
     note: '实测省 57% 体积却掉召回，被门禁否决 ⇒ 默认不跑。代码留在核心库可复现（core/compact/dedup.ts），但不接任何自动路径。' },
   { id: 'L2', name: '老化归档', kind: '有损（只删正文）', status: 'on',
     note: '老会话的原始正文蒸发，派生结论/话题/摘要骨架保留，审计进 cleanup_log。ADR-003：判据是连续强度 strength = max(0, 1 − 年龄/90)。' },
-  { id: 'L3', name: '有损合并（多条经验合成上级经验）', kind: '有损', status: 'todo',
-    note: '未做。前置条件：配额告急且过召回基准门禁 —— 两者都还没到。' },
+  { id: 'L3', name: '模型压缩（多条决策/经验合成上级条目）', kind: '有损（原文永不删）', status: 'off',
+    note: '**已建成，默认关**（1018 实测更正：此前这里写「未做」，与代码不符）。六条边界落在代码里：原文永不删（compress_detail.originals 存快照）、只在生命周期跑、可审计可回滚、默认关且配额落库、抽不出证据就丢弃、掉召回整批回滚。跑法：srelay compress --dry-run / --apply。' },
   { id: 'P', name: '呈现层折叠', kind: '只影响这一次显示', status: 'on',
     note: '近重复只在"这一次显示"里合成一条（foldNearDuplicates），数据通道不折叠 —— 三处呈现同源：DSH 插件 / 核心 CLI / ZCode hook。' },
 ];
