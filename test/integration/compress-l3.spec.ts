@@ -26,8 +26,15 @@ beforeEach(() => {
     VALUES (?,?,?,?,?,?,?,?,?)`).run('s1', 'dsh', 'src-1', PID, '归档那轮的会话', '2026-09-01T00:00:00Z', 'confirmed', JSON.stringify(DECS), 'auto');
 });
 
+// ⚠️ [1021 · R6] 这里显式把两道**收益闸门**的默认门槛关掉（min_utf8_bytes: 0 / min_saved_ratio: 0）。
+//   不是为了"让测试过而放宽测试"——本文件的 fixture 簇只有 ~121 字节，**本来就**够不到默认的 256B 门槛，
+//   而下面几条用例断言的是「模型被调用过 / 配额被记过 / 审计落库」。这 6 条原来能绿，靠的正是
+//   「旧代码先把模型调用排在闸门前面、出来再判太小」这个缺陷本身（R6 的病）。
+//   R6 把闸门提到调用之前以后，被测的簇在调用前就会被判掉 ⇒ 必须显式关掉闸门，这些用例才测得到
+//   它本来要测的落点。**闸门自己的行为不在这里测**（由 R6 的专项探针 + model-apply 的注释数字负责）。
+//   断言一个字没改。
 const policy = (over: Record<string, unknown> = {}) =>
-  compressPolicyOf({ compress: { enabled: true, model: 'fake-model', endpoint: 'http://127.0.0.1:1/v1', min_age_days: 0, min_cluster: 2, topic_overlap: 0.30, ...over } } as never);
+  compressPolicyOf({ compress: { enabled: true, model: 'fake-model', endpoint: 'http://127.0.0.1:1/v1', min_age_days: 0, min_cluster: 2, topic_overlap: 0.30, min_utf8_bytes: 0, min_saved_ratio: 0, ...over } } as never);
 
 describe('L3 端到端（假 provider）', () => {
   it('dry-run 不写任何东西', async () => {
