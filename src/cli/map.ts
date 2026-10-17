@@ -1161,7 +1161,8 @@ function buildImportNodes(rows: string[][], file: string): BuiltNodes {
   let skipped = 0;
   for (const c of rows) {
     if (isMachineRow(str(c[3]).trim())) { skipped++; continue; }
-    const labelRaw = str(c[1]).trim();
+    // `|` 剥掉：表格分隔符不该进节点 label（会把它投影出的看板行切错格，下一轮读回成幻影人写行）。
+    const labelRaw = str(c[1]).replace(/\|/g, '/').trim();
     const detailRaw = str(c[4]).trim();
     let cut = false;
     let label = labelRaw;
@@ -1322,7 +1323,9 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
     const statusOps: Array<{ id: string; status: MapStatus }> = [];
     const fresh: Array<{ id: string; label: string; layer: string; status: MapStatus }> = [];
     for (const c of rows) {
-      const label = str(c[1]).trim().slice(0, LABEL_MAX);
+      // `|` 必须剥掉（红队观察实测）：label 含竖线时，它投影出的看板行会被 readKanbanRows 切错格、
+      //   当成一条人写行读回来 ⇒ 下一轮多出一个幻影节点（kb1:A）。表格分隔符不该出现在内容里。
+      const label = str(c[1]).replace(/\|/g, '/').trim().slice(0, LABEL_MAX);
       if (!label) continue;
       const want = importStatus(str(c[2]).trim());
       const have = byLabel.get(label);
@@ -1336,6 +1339,9 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
         //   （同理 statusOps 恒空，statusFixed 保留只为返回结构稳定。）
         continue;
       }
+      // 同一轮里同一个 label 只建一个节点（红队 P2：复制行/120 字截断撞车会产生**同名节点**，
+      //   其中一个永远收不到更新）。byLabel 里也要补上，否则同一 label 的两行会各建一个。
+      if (byLabel.has(label)) continue;
       if (fresh.length >= MAX_ADD_PER_ROUND) continue;
       // ⚠️ id 必须符合 MAP_ID_RULE = /^[a-z0-9][a-z0-9-]{0,63}$/ —— **下划线非法**。
       //   原写法 'kb1' 撞名时拼成 'kb1_x' ⇒ 被 REFUSED ⇒ 整批操作被拒 ⇒ 此后新增与状态同步永久停摆。
@@ -1344,6 +1350,7 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
       const nextKb = nextKbIndex(usedIds);
       const id = 'kb-' + String(nextKb);
       usedIds.add(id);
+      byLabel.set(label, { id, label, layer: INBOX_LAYER_ID, status: want } as never);
       fresh.push({ id, label, layer: INBOX_LAYER_ID, status: want });
     }
     // ── 匹配率护栏（2026-10-18 现场实测后被逼出来的）──
@@ -1353,14 +1360,25 @@ export function syncMapFromKanban(root: string): { ok: boolean; added: number; s
     //   没有护栏的话，一次同步会往这张成熟的手写结构图里塞 20 个 inbox 噪音节点。
     //   判据：这张图若是**从看板长出来的**（孵化/升级产物），匹配率天然接近 100%；
     //   匹配率过低就说明它是人写的结构图 ⇒ 本轮**只同步状态，不新增**。
-    // 判据用**绝对匹配数**而不是比例：比例会误伤「原有行全对上、但看板确实新增了很多行」的正常项目
-    //  （10 个对上 + 25 个新增 ⇒ 29%，看着像噪音，其实全是真新增）。
-    // 「一个都对不上」才是「这张图不是从看板长出来的」的硬信号 —— 没有误伤空间。
+    // 护栏（红队两轮打回后定稿）：
+    //   第一版用「匹配率 < 30%」，会被「原有行全对上 + 看板真新增很多行」的正常项目误伤；
+    //   第二版用「matched === 0」，又被**1 个偶然同名节点**击穿 —— 6 节点人写图 + 1 个恰好同名的
+    //   「发布」+ 25 条新行 ⇒ matched=1 ⇒ 照样塞进 20 个噪音节点，而只增不删 ⇒ 噪音永久。
+    //   现在用**相对量**：新增数不得超过「匹配数」的 5 倍（且至少给 3 的底）。
+    //     孵化图：matched 与 fresh 同量级 ⇒ 放行；混合图：matched 极小、fresh 很大 ⇒ 拦下。
+    //   两条都不是精确科学，但**拦错方向**是可恢复的（下轮看板再变还会重试），
+    //   而放错方向是不可恢复的（噪音节点只增不删）。
     let freshGuarded = fresh;
     let guardNote = '';
-    if (fresh.length > 0 && matched === 0 && page.nodes.length > 0) {
+    // matched === 0 ⇒ 一个都对不上，绝不新增（硬线）；有匹配时才按倍数放宽。
+    const allowAdd = matched === 0 ? 0 : Math.max(3, matched * 5);
+    if (fresh.length > 0 && page.nodes.length > 0 && fresh.length > allowAdd) {
       freshGuarded = [];
-      guardNote = '（与看板 0 个节点对得上，像是人写的结构图：本轮只同步状态、不新增节点）';
+      guardNote = '（与看板只对上 ' + String(matched) + ' 个节点、却要新增 ' + String(fresh.length)
+        + ' 个（上限 ' + String(allowAdd) + '），判断这张图是人写的结构图：**本轮不动**，不新增节点）';
+    }
+    if (guardNote !== '' && statusOps.length === 0 && freshGuarded.length === 0) {
+      return { ok: true, added: 0, statusFixed: 0, note: guardNote.replace(/^（|）$/g, '') };
     }
     if (statusOps.length === 0 && freshGuarded.length === 0) {
       return { ok: true, added: 0, statusFixed: 0, note: '与看板一致' + guardNote };

@@ -126,7 +126,18 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
         continue;
       }
       const aConfig = adapterConfig(cfg, source);
-      const discovered = adapter.discover(root, aConfig);
+      // ⚠️ per-source 隔离（2026-10-18 红队 P1#3）：原来这里裸调 adapter.discover，
+      //   一个源抛错 ⇒ 整个 try 块跳出 ⇒ **后面所有源一个都不采**。
+      //   红队实测：boom 源崩掉后，健康的 claude-code 入库 0 条（应该 1 条）。
+      //   单个源坏不该有这么大的连坐面。
+      let discovered: DiscoveredSession[] = [];
+      try {
+        discovered = adapter.discover(root, aConfig);
+      } catch (e) {
+        result.warnings.push('源 ' + source + ' 发现阶段失败（本轮跳过该源）：' + String((e as Error).message).slice(0, 80));
+        sweepCompleted = false;
+        continue;
+      }
       // [fork 0922] 内容签名探针：每源每周期一次聚合查询；无探针的源退回 mtime+size
       const probe = adapter.changeProbe?.(aConfig);
 
@@ -168,8 +179,14 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
           : (ds.mtimeMs !== undefined ? `${ds.mtimeMs}:${ds.sizeBytes}` : undefined);
         if (sig !== undefined && syncWatermark.get(wmKey) === sig && knownSessions.has(wmKey)) continue;
 
-        await ingestOne(db, ds, { mode, projectId, projectRoot: root, cfg, result, stats: opts.stats, ignoreRules, tombstones, source, aConfig });
-        if (sig !== undefined) syncWatermark.set(wmKey, sig);
+        // ⚠️ per-session 隔离（红队 P1#3 的另一半）：原来一场会话读失败 ⇒ 整轮中断，
+        //   同源后续的健康会话也全不采。单场坏就单场坏，别连坐。
+        try {
+          await ingestOne(db, ds, { mode, projectId, projectRoot: root, cfg, result, stats: opts.stats, ignoreRules, tombstones, source, aConfig });
+          if (sig !== undefined) syncWatermark.set(wmKey, sig);
+        } catch (e) {
+          result.warnings.push('会话 ' + ds.source + ':' + ds.sourceSessionId + ' 采集失败（其余会话继续）：' + String((e as Error).message).slice(0, 60));
+        }
       }
     }
   } catch (e) {
@@ -181,6 +198,23 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
     // [修 #15] 只有**真正完整**的一轮才推进兜底时间戳；中途抛错/缺源时保持旧时间戳，下一轮重试。
     if (sweepDue && sweepCompleted) noteFullSweepDone(nowMs);
   }
+  // ── 采集告警必须**有人说出来**（2026-10-18 红队 P1#2）──
+  //   病历：result.warnings 与 source_files.suspect/bad_lines 全仓**没有任何读取方**。
+  //   watch.ts 只打条数、cli/sync.ts 只打条数 ⇒ 打错一个源名（'claude-codee'）时，
+  //   warnings 里明明记了「未知会话源」，守护一行都不打。custom adapter 失败、压缩丢数据、
+  //   正文冲突、坏行 —— 全部看不见。这直接违反本仓铁律「容错不许静默」。
+  //   这里在 runSync 自己里打（它同时被 CLI 与守护调用，放在这只有一处），并按内容去重：
+  //   同一个告警只报一次，不然每 15 分钟一行，很快就会被无视（那和静默一样糟）。
+  try {
+    for (const w of result.warnings) {
+      if (reportedWarnings.has(w)) continue;
+      reportedWarnings.add(w);
+      console.error('[srelay] 采集告警：' + w);
+    }
+    // 去重表别无限长：超过 500 条就整体清空（重新开始报，比悄悄不报好）。
+    if (reportedWarnings.size > 500) reportedWarnings.clear();
+  } catch { /* 报错失败不影响采集结果 */ }
+
   // [1015 夜] 看板自动区刷新必须挂在**守护这条路径**上（runSync），不能只挂在 `srelay sync` 命令上——
   // 实测守护进程跑的就是 runSync，于是「全自动」在真实使用里从没自动过（只有手动 sync 才会刷）。
   // 契约不变：只重写模块列 = auto:todos 的行 + 只刷新本工具生成的图；人写的行一个字节不动。
@@ -212,6 +246,10 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   } catch { /* 看板刷不新不影响捕获 */ }
   return result;
 }
+
+/** 已上报过的采集告警（跨轮去重）。为什么需要：告警每 15 分钟重报一次 ⇒ 用户很快无视它，
+ *  那和静默没区别。同一个字符串只报一次。 */
+const reportedWarnings = new Set<string>();
 
 /** 供 save/CLI 使用的发现器（注册表版） */
 export function discoverAll(root: string, cfg: RelayConfig): DiscoveredSession[] {

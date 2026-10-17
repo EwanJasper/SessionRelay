@@ -135,7 +135,13 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   const todue = due.filter((s) => pool.some((p) => p.id === s.id));
 
   const stages: StageReport[] = [];
-  const runOne = async (spec: { id: StageId; title: string }, fn: () => Promise<string> | string) => {
+  // fn 可以返回**字符串**（=成功）或 `{ok, note}`（=显式成败）。
+  // 为什么需要后者（2026-10-18 红队 P2）：repair / guard 这类阶段「失败了但不抛错」——
+  //   它们把失败写进 note 就 return 了，于是 runOne 一律记 ok:true。
+  //   后果：面板/健康记录里永远 ✅，`recordStage` 的 fails 恒 0（熔断永不触发），
+  //   而「283 轮 11 阶段全 OK」这句话对这几个阶段**不携带任何信息**。
+  //   判据分开：抛错 = 失败；显式 {ok:false} = 失败；其余 = 成功。
+  const runOne = async (spec: { id: StageId; title: string }, fn: () => Promise<string | { ok?: boolean; note: string }> | string | { ok?: boolean; note: string }) => {
     const skip = shouldSkip(state, spec.id);
     if (skip.skip && !opts.force) {
       // [1021 红队 R3] 原来这里 `ok: true` + 不打印 —— 用户看到「一切正常」，实际该阶段早已不干活，
@@ -147,11 +153,14 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     }
     const t0 = Date.now();
     try {
-      const note = await fn();
+      const got = await fn();
       const ms = Date.now() - t0;
-      stages.push({ id: spec.id, title: spec.title, ok: true, note, ms });
-      state = recordStage(state, spec.id, { ok: true, note, at: new Date().toISOString(), ms });
-      log('  ✅ ' + spec.title + '：' + note);
+      const ok = typeof got === 'string' ? true : got.ok !== false;
+      const note = typeof got === 'string' ? got : got.note;
+      stages.push({ id: spec.id, title: spec.title, ok, note, ms });
+      state = recordStage(state, spec.id, { ok, note, at: new Date().toISOString(), ms });
+      if (!ok) { try { if (global) logHealthEvent(global, spec.id, 'error', note); } catch { /* 记账失败不阻塞 */ } }
+      log((ok ? '  ✅ ' : '  ❌ ') + spec.title + '：' + note);
     } catch (e) {
       const ms = Date.now() - t0;
       const note = String((e as Error).message).slice(0, 120);
@@ -185,7 +194,9 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     if (bad.length) parts.push('异常 ' + String(bad.length) + ' 个：' + bad.join(' / '));
     if (busy.length) parts.push('被占用跳过 ' + String(busy.length) + ' 个（不是损坏）');
     if (missing.length) parts.push('未建库 ' + String(missing.length) + ' 个（正常）');
-    return parts.length ? parts.join('；') : String(roots.length) + ' 个库全部完整';
+    // 有真异常（corrupt/error）⇒ ok:false。红队实测：corrupt+0字节+正常 三个库时原实现返回 ok:true，
+    //   日志写「✅ 体检与自检：异常 2 个…」——机器可读字段和事实相反，以它为据的自动化全漏报。
+    return { ok: bad.length === 0, note: parts.length ? parts.join('；') : String(roots.length) + ' 个库全部完整' };
   });
 
   // ── [1021 空间自愈] 守护断线核算（只加不改：不动上面的体检分支，也不动 guard.log 的写入方）──
@@ -213,13 +224,19 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   // ── ② 自愈：只修坏的 ──
   if (todue.some((s) => s.id === 'repair')) await runOne(specOf('repair'), async () => {
     const fixed: string[] = [];
+    let failed = 0;
     for (const r of roots) {
       const v = integrityOf(dbFileOf(r));
       if (v.ok) continue;
       const out = await repairProject(r);
-      fixed.push(base(r) + (out.repaired ? ' 已重建' : ' 重建失败（' + out.note.slice(0, 30) + '）'));
+      // 红队 P2：原来即使 repaired=false 也一律记 ok:true，日志还写「✅ 损坏自愈」。
+      //   但 busy / missing / error 三种情况本来就是「本轮不动」，不该算失败；
+      //   只有「确实该修却没修成」才算失败。
+      if (!out.repaired && (out.kind === 'corrupt' || out.kind === 'error')) failed++;
+      fixed.push(base(r) + (out.repaired ? ' 已重建' : ' 未重建（' + out.note.slice(0, 40) + '）'));
     }
-    return fixed.length ? fixed.join(' / ') : '没有需要重建的库';
+    if (fixed.length === 0) return '没有需要重建的库';
+    return { ok: failed === 0, note: fixed.join(' / ') };
   });
 
   // ── ③ 采集（heavy：全量重放，别放进宿主）──
@@ -279,6 +296,11 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     if (archCleaned) bits.push('归档会话清掉 ' + archCleaned + ' 条陈旧决策');
     // 清理失败必须显形：这条通道删的是数据，静默失败等于「以为清过了其实没清」。
     if (archFailed) bits.push('警告 ' + archFailed + ' 个库的归档清理失败（原因见日志）');
+    // 红队 P2：`eachProject` 把逐项目错误放进 `err`，这里原来**根本不读** ——
+    //   库打不开时这一阶段照样报「没有需要重算的」（实测 corrupt 库），用户以为跑过了。
+    //   tags 阶段读 err，这里照着做（判据同源）。
+    const errs = res.filter((x) => x.err).length;
+    if (errs) bits.push('警告 ' + errs + ' 个库读不了（' + res.filter((x) => x.err).map((x) => base(x.root) + ': ' + String(x.err).slice(0, 40)).join(' / ') + '）');
     return bits.length ? bits.join(' · ') : '没有需要重算的';
   });
 
@@ -376,6 +398,9 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
       const parts: string[] = [changed
         ? changed + ' 场会话的派生列已清洗（共丢 ' + res.reduce((a, x) => a + (x.r?.droppedKinds ?? 0), 0) + ' 种噪声）'
         : '0 场（本来就是干净的）'];
+      // 红队 P2：这里原来不读 `err` —— 同一批 corrupt 库，下面 FTS 半边报了错、派生列半边报「没事」。
+      const derr = res.filter((x) => x.err).length;
+      if (derr) parts.push('警告 ' + derr + ' 个库读不了（' + res.filter((x) => x.err).map((x) => base(x.root)).join(' / ') + '）');
 
       // ── 顺带：FTS 索引垃圾回收（实测病历见 core/maintain/fts.ts 顶部）──
       // 删消息**不会让 FTS 缩小**，墓碑会一直堆着 —— 用户看到的就是"库一直涨"。

@@ -271,6 +271,12 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
     // 改动 2：捕获 compaction 摘要（AI 生成的压缩摘要存为 system 角色消息）
     const cursorObj = cur as { rowid?: number; lastCompaction?: number };
     const compParts = selectCompParts.all(ds.sourceSessionId, cursorObj.lastCompaction ?? 0) as Array<{ data: string; time_created: number }>;
+    // ⚠️ 摘要的 seq 必须落在**远离真实行号**的空间（红队 P1#5 实测）：
+    //   原来用 `maxSeq + 1`（maxSeq = 本次扫描内见过的最大 seq）—— 而库里下一条真实消息的
+    //   sequence 是源库给的，两者会撞：实测压缩后 seq3=摘要正文 / seq4=[上下文压缩摘要]，
+    //   下一条真实消息 sequence=4 ⇒ conflicts=1 new=0 ⇒ **库缺「压缩之后的新提问」**。
+    //   改用 1e9 起的固定空间：真实行号到不了那里，且按 compParts 顺序递增 ⇒ 幂等。
+    let compSeq = 1_000_000_000;
     for (const cp of compParts) {
       try {
         const data = JSON.parse(cp.data);
@@ -286,11 +292,11 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
             .trim();
         }
         if (summaryText) {
-          maxSeq += 1;
+          compSeq += 1;
           messages.push({
             role: 'system',
             content: `[上下文压缩摘要] ${summaryText.slice(0, 2000)}`,
-            seqNum: maxSeq,
+            seqNum: compSeq,
             createdAt: new Date(cp.time_created).toISOString(),
           });
         }

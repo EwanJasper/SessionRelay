@@ -61,7 +61,14 @@ export function isCorruptMessage(msg: string): boolean {
 
 export function integrityOf(file: string): IntegrityVerdict {
   if (!fs.existsSync(file)) return { ok: false, kind: 'missing', detail: '库不存在' };
-  const sizeMb = Number((fs.statSync(file).size / 1048576).toFixed(1));
+  const sizeBytes = fs.statSync(file).size;
+  // ⚠️ 0 字节 = **空库**，不是「读失败」（红队 P2 实测打回）：
+  //   本文件开头就写着「0 字节是合法空库」，而且 in-place 兜底分支自己就会 ftruncate 成 0 ——
+  //   结果它产出的空文件被 integrityOf 判成 kind='error' ⇒ repairProject 永远「本轮跳过、未做任何改动」
+  //   ⇒ 自愈**永远不会**去修它自己造成的空库；同时 guard 又把这个库报成「异常」，两个阶段自相矛盾。
+  //   归入 missing 语义：缺失就该走 sync 重建，那条路本来就有。
+  if (sizeBytes === 0) return { ok: false, kind: 'missing', detail: '0 字节空库（按未建库处理，交给 sync 重建）', sizeMb: 0 };
+  const sizeMb = Number((sizeBytes / 1048576).toFixed(1));
   // ★ 体检是**读**操作，必须用只读连接。
   //   用 createDb（可写）做体检 = 体检自己抢写锁 → 自己检测到「被占用」→ 自己判 busy。
   //   这是「自证预言」：库里一切正常，检查的人把它锁住了，然后报告锁冲突。

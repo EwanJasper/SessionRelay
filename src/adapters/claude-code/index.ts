@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathSlug } from '../../shared/paths.js';
-import { tailCompleteLines } from './tailer.js';
+import { readTailProbe, tailCompleteLines } from './tailer.js';
 import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult } from '../types.js';
 
 export const SOURCE_ID = 'claude-code';
@@ -67,8 +67,25 @@ function extractText(c: unknown): string {
 }
 
 export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<ReadResult> {
-  const cur = (cursor ?? {}) as { offset?: number; lines?: number };
-  const t = await tailCompleteLines(ds.sourceFile, cur.offset ?? 0, cur.lines ?? 0);
+  const cur = (cursor ?? {}) as { offset?: number; lines?: number; rewrites?: number; tailHash?: string | null };
+  let offset = cur.offset ?? 0;
+  let lines = cur.lines ?? 0;
+  let rewrites = cur.rewrites ?? 0;
+  // ── 原地重写检测（红队 P1#4）──
+  //   detectRewrite 只认「变小」；源文件被整段重写且**变大**时它完全不触发 ⇒
+  //   实测 367B→421B 重写后 new=0 conflicts=0，游标照推到 421，库内永远旧文本。
+  //   这里加「已消费前缀尾部指纹」：append-only 时不变，被重写必然变。
+  //   老游标没有 tailHash（这个字段是后加的）⇒ 跳过检查，保持向后兼容。
+  if (offset > 0 && typeof cur.tailHash === 'string') {
+    const probe = await readTailProbe(ds.sourceFile, offset);
+    if (probe !== null && probe !== cur.tailHash) {
+      offset = 0;
+      lines = 0;
+      rewrites += 1;
+    }
+  }
+  const t = await tailCompleteLines(ds.sourceFile, offset, lines);
+  const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;
   for (const l of t.lines) {
@@ -79,7 +96,7 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
   return {
     messages,
     badLines: bad,
-    cursor: { offset: t.newOffset, lines: t.consumedLineCount },
+    cursor: { offset: t.newOffset, lines: t.consumedLineCount, rewrites, tailHash },
   };
 }
 

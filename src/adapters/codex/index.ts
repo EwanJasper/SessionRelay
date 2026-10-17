@@ -7,7 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { open } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { tailCompleteLines } from '../claude-code/tailer.js';
+import { readTailProbe, tailCompleteLines } from '../claude-code/tailer.js';
 import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult } from '../types.js';
 
 /** 前缀连续性检查窗口（字节）。256B 足以区分任何真实重写，又是 O(1) 读 */
@@ -145,20 +145,8 @@ export function parseLine(lineText: string, lineNo: number):
  *     它目前只装在 Codex 这条线上；claude-code/qoder 有同样风险，正确归宿是搬进 tailer.ts
  *     （三个适配器共用）——那不在本次写权限内，已在交付说明里登记。
  */
-async function readTailProbe(filePath: string, offset: number): Promise<string | null> {
-  if (offset <= 0) return '';
-  const start = Math.max(0, offset - TAIL_PROBE_BYTES);
-  const len = offset - start;
-  const fh = await open(filePath, 'r');
-  try {
-    const b = Buffer.alloc(len);
-    const { bytesRead } = await fh.read(b, 0, len, start);
-    if (bytesRead < len) return null;   // 文件比 offset 还短 = 被截断（那条判据归 tailer）
-    return createHash('sha1').update(b.subarray(0, bytesRead)).digest('hex').slice(0, 16);
-  } finally {
-    await fh.close();
-  }
-}
+// readTailProbe 已搬进 claude-code/tailer.ts（三适配器共用一份）。
+// 这条路原先只有 Codex 有，另外两个适配器有同样的洞 —— 判据只许有一份。
 export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<ReadResult> {
   const cur = (cursor ?? {}) as { offset?: number; lines?: number; rewrites?: number; tailHash?: string | null };
   let offset = cur.offset ?? 0;

@@ -86,16 +86,26 @@ export function clusterDiffCI(pairs, iters = 10000, seed = 0xc0ffee) {
  * 零假设：b 和 c 是同一个硬币的两面（各 1/2）。用**精确二项**而不是卡方近似：
  *   b+c 常常只有十几，卡方近似在这个量级不可靠。
  */
+/** log(exp(a) + exp(b))，防止中间量上下溢。 */
+function logAddExp(a, b) {
+  const m = Math.max(a, b);
+  if (m === -Infinity) return -Infinity;
+  return m + Math.log(Math.exp(a - m) + Math.exp(b - m));
+}
+
 export function mcnemar(b, c) {
   const n = b + c;
   if (n === 0) return { b, c, n: 0, p: 1, delta: 0 };
   const k = Math.min(b, c);
-  let term = Math.pow(0.5, n);   // P(X = 0)
-  let cum = term;
+  // ⚠️ 必须在**对数空间**累加：原实现用 Math.pow(0.5, n)，n ≥ 1075 时下溢成 0 ⇒ p 恒 0 ⇒
+  //   任何比较都输出「★显著」。红队实测 (700,650) 应为 p=0.1823（不显著），实际给 0。
+  //   题集从 94 扩到 305 走过一次，再扩一倍就会撞上；这种错不会报错，只会让人下错结论。
+  let logTerm = -n * Math.LN2;    // log P(X = 0)
+  let logCum = logTerm;
   for (let i = 1; i <= k; i++) {
-    term = term * (n - i + 1) / i;
-    cum += term;
+    logTerm += Math.log((n - i + 1) / i);
+    logCum = logAddExp(logCum, logTerm);
   }
-  const p = Math.min(1, 2 * cum);
+  const p = Math.min(1, 2 * Math.exp(logCum));
   return { b, c, n, p, delta: (b - c) / n };
 }

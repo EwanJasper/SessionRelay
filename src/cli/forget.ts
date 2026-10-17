@@ -4,13 +4,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from '../shared/config.js';
-import { dbFile, relayDir, findRelayRoot, ignoreFile } from '../shared/paths.js';
+import { dbFile, relayDir, findRelayRoot } from '../shared/paths.js';
 import {
   openExisting, createDb, getSessionFull, getLinkedSessions,
   insertTombstone, insertForgetLog, finalizeForgetLog, insertForgetDetail, getForgetHistory,
   isNoteSession,
 } from '../store/db.js';
-import { appendSessionIgnoreRule, appendSessionIgnoreRules, loadIgnoreRules } from '../capture/ignore.js';
+import { appendSessionIgnoreRule, appendSessionIgnoreRules, ignoreFilePath, loadIgnoreRules } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { die, pc, fmtDate } from './ui.js';
 import type { DB } from '../store/db.js';
@@ -245,7 +245,10 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
     }
     console.log(pc.green('✓') + ` 已遗忘 ${row.id} 「${(row.title ?? row.sourceSessionId).slice(0, 40)}」（${row.messageCount} 条消息）`);
     if (needsBarriers(row)) {
-      console.log(pc.dim(`  防复活闸已写入：${ignoreFile(root).replace(/\\/g, '/')} + 墓碑`));
+      // 必须用 ignoreFilePath（读配置里的 privacy.ignore_file），不能用写死的 ignoreFile ——
+      // 红队实测：配置成 my-ignore.txt 时，这里打印的是 .sessionrelayignore，而那个文件根本不存在。
+      // 用户照着提示去删规则会扑空，然后以为「忘了还在」（判据只许有一份，展示层也得同源）。
+      console.log(pc.dim(`  防复活闸已写入：${ignoreFilePath(root).replace(/\\/g, '/')} + 墓碑`));
       console.log(pc.yellow(`  ⚠️ 原始会话文件仍在磁盘（${row.sourceFile ?? ''}），本库不再收录`));
     }
     console.log(pc.dim('  审计已记入 forget_log（srelay forget --history 查看）'));

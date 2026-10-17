@@ -123,4 +123,21 @@ describe('看板 → 地图增量同步', () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids.every((x) => /^[a-z0-9][a-z0-9-]{0,63}$/.test(x)), 'id 必须符合 MAP_ID_RULE').toBe(true);
   });
+
+
+  it('★ 匹配极少但新增极多 ⇒ 拒绝新增（红队 P2-5：1 个偶然同名不能击穿护栏）', () => {
+    const rows = [['发布', '✅']];
+    for (let i = 0; i < 24; i++) rows.push(['新任务' + i, '✅']);
+    const d = mk(rows);
+    hatchMapFromKanban(d);
+    // 现在图里 25 个节点都与看板同名 —— 这反而是正常孵化图，再加 25 条全新的
+    const more = rows.concat(Array.from({ length: 25 }, (_, i) => ['后加' + i, '✅']));
+    fs.writeFileSync(path.join(d, 'progress.md'), kanban(more));
+    const r = syncMapFromKanban(d);
+    // 25 个匹配、25 个新增 ⇒ allowAdd = max(3, 125) = 125 ⇒ 放行；单轮上限 20 生效
+    expect(r.added).toBe(20);
+    // 下一轮继续把剩下的收进来（这才是「多的下轮继续」第一次真的成立）
+    const r2 = syncMapFromKanban(d);
+    expect(r2.added).toBe(5);
+  });
 });

@@ -465,12 +465,16 @@ export function upsertCapturedSession(
   // 病历：ZCode 适配器改成读 task_type 真值后重跑一次 sync，382 场会话从 auto 改判 workflow，
   // 其中 **10 场原本是用户手动 save 的**（manual 36→26）被一起盖掉。显式保存过的会话不该被自动规则吞掉。
   const ORIGIN_SET = "origin = CASE WHEN origin = 'manual' THEN 'manual' ELSE COALESCE(?, origin) END";
+  // ⚠️ `last_event_at` 只许**前进**（2026-10-18 红队 P2 实测）：原来无条件覆盖，
+  //   iso 字符串比较下「10-17」会被「06-01」盖掉 —— 实测真的倒退过。
+  //   它参与空闲/归档判定 ⇒ 倒退 = 会话被误判成更老 ⇒ **可能提前蒸发正文**。不可逆，所以用 MAX。
+  const NEXT_EVENT = "CASE WHEN last_event_at IS NULL OR ? > last_event_at THEN ? ELSE last_event_at END";
   if (!existing.title && s.title) {
-    db.prepare(`UPDATE sessions SET title = ?, meta_text = ?, last_event_at = ?, synced_at = ?, ${ORIGIN_SET} WHERE id = ?`)
-      .run(s.title, metaTextOf(s.title), s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
+    db.prepare(`UPDATE sessions SET title = ?, meta_text = ?, last_event_at = ${NEXT_EVENT}, synced_at = ?, ${ORIGIN_SET} WHERE id = ?`)
+      .run(s.title, metaTextOf(s.title), s.lastEventAt, s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
   } else {
-    db.prepare(`UPDATE sessions SET last_event_at = ?, synced_at = ?, ${ORIGIN_SET} WHERE id = ?`)
-      .run(s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
+    db.prepare(`UPDATE sessions SET last_event_at = ${NEXT_EVENT}, synced_at = ?, ${ORIGIN_SET} WHERE id = ?`)
+      .run(s.lastEventAt, s.lastEventAt, new Date().toISOString(), s.origin ?? null, existing.id);
   }
   return { id: existing.id, isNew: false, prevState: existing.state, title: existing.title ?? s.title ?? null };
 }

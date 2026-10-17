@@ -34,7 +34,10 @@ export function openGlobal(file?: string): Database.Database {
   const f = file ?? globalDbFile();
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const db = new Database(f);
-  db.pragma('journal_mode = WAL');
+  db.pragma('journal_mode = WAL')
+  // 守护与 MCP 是两个进程同时写这个库：没有 busy_timeout 时撞上就立刻 SQLITE_BUSY（红队 P2#9）。
+  // 与项目库保持一致（openExisting 用的是 5000）。
+  db.pragma('busy_timeout = 5000');
   db.exec(
     'CREATE TABLE IF NOT EXISTS lessons ('
     + ' id INTEGER PRIMARY KEY AUTOINCREMENT,'

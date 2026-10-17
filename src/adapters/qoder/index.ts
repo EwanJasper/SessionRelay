@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { tailCompleteLines } from '../claude-code/tailer.js';
+import { readTailProbe, tailCompleteLines } from '../claude-code/tailer.js';
 import type { SessionSourceAdapter, AdapterConfig, DiscoveredSession, ReadResult } from '../types.js';
 
 export const SOURCE_ID = 'qoder';
@@ -159,8 +159,22 @@ export function parseLine(lineText: string, lineNo: number):
 }
 
 export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<ReadResult> {
-  const cur = (cursor ?? {}) as { offset?: number; lines?: number };
-  const t = await tailCompleteLines(ds.sourceFile, cur.offset ?? 0, cur.lines ?? 0);
+  const cur = (cursor ?? {}) as { offset?: number; lines?: number; rewrites?: number; tailHash?: string | null };
+  let offset = cur.offset ?? 0;
+  let lines = cur.lines ?? 0;
+  let rewrites = cur.rewrites ?? 0;
+  // 原地重写检测（红队 P1#4）：detectRewrite 只认「变小」，变大那种完全不触发。
+  // 判据实现在 claude-code/tailer.ts 的 readTailProbe，三适配器共用一份。
+  if (offset > 0 && typeof cur.tailHash === 'string') {
+    const probe = await readTailProbe(ds.sourceFile, offset);
+    if (probe !== null && probe !== cur.tailHash) {
+      offset = 0;
+      lines = 0;
+      rewrites += 1;
+    }
+  }
+  const t = await tailCompleteLines(ds.sourceFile, offset, lines);
+  const tailHash = await readTailProbe(ds.sourceFile, t.newOffset);
   const messages: ReadResult['messages'] = [];
   let bad = 0;
   for (const l of t.lines) {
@@ -168,7 +182,7 @@ export async function readNew(ds: DiscoveredSession, cursor: unknown): Promise<R
     if (r.kind === 'message') messages.push(r);
     else if (r.kind === 'bad') bad++;
   }
-  return { messages, badLines: bad, cursor: { offset: t.newOffset, lines: t.consumedLineCount } };
+  return { messages, badLines: bad, cursor: { offset: t.newOffset, lines: t.consumedLineCount, rewrites, tailHash } };
 }
 
 export const adapter: SessionSourceAdapter = {

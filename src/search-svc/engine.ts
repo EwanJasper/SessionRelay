@@ -416,7 +416,9 @@ function searchOnce(db: DB, opts: SearchOptions): SearchHit[] {
     const reserve = Math.min(opts.semanticReserve ?? DEFAULT_RESERVE_SLOTS, Math.floor(limit / 3));
     return mergeAdditive(hits, extra, reserve, limit);
   }
-  return hits.slice(0, limit);
+  // limit 必须非负（红队实测：limit=-1 在 30 场库上返回 29 条，在 644 场真实库上会返回 ~643 条）。
+  //  slice(0,-1) 的语义是「去掉最后一条」，和「最多返回 N 条」完全不是一回事。
+  return hits.slice(0, Math.max(0, Math.trunc(limit)));
 }
 
 /**
