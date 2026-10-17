@@ -21,7 +21,7 @@ import type { DB, DecisionRow, UnresolvedRow, RecentFileRow } from '../store/db.
 import { requireRoot, openRelayDb, pc } from './ui.js';
 import { openGlobal, pickForInjection, type LessonRow } from '../store/global.js';
 import { resolveDomain, resolveWorkspaceId } from '../shared/workspace.js';
-import { passesUnresolvedFilters, UNR_SLOTS } from './brief-filter.js';
+import { passesUnresolvedFilters, passesBriefFilters, UNR_SLOTS } from './brief-filter.js';
 
 export interface BriefPayload {
   decisions: DecisionRow[];
@@ -44,7 +44,13 @@ export function collectBrief(db: DB, projectId: string, opts: { limit?: number; 
     //   **简报跳过带标记的**（否则同一件事显示两遍：一次原文一次卡片）；
     //   **检索路径绝不跳**（cli/search.ts 走的是 messages/decisions 全量，不经这里）
     //   ⇒ 简报变短，搜索一条不少。这正是 memcore 那套「结算卡片 + source_id 回读」的落地形式。
-    .filter((d) => !(d as { compressed_into?: string }).compressed_into);
+    .filter((d) => !(d as { compressed_into?: string }).compressed_into)
+    // ── 1020 修三路分叉：CLI 简报此前**完全没过 passesBriefFilters** ──
+    //   实测后果：`srelay brief` 把人话输出里 6 条中的 3~4 条垃圾全显示出来
+    //   （「决定要不要另下 Launcher ← 问句，不是决策2. 决定已归档记忆 ← 碎片」这种串行污染），
+    //   而 DSH / ZCode 两侧的简报是**过滤过的** ⇒ 用户拿 CLI 核对「简报会说什么」会看错。
+    //   判据与两侧同源（`cli/brief-filter.ts`，check-brief-filters §⑥ 有行为对拍）。
+    .filter((d) => passesBriefFilters(String((d as { text?: string }).text ?? '')));
   const { rows: decisions, folded } = foldNearDuplicates<DecisionRow>(rawDecisions, 0.8, lengthRatioGate);
   const cutoff = Date.now() - 14 * 86_400_000;
   // [1017 夜 U-A] 渲染侧过滤：以前这里**一条判据都没有**，于是 `srelay brief` 显示的内容
