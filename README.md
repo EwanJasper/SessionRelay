@@ -53,9 +53,16 @@
 ### 怎么用
 
 上游的安装与使用方式完全不变，见下方[快速开始](#快速开始)。
-本仓库额外提供 **DSH 面板插件**与 **ZCode 适配器**（`integrations/` 目录）。
+本仓库额外提供三个适配器（`integrations/` 目录）——**装哪个取决于你用哪个工具**：
 
- 页面内可直接播放。
+| 工具 | 目录 | 你得到什么 | 要 trust 吗 |
+|---|---|---|---|
+| **DSH** | `plugins/dsh` + 面板 | 13 个原生工具 + 图形面板 + 每步自动简报 | 否 |
+| **ZCode** | `integrations/zcode` | SessionStart 简报 + MCP 13 工具 | 否 |
+| **Codex** | `integrations/codex` | SessionStart 简报 + MCP 13 工具 + 技能 | **是**（Codex 要求 `/hooks` 审核） |
+
+> **装 Codex 那条要留意**：装完必须在 Codex 里输入 `/hooks` 手动 trust，否则钩子不会运行。
+> 详见 [integrations/codex/README.md](integrations/codex/README.md) —— 这是 Codex 的安全设计，脚本无法代劳。
 
 ## 设计初衷：做**轻**，但要做**对**
 

@@ -31,6 +31,7 @@ You spent three days settling an architecture with your AI. That shouldn't vanis
 | **DSH panel tools 7 → 13** | Aligned with the MCP server (`srelay serve`). New: `srelay_related` (anchor a session and find related history — fixes "same thing, different wording"), `srelay_history`, `srelay_decisions`, `srelay_unresolved`, `srelay_stats`, `srelay_pin`. All wrap existing CLI commands; **no new core logic** |
 | **Tag-graph visualisation** | The panel gains a **force-directed graph**: 100 nodes / 1200 edges, repulsion + spring + centering, node radius mapped to session count, hover highlights neighbours. Hand-written Canvas, zero dependencies |
 | **Live refresh** | The graph page polls every 15s — no manual page reload after config changes or a graph rebuild |
+| **Codex adapter** | Same brief at session start + the 13 MCP tools + the optional skill. **Codex requires a manual `/hooks` trust step** — see [integrations/codex/README.md](integrations/codex/README.md) |
 | **ZCode MCP wiring** | `sessionrelay` registered in ZCode's `mcp.servers`, turning ZCode from "passive brief only" into "can actively query and record" |
 
 ### Bugs fixed (all of the same shape: silently reporting "all good")
