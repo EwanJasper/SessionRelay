@@ -88,6 +88,11 @@ function queryDecisions(db, projectId, limit) {
   const seenIdx = new Map()
   for (const r of rows) {
     for (const d of jsonArray(r.decisions)) {
+      // ── 1020 · P1：压缩卡片机制（压缩不掉召回）──
+      //   L3 压缩写回后，原始条目带 `compressed_into: <卡片id>`，同时库里追加了一条卡片。
+      //   **简报跳过带标记的**（否则同一件事显示两遍）；**检索路径不跳**（走 messages 全量）。
+      //   与核心 `core/SessionRelay/src/cli/brief.ts` 的 collectBrief 同一判据，改一处必须改另一处。
+      if (d.compressed_into) continue
       // [1015 修] 与核心库 dedupKey 同规：标点与表格竖线一并剔掉（只去空白会让"被表格符号切分"的
   // 同一句话算两条 → 简报双显）。改这里必须同时改 core/SessionRelay/src/store/db.ts 的 dedupKey。
   const key = String(d.text ?? '').replace(/[\s，。！？、,.!?;；:：|｜]+/g, '').slice(0, 40)
