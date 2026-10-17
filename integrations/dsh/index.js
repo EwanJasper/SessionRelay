@@ -180,9 +180,17 @@ function itemsFromArray(arr, key, max) {
       return !SUBAGENT_TASK_TITLE.test(String(d.title ?? '').trim())
     })
     .filter((d) => {
-      // 置顶决策豁免新鲜度窗——置顶的意义就是"老决策也要进简报"。
+      // 置顶豁免新鲜度窗——置顶的意义就是"重要的老条目也要进简报"。
       // 三个月前拍板的架构选择若被 48h 窗滤掉，置顶就形同虚设。
-      if (key === 'decisions' && d.pinned === true) return true
+      //
+      // [1017 夜 10:2x 修一条真实语义分叉] 原来这里写的是 `key === 'decisions' && d.pinned === true`，
+      //   而本函数上面两层（175/179）的置顶豁免**都不看 key** —— 同一份文件里三条豁免自相矛盾：
+      //   决策链豁免、未决链的过滤器层豁免，但未决链的新鲜度窗不豁免。
+      // 实测后果（守门 §⑦c 第一次真跑就抓到）：一个 30 天前被 pin 的未决问题，
+      //   DSH 侧**被 48h 窗砍掉**、ZCode 侧**留着** ⇒ 两个运行时显示的未决段内容不同。
+      // ZCode 侧那句注释把意图写得很清楚：置顶的意义就是重要的条目也要进简报，
+      //   再被 48h 窗滤掉就自相矛盾了 —— 所以未决链也该豁免，原来那个 key 限定是漏的。
+      if (d.pinned === true) return true
       const at = Date.parse(d.at ?? d.msgAt ?? '')
       return !Number.isFinite(at) || at >= cutoff
     })
