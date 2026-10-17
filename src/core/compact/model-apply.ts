@@ -150,6 +150,14 @@ export async function compressProject(db: DB, projectId: string, p: CompressPoli
   if (calls > 0) quotaCharge(db, 'project', calls, now);
 
   let logId: number | null = null;
+  // ⚠️ [1017 夜 08:2x 实读源码后订正] 本函数**只写审计表，从不 UPDATE sessions.decisions** ——
+  //   原文一个字都没动（合并文本进的是 compress_detail.merged_text）。
+  // ⇒ 设计件 §2 承诺的「掉召回整批回滚」在**当前形态下不适用**：没有东西被覆盖，就没有召回可掉；
+  //   CLI 的 --rollback 也因此只导出依据、不改库（compress.ts 里注明了原因并留了 TODO）。
+  // ⇒ **将来加「写回原文」那一拍时，必须同时补两样**：
+  //   ① 事务（现在这段审计写入没有 BEGIN/COMMIT，中途异常会留下半截 log）；
+  //   ② 合并前后同快照跑基准、hit@1 掉了整批不写（护栏要护的是「会改数据」的那一步）。
+  // 在那之前加护栏 = 为不存在的风险花一次基准时间，却保护不了任何东西。
   if (opts.apply && details.length > 0) {
     logId = writeCompressLog(db, {
       triggeredBy: 'lifecycle', scope: 'decisions', model: p.model, provider: provider.name,
