@@ -24,6 +24,9 @@ import type Database from 'better-sqlite3';
 import { runSync } from '../../capture/sync.js';
 import { recomputeExtractions } from '../../capture/recompute.js';
 import { compactExactSessions } from '../compact/exact.js';
+import { compactNearDuplicates } from '../compact/near-dup.js';
+import { harvestLessons } from '../extract/lesson-harvest.js';
+import { resolveWorkspaceId } from '../../shared/workspace.js';
 import { cleanDerivedColumns } from '../extract/derived-cleanup.js';
 import { buildTagGraph } from '../graph/tags.js';
 import { autoArchiveProject, autoArchivePolicyOf } from '../../capture/archive.js';
@@ -236,6 +239,41 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
     return bits.length ? bits.join(' · ') : '没有需要重算的';
   });
 
+  // ── ④b 经验采集（light；全局库 ← 逐项目库）──
+  //
+  // 1021 新增。病历：此前 harvest 只是**手动命令**，而下一段 consolidate（衰减/退休）
+  // 每小时都在跑 ⇒ 经验库**只减不增**。实测 17 条里 7 条被衰减退休、全靠人工偶尔补。
+  //
+  // 为什么敢让它自动跑：产出永远是 **draft**，而 draft 不进注入层（要 lesson confirm）。
+  // 抽错的代价最多是"草稿多一条"，且每条都带 quote + sourceRef，复核一眼可见。
+  // 顺序：本段排在 consolidate **之前** —— 先采新的，再衰减旧的。
+  if (todue.some((s) => s.id === 'harvest')) await runOne(specOf('harvest'), () => {
+    if (!global) return '全局库不可用（' + (globalOpenError ?? '未知') + '），跳过';
+    let scanned = 0, found = 0, fresh = 0, written = 0, notDraft = 0, off = 0, errored = 0;
+    for (const root of roots) {
+      const f = dbFileOf(root);
+      if (!fs.existsSync(f)) continue;
+      let cfg;
+      try { cfg = loadConfig(root); } catch { errored++; continue; }
+      if (cfg.lesson?.harvest === false) { off++; continue; }
+      const pdb = createDb(f);
+      try {
+        const r = harvestLessons(global as never, pdb as never, resolveWorkspaceId(root), {
+          days: typeof cfg.lesson?.harvest_days === 'number' ? cfg.lesson.harvest_days : 7,
+        });
+        scanned += r.scanned; found += r.found; fresh += r.fresh; written += r.written;
+        notDraft += r.notDraft.length;
+      } catch { errored++; }
+      finally { try { pdb.close(); } catch { /* 已关 */ } }
+    }
+    const bits = ['扫 ' + scanned + ' 条', '候选 ' + found, '新的 ' + fresh, '写入草稿 ' + written];
+    if (off) bits.push(off + ' 个项目已关');
+    // 清理/写入失败必须显形（这条通道写的是全局库，静默失败等于"以为采过了其实没采"）
+    if (errored) bits.push('警告 ' + errored + ' 个项目出错（原因见日志）');
+    if (notDraft) bits.push('🔴 ' + notDraft + ' 条落库后不是 draft（写入语义被改动了）');
+    return bits.join(' · ');
+  });
+
   // ── ⑤ 经验衰减/退休/冲突（light，全局库）──
   if (todue.some((s) => s.id === 'consolidate')) await runOne(specOf('consolidate'), () => {
     if (!global) return '全局库不可用（' + (globalOpenError ?? '未知') + '），跳过';
@@ -244,11 +282,42 @@ export async function runLifecycle(opts: LifecycleOptions = {}): Promise<Lifecyc
   });
 
   // ── ⑥ 无损去重（light）──
+  //   两个子层，判据完全不同，别混：
+  //     L0（exact）：**同会话**逐字重复合并 —— 恒定跑，可证明无损
+  //     L1b（near-dup）：**跨会话**近重复合并 —— 由 compact.near_dup 控制（默认开）
+  //   L1b 的默认值不是拍的：代表选择改成 highest-trust 之后，两个库的召回基准
+  //   hit@1/hit@3/hit@10 逐格不变；而旧策略(newest)在 music 库会让 31 条用户拍板
+  //   被 workflow 转述吸收、从读路径隐形。压缩量两者相同 ⇒ 修规则不花代价。
+  //   写回带审计（compact_log/compact_detail）与回滚（rollbackNearDuplicates）。
   if (todue.some((s) => s.id === 'compact')) await runOne(specOf('compact'), () => {
-    const res = eachProject((_root, db) => compactExactSessions(db, { apply: true }));
-    const merged = res.reduce((a, x) => a + (x.r?.merged ?? 0), 0);
-    const changed = res.reduce((a, x) => a + (x.r?.changed ?? 0), 0);
-    return merged ? (merged + ' 条重复已合并（' + changed + ' 场会话，零信息损失）') : '0 条重复已合并（零信息损失）';
+    const l0 = eachProject((_root, db) => compactExactSessions(db, { apply: true }));
+    const m0 = l0.reduce((a, x) => a + (x.r?.merged ?? 0), 0);
+    const c0 = l0.reduce((a, x) => a + (x.r?.changed ?? 0), 0);
+    // L1b：逐项目读配置（开关可逐项目不同），关掉的跳过并记账
+    let m1 = 0, s1 = 0, off = 0, err1 = 0;
+    for (const root of roots) {
+      const f = dbFileOf(root);
+      if (!fs.existsSync(f)) continue;
+      let cfg;
+      try { cfg = loadConfig(root); } catch { err1++; continue; }
+      const nearDup = cfg.compact?.near_dup !== false;
+      if (!nearDup) { off++; continue; }
+      const db = createDb(f);
+      try {
+        const r = compactNearDuplicates(db, {
+          apply: true,
+          representative: 'highest-trust',
+          threshold: typeof cfg.compact?.threshold === 'number' ? cfg.compact.threshold : 0.8,
+          triggeredBy: 'lifecycle',
+        });
+        m1 += r.merged; s1 += r.sessionsChanged;
+      } catch { err1++; }
+      finally { try { db.close(); } catch { /* 已关 */ } }
+    }
+    const parts: string[] = [];
+    parts.push('L0 ' + m0 + ' 条（' + c0 + ' 场会话）');
+    parts.push('L1b ' + m1 + ' 条（' + s1 + ' 场会话）' + (off ? ' · ' + off + ' 个项目已关' : '') + (err1 ? ' · ' + err1 + ' 个项目出错' : ''));
+    return parts.join(' · ');
   });
 
   // ── ⑦ 派生列清洗（light）：topics/files 噪声 ──

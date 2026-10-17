@@ -184,7 +184,7 @@ describe('serve 根解析信号链（design-serve-resolve）', () => {
     expect((parse(await c.callTool({ name: 'get_stats', arguments: { project: b.dir } }))).project).toBe(b.pid);
   }, 30000);
 
-  it('R6 零信号零候选：指导性错误 + howTo 提到 init / 环境变量（连接保持、全部工具照常列出（Phase 1 后为 13 个））', async () => {
+  it('R6 零信号零候选：指导性错误 + howTo 提到 init / 环境变量（连接保持、全部工具照常列出（Phase 1 后为 14 个））', async () => {
     resetRegistry();
     const c = await startServe({ cwd: EMPTY });
     clients.push(c);
@@ -195,9 +195,9 @@ describe('serve 根解析信号链（design-serve-resolve）', () => {
     const howTo = String(g.howTo);
     expect(howTo).toContain('srelay init');
     expect(howTo).toContain('SRELAY_PROJECT_ROOT');
-    // deferred 模式契约不变：全部工具照常可列出（Phase 1 后为 13 个）
+    // deferred 模式契约不变：全部工具照常可列出（Phase 1 后为 14 个）
     const tools = await c.listTools();
-    expect(tools.tools).toHaveLength(13);
+    expect(tools.tools).toHaveLength(14);
   }, 30000);
 
   it('R7 注册表损坏：视为空不 crash，走零候选路径', async () => {

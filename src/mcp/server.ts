@@ -28,6 +28,11 @@ import type { ScopePredicate } from '../core/scope/evaluator.js';
 import { compilePredicate } from '../core/scope/evaluator.js';
 import { assembleScope } from '../core/scope/assemble.js';
 import { loadScopeFile, saveScopeFile, makeScopeFile } from '../core/scope/scopeFile.js';
+// [1021] 经验层：MCP 侧要能**主动查**经验。
+//   此前经验只有"每轮自动注入 3 条"这一条路 —— 库一大，命中率必然下降，而模型没有
+//   任何手段去深挖。这个工具就是那条缺失的路：自动注入保底，需要时主动查。
+import { openGlobal, listLessons, searchLessons, liveImportance, isInjectable, INJECT_THRESHOLD } from '../store/global.js';
+import { resolveWorkspaceId, resolveDomain } from '../shared/workspace.js';
 
 /** 一次工具调用时的服务上下文（连接内可随项目选中而切换） */
 export interface ServeCtx { root: string; db: DB; cfg: RelayConfig; project: string }
@@ -483,6 +488,59 @@ const hits = searchSessions(cur.db, { project: cur.project, query: args.query, l
       dbSizeMB: Number((fs.existsSync(dbFile(root)) ? fs.statSync(dbFile(root)).size / 1024 / 1024 : 0).toFixed(2)),
       scope: sf ? { mode: sf.mode, filters: sf.filters, issued_at: sf.issued_at } : null,
     });
+  }));
+
+  register('srelay_lessons', {
+    title: '查经验',
+    description: '查跨项目经验（全局库）。给 q 就按关键词检索，不给就按重要度列出。'
+      + '**这是"自动注入那 3 条之外"的深挖入口**：开场自动注入只保底 3 条（200 字符），'
+      + '库变大后想找特定主题的经验时必须用这个工具主动查。'
+      + '返回里 injectable=true 表示它现在真会进注入层（状态/定级/阈值三样都过）。',
+    inputSchema: {
+      q: z.string().optional().describe('关键词（中文可，走 FTS + 分词器）'),
+      top: z.number().optional().describe('最多几条（默认 10，上限 50）'),
+      scope: z.string().optional().describe('过滤作用域：global|project|domain'),
+      status: z.string().optional().describe('过滤状态：draft|verified|confirmed|retired|rejected'),
+      ...zProject,
+    },
+  }, guard(async (args: { q?: string; top?: number; scope?: string; status?: string } & zPredShape) => {
+    const { root } = get();
+    let gdb: ReturnType<typeof openGlobal> | null = null;
+    try {
+      gdb = openGlobal();
+      const workspaceId = resolveWorkspaceId(root);
+      const domain = resolveDomain(root);
+      const top = Math.min(50, Math.max(1, Number(args.top ?? 10)));
+      const raw = String(args.q ?? '').trim()
+        ? searchLessons(gdb, args.q!, { workspaceId, domain, top: top * 2 })
+        : listLessons(gdb, { workspaceId, domain, top: top * 2 });
+      // scope/status 过滤放在取数之后：listLessons/searchLessons 的可见性判据
+      // （visibleWhere）是**权威**，这里只是让调用方能收窄，不另写一套可见性。
+      let rows = raw;
+      if (args.scope) rows = rows.filter((r) => String(r.scope) === args.scope);
+      if (args.status) rows = rows.filter((r) => String(r.status) === args.status);
+      rows = rows.slice(0, top);
+      const items = rows.map((r) => ({
+        id: r.id,
+        scope: r.scope,
+        grade: r.grade,
+        status: r.status,
+        text: r.text,
+        // 实时分（含年龄衰减 + uses/hits 加成），不是入库时的静态 importance
+        importance: Number(liveImportance(r).toFixed(2)),
+        injectable: isInjectable(r),
+        uses: r.uses ?? 0,
+        sourceRef: r.source_ref ?? null,
+        quote: r.quote ?? null,
+      }));
+      return toolOut({
+        count: items.length,
+        threshold: INJECT_THRESHOLD,
+        // 说清楚口径：injectable 与"自动注入"共用同一个判据函数，不另算一套
+        note: 'injectable 与开场自动注入共用 isInjectable（同一份判据）；自动注入每轮只取 top3/200字',
+        items,
+      });
+    } finally { try { gdb?.close(); } catch { /* 已关 */ } }
   }));
 
   register('set_scope', {

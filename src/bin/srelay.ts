@@ -265,7 +265,7 @@ program
   .option('--status', '只看各阶段状态（不跑）')
   .option('--once', '只跑一轮（默认行为，写出来是为了可读）')
   .option('--loop <sec>', '常驻：每 N 秒一轮（0 = 只跑一轮）')
-  .option('--only <ids>', '只跑这些阶段（逗号分隔：guard,repair,capture,extract,consolidate,compact,cleanup,aging,distribute）')
+  .option('--only <ids>', '只跑这些阶段（逗号分隔：guard,repair,capture,extract,harvest,consolidate,compact,cleanup,tags,aging,distribute）')
   .option('--light', '只跑轻阶段（宿主内 worker 用，不阻塞 UI）')
   .option('--force', '无视各阶段节奏，强制全跑')
   .option('--json', '机器格式')

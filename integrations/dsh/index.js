@@ -52,7 +52,7 @@ import { fileURLToPath } from 'node:url'
 import { passesBriefFilters } from './src/brief-filters.mjs'
 import { resolveProjectRoot, shouldAutoInit } from './project-resolve.mjs'
 import { searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool,
-         relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool } from './src/tools.js'
+         relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool, lessonsTool } from './src/tools.js'
 import { setStorageAdapter, disposeBindState } from './src/state.js'
 import { queryBriefData, sqlChannelAvailable, queryRecentFiles, foldPresentation } from './src/brief-sql.mjs'
 import { registerHooks } from './src/hooks.mjs'
@@ -733,7 +733,7 @@ export function apply(ctx) {
   //   同一个产品的两面不该能力不一样。新增的 6 个只是把 CLI **已有**的命令包成工具，
   //   没另写内核逻辑（判据仍只有一份）。
   const allTools = [searchTool, showTool, recordTool, bindProjectTool, confirmBindTool, cancelBindTool, initProjectTool,
-                    relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool]
+                    relatedTool, historyTool, decisionsTool, unresolvedTool, statsTool, pinTool, lessonsTool]
   for (const t of allTools) {
     try { ctx.tools.register(t) } catch { /* 单个失败不拖垮其他 */ }
   }

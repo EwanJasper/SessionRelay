@@ -83,6 +83,26 @@ export interface RelayConfig {
     projects?: boolean;
     lessons?: boolean;
   };
+  /** ═══ L1b 跨会话近重复合并（1021 新增，模块见 core/compact/near-dup.ts）═══
+   *  **默认开**。这个默认值是量出来的，不是拍脑袋：
+   *    · 代表选择改 highest-trust 后，两个库的召回基准 hit@1/hit@3/hit@10 **逐格不变**
+   *    · 而旧策略(newest)在 music 库上会让 **31 条用户拍板**被 workflow 转述吸收、从读路径隐形
+   *    · 压缩量两者相同（46 组） ⇒ 修规则不花任何代价
+   *  仍可关：设 compact.near_dup=false。写回有审计(compact_log)与回滚(rollbackNearDuplicates)。 */
+  compact?: {
+    near_dup?: boolean;
+    /** 近重复阈值（默认 0.8；调低=合并更狠，调高=更保守） */
+    threshold?: number;
+  };
+  /** 经验层（1021 新增）。harvest = 从项目记忆里**刨草稿**，默认开。
+   *  之所以敢默认开：产出永远是 draft，而 draft 不进注入层（要 lesson confirm 才生效）。
+   *  之前它只是手动命令，而 consolidate（衰减/退休）每小时在跑 ⇒ 经验库只减不增。 */
+  lesson?: {
+    /** 自动采集开关（默认 true） */
+    harvest?: boolean;
+    /** 回看多少天（默认 7） */
+    harvest_days?: number;
+  };
   /** [fork 1013] 审计 P3：提取规则版本落后时的后台分批重算节奏（分钟，默认 6h） */
   recompute?: {
     check_every_min?: number;
@@ -116,6 +136,9 @@ export function defaultConfig(): RelayConfig {
     //   `DECAY_PER_DAY = 0.0083` 的线性年龄扣分（用于注入阈值判决，会真的过滤）。
     //   两处一起用 = 衰减两次。要么用 lesson-gate 那套，要么把它换成这里的指数项，二选一。
     decay: defaultDecayConfig(),
+    // L1b 跨会话近重复合并：默认开（依据见 RelayConfig.compact 的注释）
+    compact: { near_dup: true, threshold: 0.8 },
+    lesson: { harvest: true, harvest_days: 7 },
   };
 }
 
@@ -135,6 +158,8 @@ export function mergeConfig(raw: Record<string, unknown> | null): RelayConfig {
     archive: { ...def.archive, ...((raw.archive ?? {}) as object) },
     decay: resolveDecayConfig(raw.decay),
     recompute: { ...def.recompute, ...((raw.recompute ?? {}) as object) },
+    compact: { ...(def.compact ?? {}), ...((raw.compact ?? {}) as object) },
+    lesson: { ...(def.lesson ?? {}), ...((raw.lesson ?? {}) as object) },
   } as RelayConfig;
 }
 

@@ -9,7 +9,7 @@
 //   ② 每个阶段**独立到期**（各自节奏），不是"每 30 分钟把所有阶段都跑一遍"；
 //   ③ 有损阶段（L3）必须带门禁，门禁不过就回滚并写 health_events。
 
-export type StageId = 'capture' | 'extract' | 'consolidate' | 'compact' | 'cleanup' | 'tags' | 'aging' | 'distribute' | 'guard' | 'repair';
+export type StageId = 'capture' | 'extract' | 'harvest' | 'consolidate' | 'compact' | 'cleanup' | 'tags' | 'aging' | 'distribute' | 'guard' | 'repair';
 
 export interface StageSpec {
   id: StageId;
@@ -33,6 +33,12 @@ export const STAGES: StageSpec[] = [
   { id: 'repair', title: '损坏自愈（从原始会话重放）', everySec: 3600, mutates: true, weight: 'heavy' },
   { id: 'capture', title: '采集客户端会话', everySec: 900, mutates: true, weight: 'heavy' },
   { id: 'extract', title: '抽取 / 按规则版本重算', everySec: 1800, mutates: true, weight: 'light' },
+  // [1021] 经验采集：**必须排在 consolidate（衰减/退休）之前**。
+  //   病历：此前 harvest 只由手动命令跑，而 consolidate 每小时在跑 ——
+  //   结果经验库**只减不增**（17 条里 7 条被衰减退休，全靠人工偶尔补几条）。
+  //   顺序也要紧：先采新的再衰减旧的；反过来会让"这一轮刚采的"先被算一次衰减。
+  //   体量 light：每项目扫最近 7 天 ≤4000 条消息，纯正则匹配；6 小时一次足够。
+  { id: 'harvest', title: '经验采集（从项目记忆刨草稿）', everySec: 21600, mutates: true, weight: 'light' },
   { id: 'consolidate', title: '经验衰减 / 退休 / 冲突标记', everySec: 3600, mutates: true, weight: 'light' },
   { id: 'compact', title: '无损去重（同会话精确重复）', everySec: 3600, mutates: true, weight: 'light' },
   { id: 'cleanup', title: '派生列清洗（topics/files 噪声）', everySec: 3600, mutates: true, weight: 'light' },

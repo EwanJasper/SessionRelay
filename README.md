@@ -30,7 +30,7 @@
 
 | 变化 | 说明 |
 | ---- | ---- |
-| **DSH 面板工具 7 → 13** | 与 MCP 侧（`srelay serve`）能力对齐。新增 `srelay_related`（以会话为锚推荐相关历史，治「换个角度就搜不到」）、`srelay_history`、`srelay_decisions`、`srelay_unresolved`、`srelay_stats`、`srelay_pin`。**全部只包 CLI 已有命令，不另写内核逻辑** |
+| **DSH 面板工具 7 → 14** | 与 MCP 侧（`srelay serve`）能力对齐。新增 `srelay_related`（以会话为锚推荐相关历史，治「换个角度就搜不到」）、`srelay_history`、`srelay_decisions`、`srelay_unresolved`、`srelay_stats`、`srelay_pin`、`srelay_lessons`（**查跨项目经验库** —— 开场自动注入只保底 3 条，库大后靠它主动深挖）。**全部只包 CLI 已有命令，不另写内核逻辑** |
 | **标签图谱可视化** | 面板「图谱」页新增**力导向图**：100 节点 / 1200 边，斥力+弹簧+向心三力模拟，节点大小映射会话数，悬停高亮邻居。纯 Canvas 手写，零第三方依赖 |
 | **实时刷新** | 图谱页 15 秒轮询，改配置 / 重建图谱后无需手动刷页面 |
 | **ZCode MCP 接入** | 注册 `sessionrelay` 到 ZCode 的 `mcp.servers`，ZCode 侧从「只能被动接收简报」变成「能主动查/记」 |
@@ -57,9 +57,9 @@
 
 | 工具 | 目录 | 你得到什么 | 要 trust 吗 |
 |---|---|---|---|
-| **DSH** | `plugins/dsh` + 面板 | 13 个原生工具 + 图形面板 + 每步自动简报 | 否 |
-| **ZCode** | `integrations/zcode` | SessionStart 简报 + MCP 13 工具 | 否 |
-| **Codex** | `integrations/codex` | SessionStart 简报 + MCP 13 工具 + 技能 | **是**（Codex 要求 `/hooks` 审核） |
+| **DSH** | `plugins/dsh` + 面板 | 14 个原生工具 + 图形面板 + 每步自动简报 | 否 |
+| **ZCode** | `integrations/zcode` | SessionStart 简报 + MCP 14 工具 | 否 |
+| **Codex** | `integrations/codex` | SessionStart 简报 + MCP 14 工具 + 技能 | **是**（Codex 要求 `/hooks` 审核） |
 
 > **装 Codex 那条要留意**：装完必须在 Codex 里输入 `/hooks` 手动 trust，否则钩子不会运行。
 > 详见 [integrations/codex/README.md](integrations/codex/README.md) —— 这是 Codex 的安全设计，脚本无法代劳。
@@ -185,7 +185,7 @@ graph TB
 
     subgraph Consumers["👥 谁来查询记忆"]
         YOU["你（CLI）<br/>search · decisions · history"]
-        AGENT["AI Agent（MCP）<br/>13 个工具"]
+        AGENT["AI Agent（MCP）<br/>14 个工具"]
         TEAM["同事（HOP 交接包）<br/>export → import"]
     end
 
@@ -280,7 +280,7 @@ bigram 的结果列表更干净（平均 3.0 条 vs 38.5 条，jieba 多出来�
 > 1014 实测这个不对称让 4361 条消息的客户端样板文字占掉一个库全部索引的 15.9%，
 > 一直没被发现，因为它的症状是"索引胀大"而不是"简报出错"。
 
-### 🤖 MCP Server（13 个工具，7 读 + 6 写）
+### 🤖 MCP Server（14 个工具，7 读 + 6 写）
 
 任何支持 MCP 的 AI agent 接入后，在这个项目里不再是失忆的。
 
@@ -493,7 +493,7 @@ timeline
 claude mcp add sessionrelay --scope user -- srelay serve
 ```
 
-注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、13 个工具就绪。
+注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、14 个工具就绪。
 
 ### ZCode / 其他 MCP 客户端
 
@@ -533,7 +533,7 @@ claude mcp add sessionrelay --scope user -- srelay serve
 
 正确的样子：AI 调用 `srelay_search kind=decisions` 或 `srelay_search`，回答里带出处（日期、来源 agent、会话 ID、消息序号）。如果它说"不知道"，说明 MCP 未接通——检查 `srelay doctor`。
 
-### 13 个工具能回答什么
+### 14 个工具能回答什么
 
 <details>
 <summary><b>读工具（6 个）</b>——点击展开</summary>

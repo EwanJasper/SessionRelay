@@ -446,6 +446,31 @@ export const decisionsTool = describeTextTool({
   emptyHint: '本项目还没有已确认的决策。',
 })
 
+/**
+ * 查经验（1021 新增）。
+ *
+ * 为什么需要它：经验此前只有一条路 —— **每轮自动注入 3 条（200 字符）**。
+ * 库一大，3 条必然覆盖不到当前问题，而模型没有任何手段去深挖。
+ * 这个工具就是那条缺失的路：自动注入保底，需要时主动查。
+ *
+ * 判据全部在内核（visibleWhere / isInjectable / liveImportance），本文件只构造 CLI 参数。
+ */
+export const lessonsTool = describeTextTool({
+  name: 'srelay_lessons',
+  description: '查跨项目经验库（全局）。给 query 就按关键词检索，不给就按重要度列出。'
+    + '**这是开场自动注入那 3 条之外的深挖入口** —— 想找特定主题（如「检索排序」「分词器」「部署」）的既往教训时用它。'
+    + '输出里 ● 表示现在真会进注入层（状态/定级/阈值三样都过），○ 表示可查到但不会自动注入。',
+  parameters: {
+    query: { type: 'string', description: '关键词（中文可；不填则按重要度列出）' },
+    limit: { type: 'number', description: '最多几条，默认 10' },
+  },
+  buildArgs: (a) => {
+    const q = String(a.query || '').trim()
+    return q ? ['lesson', 'search', q, '--json'] : ['lesson', '--json']
+  },
+  emptyHint: '经验库里没有匹配的条目。',
+})
+
 /** 列出未解决问题 */
 export const unresolvedTool = describeTextTool({
   name: 'srelay_unresolved',

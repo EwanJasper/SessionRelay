@@ -182,6 +182,35 @@ CREATE TABLE IF NOT EXISTS compress_detail (
 );
 CREATE INDEX IF NOT EXISTS idx_compress_detail_log ON compress_detail(compress_log_id);
 
+-- ── L1b：跨会话近重复合并的审计账本（1021 新增）──
+-- 为什么单独一张表而不是复用 compress_log：那本是 L3（模型压缩）的账本，
+-- 两者的失败模式不同（L3 要模型、可能掉召回；L1b 纯确定性），混在一起会让
+-- "这次到底跑了哪一层"在审计里分不清。
+CREATE TABLE IF NOT EXISTS compact_log (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  triggered_by      TEXT NOT NULL,
+  policy            TEXT NOT NULL,
+  threshold         REAL NOT NULL,
+  groups_merged     INTEGER NOT NULL DEFAULT 0,
+  items_in          INTEGER NOT NULL DEFAULT 0,
+  items_out         INTEGER NOT NULL DEFAULT 0,
+  sessions_changed  INTEGER NOT NULL DEFAULT 0,
+  bytes_before      INTEGER NOT NULL DEFAULT 0,
+  bytes_after       INTEGER NOT NULL DEFAULT 0,
+  created_at        TEXT NOT NULL
+);
+-- absorbed 存被吸收条目的**完整原文快照**（ADR-002 边界：原文永不删、可回滚）
+CREATE TABLE IF NOT EXISTS compact_detail (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  compact_log_id INTEGER NOT NULL REFERENCES compact_log(id) ON DELETE CASCADE,
+  session_id     TEXT NOT NULL,
+  kept_text      TEXT NOT NULL,
+  absorbed       TEXT NOT NULL,
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_compact_detail_log ON compact_detail(compact_log_id);
+CREATE INDEX IF NOT EXISTS idx_compact_detail_session ON compact_detail(session_id);
+
 -- 配额**落库**（边界④：重启不重置）。按小时窗口计数。
 CREATE TABLE IF NOT EXISTS compress_quota (
   key       TEXT PRIMARY KEY,
@@ -320,6 +349,35 @@ export function dedupKey(s: string | null | undefined): string {
 }
 export function metaTextOf(title: string | null | undefined, topics: string[] = []): string {
   return searchTextOf([title ?? '', ...topics].join(' '));
+}
+
+/**
+ * 重算某个会话的 meta_text（**唯一口径**）。
+ *
+ * meta_text = title + topics + **每条决策的前 30 字** + user_tags，再过 stripInjected/toSearchText。
+ * 关键点：**决策的内容确实进检索索引** —— 这才是"改 decisions 必须重建 meta_text"的原因。
+ * 不重建的后果不是报错，而是**库与索引分叉**：decisions 里已经合并/改写了，
+ * 检索面还停留在旧文本上（表现：搜旧措辞能搜到，打开却看不到那句话）。
+ *
+ * 为什么抽成函数：这段拼接原本在 db.ts 有 2 份、cli/save.ts 与 mcp/server.ts 各有 1 份
+ * （后两处额外并了 summary，属既定差异）。压缩写回是**第四条**会改 decisions 的路径，
+ * 再抄一遍就是第四份口径 —— 以后改索引构成必漏一处。
+ */
+export function recomputeSessionMetaText(db: DB, id: string): boolean {
+  const row = db.prepare('SELECT title, topics, user_tags, decisions FROM sessions WHERE id = ?').get(id) as
+    { title?: string | null; topics?: string | null; user_tags?: string | null; decisions?: string | null } | undefined;
+  if (!row) return false;
+  const parse = <T,>(raw: unknown, fb: T): T => { try { const v = JSON.parse(String(raw ?? '')); return (v ?? fb) as T; } catch { return fb; } };
+  const topics = parse<string[]>(row.topics, []);
+  const tags = parse<string[]>(row.user_tags, []);
+  const decs = parse<Array<{ text?: string }>>(row.decisions, []);
+  const text = metaTextOf(row.title ?? null, [
+    ...(Array.isArray(topics) ? topics : []),
+    ...(Array.isArray(decs) ? decs.map((d) => String(d?.text ?? '').slice(0, 30)) : []),
+    ...(Array.isArray(tags) ? tags : []),
+  ]);
+  db.prepare('UPDATE sessions SET meta_text = ? WHERE id = ?').run(text, id);
+  return true;
 }
 
 /**

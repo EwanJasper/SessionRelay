@@ -28,7 +28,7 @@ You spent three days settling an architecture with your AI. That shouldn't vanis
 
 | Area | Change |
 | ---- | ------ |
-| **DSH panel tools 7 → 13** | Aligned with the MCP server (`srelay serve`). New: `srelay_related` (anchor a session and find related history — fixes "same thing, different wording"), `srelay_history`, `srelay_decisions`, `srelay_unresolved`, `srelay_stats`, `srelay_pin`. All wrap existing CLI commands; **no new core logic** |
+| **DSH panel tools 7 → 14** | Aligned with the MCP server (`srelay serve`). New: `srelay_related` (anchor a session and find related history — fixes "same thing, different wording"), `srelay_history`, `srelay_decisions`, `srelay_unresolved`, `srelay_stats`, `srelay_pin`, `srelay_lessons` (query the cross-project lesson library — auto-injection only guarantees 3; use this to dig deeper as the library grows). All wrap existing CLI commands; **no new core logic** |
 | **Tag-graph visualisation** | The panel gains a **force-directed graph**: 100 nodes / 1200 edges, repulsion + spring + centering, node radius mapped to session count, hover highlights neighbours. Hand-written Canvas, zero dependencies |
 | **Live refresh** | The graph page polls every 15s — no manual page reload after config changes or a graph rebuild |
 | **Codex adapter** | Same brief at session start + the 13 MCP tools + the optional skill. **Codex requires a manual `/hooks` trust step** — see [integrations/codex/README.md](integrations/codex/README.md) |
@@ -168,7 +168,7 @@ graph TB
 
     subgraph Consumers["👥 Who queries the memory"]
         YOU["You (CLI)<br/>search · decisions · history"]
-        AGENT["AI agents (MCP)<br/>13 tools"]
+        AGENT["AI agents (MCP)<br/>14 tools"]
         TEAM["Teammates (.hop handoff)<br/>export → import"]
     end
 
@@ -244,7 +244,7 @@ srelay forget --history       # audit of what was forgotten when
 - Dual anti-resurrection barriers: a precise `.sessionrelayignore` rule (survives rebuild) + a tombstone table — the raw file stays on disk but is never re-ingested
 - Prefix ambiguity guard: multiple matches are listed and rejected, never silently picking one
 
-### 🤖 MCP Server (13 tools: 9 read + 7 write-domain)
+### 🤖 MCP Server (14 tools: 8 read + 6 write-domain)
 Once your AI agent connects via MCP, it stops being amnesiac in this project:
 
 <details>
@@ -405,7 +405,7 @@ timeline
 claude mcp add sessionrelay --scope user -- srelay serve
 ```
 
-Run `/mcp` in Claude Code — `sessionrelay` should show as connected with 13 tools ready.
+Run `/mcp` in Claude Code — `sessionrelay` should show as connected with 14 tools ready.
 
 ### ZCode / other MCP clients
 

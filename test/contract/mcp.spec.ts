@@ -125,7 +125,7 @@ describe('P7 · MCP 只读子集（SRELAY_MCP_TOOLS 白名单，Phase 1）', () 
     }
   }, 30000);
 
-  it('白名单写满全部 13 个 = 等于没设（走全注册，不会少一个）', async () => {
+  it('白名单写满全部 14 个 = 等于没设（走全注册，不会少一个）', async () => {
     const t = new StdioClientTransport({
       command: process.execPath,
       args: ['--import', `file:///${path.join(REPO, 'node_modules/tsx/dist/loader.mjs').replace(/\\/g, '/')}`, path.join(REPO, 'src/bin/srelay.ts'), 'serve'],
@@ -135,7 +135,7 @@ describe('P7 · MCP 只读子集（SRELAY_MCP_TOOLS 白名单，Phase 1）', () 
     const c = new Client({ name: 'srelay-full-wl', version: '0.0.0' });
     try {
       await c.connect(t);
-      expect((await c.listTools()).tools.length).toBe(13);
+      expect((await c.listTools()).tools.length).toBe(14);
     } finally {
       try { await c.close(); } catch {}
     }
@@ -143,13 +143,13 @@ describe('P7 · MCP 只读子集（SRELAY_MCP_TOOLS 白名单，Phase 1）', () 
 });
 
 describe('P3 · MCP 契约（stdio 真握手）', () => {
-  it('initialize + tools/list：13 个工具全部注册（Phase 1 检索四合一后）+ 删除类名称黑名单扫描', async () => {
+  it('initialize + tools/list：14 个工具全部注册（Phase 1 检索四合一后）+ 删除类名称黑名单扫描', async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'annotate_session', 'export_handoff', 'get_linked_sessions', 'get_stats',
       'import_handoff', 'link_sessions', 'list_sessions', 'release_quarantine',
-      'save_note', 'set_scope', 'srelay_search', 'srelay_show',
+      'save_note', 'set_scope', 'srelay_lessons', 'srelay_search', 'srelay_show',
       'suggest_related_sessions',
     ]);
     // 不变量（forget 设计 §2 的真正意图）：删除是人的特权——工具名含删除语义即 fail，

@@ -95,14 +95,24 @@ describe('面板 · 压缩图谱', () => {
     const total = (c.aging?.strengthBuckets ?? []).reduce((a, b) => a + b.count, 0);
     expect(total).toBe(2);
   });
-  it('L1 是负结果、L3 默认关 —— 必须如实标出来（不许显示成"都在跑"）', () => {
+  it('L1 已启用、L3 默认关 —— 必须如实标出来（不许显示成"都在跑"，也不许显示成"都没做"）', () => {
     seedProject(1);
     const c = panelCompression(root);
-    expect(c.layers.find((l) => l.id === 'L1')?.status).toBe('rejected');
+    // L1 的变迁记在这里，防止以后有人"凭印象"改回去：
+    //   1017：因"省 57% 体积但 hit@1 掉 5~7pt"被否决 → status='rejected'
+    //   1021：找到真因（不是合并有损，是代表选择取了 workflow 转述）→ 改 highest-trust
+    //         → 实测召回基准逐格不变、music 库 31 条隐形拍板归零 → 接进生命周期并默认开
+    //   ⇒ 现在的真实状态是 'on'。断言跟着**事实**走，不跟着某个版本走。
+    expect(c.layers.find((l) => l.id === 'L1')?.status).toBe('on');
     // L3 的真实状态是 'off'（**已建成、默认关**），不是 'todo'（未做）：
     // 1018 实测更正过这条描述 —— 代码、note 文案、跑法（srelay compress --dry-run）都在。
     // 本用例原先期望 'todo'，是那个错误描述的残留。
     expect(c.layers.find((l) => l.id === 'L3')?.status).toBe('off');
+    // 三种状态必须能区分开：on / off / rejected 不许糊成一个
+    const byId = new Map(c.layers.map((l) => [l.id, l.status]));
+    expect(byId.get('L0')).toBe('on');
+    expect(byId.get('L2')).toBe('on');
+    expect(byId.get('P')).toBe('on');
   });
 });
 

@@ -51,10 +51,17 @@ export { runLifecycle, lifecycleStatus } from './core/lifecycle/runner.js';
 export { integrityOf, repairProject } from './core/lifecycle/repair.js';
 export { STAGES, lightStages, ensureLifecycleTables, loadLifecycle, saveLifecycle, dueStages, setHeartbeat, heartbeatAgeMs } from './core/lifecycle/stages.js';
 export { compactExactSessions } from './core/compact/exact.js';
+// [1021] L1b 跨会话近重复合并（写回 + 审计 + 回滚）。与 L0 并列导出 ——
+// 两者都是"确定性、零模型"的压缩层，调用方按层选。
+export { compactNearDuplicates, rollbackNearDuplicates } from './core/compact/near-dup.js';
+// [1021] 经验采集也进内核：生命周期要跑它，CLI 只是薄壳（铁律：判据只有一份）
+export { harvestCandidates, harvestLessons } from './core/extract/lesson-harvest.js';
+export type { Harvested, HarvestReport, HarvestOptions } from './core/extract/lesson-harvest.js';
+export type { NearDupReport, NearDupOptions, NearDupSample } from './core/compact/near-dup.js';
 export { cleanDerivedColumns } from './core/extract/derived-cleanup.js';
 // [B4] 清 topics 时 meta_text 必须**按原规重算**（title+topics 的索引文本）；
 // 导出核心库这两个函数，工具才不会自己拼一份（拼错=把搜索面写坏）。
-export { metaTextOf, searchTextOf } from './store/db.js';
+export { metaTextOf, searchTextOf, recomputeSessionMetaText, openExisting, createDb } from './store/db.js';
 
 // ── 采集：宿主事件钩子（DSH hooks）在**宿主进程内**做单项目增量采集 ──
 // [1021 审查 #17] 钩子（integrations/dsh/src/hooks.mjs）一直在等这两个导出，而本仓库只导出
