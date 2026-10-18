@@ -1,0 +1,98 @@
+{
+  "at": "2026-10-17T12:24:39.540Z",
+  "dbPath": "D:/dsh插件  记忆/tmp/graph-bench-snapshot.sqlite",
+  "rewrite": true,
+  "limit": 10,
+  "acc": {
+    "K": {
+      "n": 326,
+      "h1": 62,
+      "h3": 95,
+      "h10": 163,
+      "satTop1": 4
+    },
+    "S": {
+      "n": 326,
+      "h1": 62,
+      "h3": 112,
+      "h10": 174,
+      "satTop1": 0
+    },
+    "M": {
+      "n": 326,
+      "h1": 92,
+      "h3": 150,
+      "h10": 216,
+      "satTop1": 2
+    },
+    "Ks": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ss": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ms": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Ke": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Se": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    },
+    "Me": {
+      "n": 0,
+      "h1": 0,
+      "h3": 0,
+      "h10": 0,
+      "satTop1": 0
+    }
+  },
+  "knobs": {
+    "semantic": false,
+    "threshold": 0.4,
+    "reserve": 3,
+    "topk": 5,
+    "dtype": null,
+    "fusion": "1",
+    "lengthnorm": true,
+    "expand": false,
+    "tagreserve": 0,
+    "taghops": 1,
+    "tagterms": 4,
+    "tagfusion": false
+  },
+  "expStats": {
+    "n": 0,
+    "seeded": 0,
+    "expanded": 0,
+    "terms": 0,
+    "pathHits": 0,
+    "ms": 0,
+    "baseMs": 195798,
+    "sample": []
+  },
+  "semReady": false,
+  "semWhy": "",
+  "rows": []
+}

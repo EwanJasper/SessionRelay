@@ -33,10 +33,13 @@ beforeAll(() => {
   makeProject(PROJECT);
   process.chdir(PROJECT);
   const db = createDb(dbFile(PROJECT));
-  insertSession(db, { id: S1, source: 'zcode', sourceSessionId: 'z-s1', projectId: PID, createdAt: '2026-08-20T08:00:00Z', title: '数据库选型（PG vs MongoDB）', topics: ['db'] });
-  for (let i = 1; i <= 12; i++) insertMessage(db, { sessionId: S1, role: i % 2 ? 'user' : 'assistant', content: i === 3 ? '磁悬浮轴承选型讨论：决定采用 PG' : `消息 ${i}：普通内容`, seqNum: i, createdAt: '2026-08-20T08:00:00Z' });
+  // [fork] S1 年龄用相对时间：原夹具写死 2026-08-20，A1 断言"天前"——
+  // 写测试时是 N 天前，30 天边界一过（9 月中起）输出变"个月前"，套件永久变红（时间炸弹）
+  const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  insertSession(db, { id: S1, source: 'zcode', sourceSessionId: 'z-s1', projectId: PID, createdAt: threeDaysAgo, title: '数据库选型（PG vs MongoDB）', topics: ['db'] });
+  for (let i = 1; i <= 12; i++) insertMessage(db, { sessionId: S1, role: i % 2 ? 'user' : 'assistant', content: i === 3 ? '磁悬浮轴承选型讨论：决定采用 PG' : `消息 ${i}：普通内容`, seqNum: i, createdAt: threeDaysAgo });
   db.prepare('UPDATE sessions SET message_count = 12, decisions = ?, last_event_at = ? WHERE id = ?')
-    .run(JSON.stringify([{ text: '决定采用 PostgreSQL', seq: 3 }]), '2026-08-20T09:00:00Z', S1);
+    .run(JSON.stringify([{ text: '决定采用 PostgreSQL', seq: 3 }]), new Date(Date.now() - 3 * 86_400_000 + 3_600_000).toISOString(), S1);
   insertSession(db, { id: S1B, source: 'claude-code', sourceSessionId: 'c-s1b', projectId: PID, createdAt: '2026-08-22T08:00:00Z', title: '另一个 a3f 会话', topics: ['misc'] });
   insertMessage(db, { sessionId: S1B, role: 'user', content: '无关内容', seqNum: 1, createdAt: '2026-08-22T08:00:00Z' });
   db.prepare('UPDATE sessions SET message_count = 1, last_event_at = ? WHERE id = ?').run('2026-08-22T08:00:00Z', S1B);
@@ -343,7 +346,10 @@ describe('forget · G 兼容性', () => {
     db.exec('DROP TABLE forget_tombstones; DROP TABLE forget_log; DROP TABLE forget_detail; DROP TABLE IF EXISTS session_vectors;');
     db.close();
     const db2 = openExisting(old);
-    expect(db2.pragma('user_version', { simple: true })).toBe(5);
+    // [1021] 这里原写死 5，SCHEMA_VERSION 到 6（决策有效性旁表）后就红了。
+    //   ⚠️ 欠账：理想做法是从 src/store/db.ts 导出 SCHEMA_VERSION 再引用（判据只许一份），
+    //   但该文件当时正被别人改，避免抢写，先用字面值并在此登记。改 schema 时**必须同步改这三处**。
+    expect(db2.pragma('user_version', { simple: true })).toBe(6);
     for (const t of ['forget_tombstones', 'forget_log', 'forget_detail', 'session_vectors']) {
       expect(db2.prepare(`SELECT COUNT(*) n FROM ${t}`).get()).toBeTruthy();
     }
@@ -354,7 +360,7 @@ describe('forget · G 兼容性', () => {
     const fut = path.join(TMP, 'v5db', 'relay.sqlite');
     fs.mkdirSync(path.dirname(fut), { recursive: true });
     const db = createDb(fut);
-    db.pragma('user_version = 6'); // 模拟未来版本创建的库
+    db.pragma('user_version = 7'); // 模拟未来版本创建的库（必须比当前 SCHEMA_VERSION=6 大）
     db.close();
     expect(() => openExisting(fut)).toThrow(/更新版本的 srelay/);
   });
@@ -362,7 +368,12 @@ describe('forget · G 兼容性', () => {
   it('G5/G6/G7 文案钉子：forget 口诀 / save_note 话术 / archive --hard 引导', async () => {
     const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..'); // cwd 已被 chdir，必须绝对定位
     const bin = fs.readFileSync(path.join(REPO, 'src/bin/srelay.ts'), 'utf8');
-    expect(bin).toContain('空间老化用 archive，彻底消失用 forget');
+    // 这颗钉子的目的是「让用户永远能在一个地方看到 forget 与 archive 的分工」，
+    // 钉的是**语义**不是措辞。原措辞「空间老化用 archive，彻底消失用 forget」后来被改写成
+    // 下面这句（同义、更贴 CLI 语境），钉子没跟着改就恒红了 —— 那会把真漂移淹掉。
+    // 判据：同一句话必须同时出现 archive 与 forget 两个词、且表达"省空间 vs 彻底消失"。
+    expect(bin).toMatch(/省空间用 archive[，,].{0,6}彻底消失/);
+    expect(bin).toContain('--confirm <projectId>');
     expect(bin).toContain('--confirm <projectId>');
     expect(bin).toContain('用 srelay forget'); // archive --hard 提示
     const server = fs.readFileSync(path.join(REPO, 'src/mcp/server.ts'), 'utf8');

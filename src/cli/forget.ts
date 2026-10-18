@@ -4,12 +4,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from '../shared/config.js';
-import { dbFile, relayDir, findRelayRoot, ignoreFile } from '../shared/paths.js';
+import { dbFile, relayDir, findRelayRoot } from '../shared/paths.js';
 import {
   openExisting, createDb, getSessionFull, getLinkedSessions,
   insertTombstone, insertForgetLog, finalizeForgetLog, insertForgetDetail, getForgetHistory,
+  isNoteSession,
 } from '../store/db.js';
-import { appendSessionIgnoreRule } from '../capture/ignore.js';
+import { appendSessionIgnoreRule, appendSessionIgnoreRules, ignoreFilePath, loadIgnoreRules } from '../capture/ignore.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { die, pc, fmtDate } from './ui.js';
 import type { DB } from '../store/db.js';
@@ -37,8 +38,16 @@ interface PreviewSnapshot {
 
 const snapshotFile = (root: string) => path.join(relayDir(root), 'forget-pending.json');
 
-function readSnapshot(root: string): PreviewSnapshot | null {
-  try { return JSON.parse(fs.readFileSync(snapshotFile(root), 'utf8')) as PreviewSnapshot; } catch { return null; }
+function readSnapshot(root: string): { kind: 'missing' } | { kind: 'ok'; snap: PreviewSnapshot } | { kind: 'corrupt' } {
+  const f = snapshotFile(root);
+  if (!fs.existsSync(f)) return { kind: 'missing' };
+  try {
+    return { kind: 'ok', snap: JSON.parse(fs.readFileSync(f, 'utf8')) as PreviewSnapshot };
+  } catch {
+    // [fork 0922] 快照损坏 ≠ 快照缺失：乐观锁防线（设计 §3.6）必须 fail-safe——
+    // 上次预览被中途打断留下的半截 JSON 不能让 --yes 静默跳过 diff 校验
+    return { kind: 'corrupt' };
+  }
 }
 function writeSnapshot(root: string, s: PreviewSnapshot): void {
   fs.writeFileSync(snapshotFile(root), JSON.stringify(s, null, 2));
@@ -93,13 +102,16 @@ function resolveRef(db: DB, ref: string): { ok: true; row: SessionFull } | { ok:
 }
 
 function typeFilterMismatch(f: ForgetFlags, row: SessionFull): string | null {
-  if (f.note && row.source !== 'note') return `--note 指定笔记，但 ${row.id} 是 ${row.source} 会话`;
-  if (f.session && row.source === 'note') return `--session 指定会话，但 ${row.id} 是笔记（用 --note 或去掉过滤）`;
+  // [1021 回归 P3] 笔记判据统一走 isNoteSession（source==='note' || origin==='note'）：
+  // 只判 source 会让历史 origin='note' 的笔记在这层过滤里被当普通会话 —— 保护/统计都会漏。
+  const isNote = isNoteSession(row);
+  if (f.note && !isNote) return `--note 指定笔记，但 ${row.id} 是 ${row.source} 会话`;
+  if (f.session && isNote) return `--session 指定会话，但 ${row.id} 是笔记（用 --note 或去掉过滤）`;
   return null;
 }
 
 /** note/imported 无本地源文件，不在复活路径上——跳过双闸（设计 §3.6） */
-const needsBarriers = (row: SessionFull) => row.origin !== 'imported' && row.source !== 'note';
+const needsBarriers = (row: SessionFull) => row.origin !== 'imported' && !isNoteSession(row);
 
 export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> {
   const root = findRelayRoot(process.cwd());
@@ -160,7 +172,7 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
 
     const links = getLinkedSessions(db, row.id);
     const decisionCount = row.decisions.length;
-    const isNote = row.source === 'note';
+    const isNote = isNoteSession(row);
 
     // 预览模式（无 --yes 不删——防误触）
     if (!f.yes) {
@@ -189,7 +201,14 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
     }
 
     // ── 执行（--yes）：乐观锁 diff（设计 §3.6 并发安全） ──
-    const snap = readSnapshot(root);
+    const snapState = readSnapshot(root);
+    if (snapState.kind === 'corrupt') {
+      die(
+        '预览快照损坏（上次预览可能被中途打断），已拒绝执行',
+        '重新运行不带 --yes 的 forget 预览，生成全新快照后再执行',
+      );
+    }
+    const snap = snapState.kind === 'ok' ? snapState.snap : null;
     if (snap && snap.id === row.id) {
       if (snap.messageCount !== row.messageCount || snap.decisionCount !== decisionCount) {
         die(
@@ -226,7 +245,10 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
     }
     console.log(pc.green('✓') + ` 已遗忘 ${row.id} 「${(row.title ?? row.sourceSessionId).slice(0, 40)}」（${row.messageCount} 条消息）`);
     if (needsBarriers(row)) {
-      console.log(pc.dim(`  防复活闸已写入：${ignoreFile(root).replace(/\\/g, '/')} + 墓碑`));
+      // 必须用 ignoreFilePath（读配置里的 privacy.ignore_file），不能用写死的 ignoreFile ——
+      // 红队实测：配置成 my-ignore.txt 时，这里打印的是 .sessionrelayignore，而那个文件根本不存在。
+      // 用户照着提示去删规则会扑空，然后以为「忘了还在」（判据只许有一份，展示层也得同源）。
+      console.log(pc.dim(`  防复活闸已写入：${ignoreFilePath(root).replace(/\\/g, '/')} + 墓碑`));
       console.log(pc.yellow(`  ⚠️ 原始会话文件仍在磁盘（${row.sourceFile ?? ''}），本库不再收录`));
     }
     console.log(pc.dim('  审计已记入 forget_log（srelay forget --history 查看）'));
@@ -248,13 +270,46 @@ async function cmdForgetAll(root: string, cfg: ReturnType<typeof loadConfig>, f:
 
   const main = dbFile(root);
   const stats = { sessions: 0, messages: 0, logs: 0 };
+  // [1021 审查 #06 修复] 需要先把每个「将被清掉」的会话身份拿出来：整库遗忘会连
+  //   forget_tombstones 表一起删（次级防线随库蒸发），而主防线 .sessionrelayignore 不会自己生成。
+  const identities: Array<{ id: string; source: string; sid: string }> = [];
   if (fs.existsSync(main)) {
     const db = openExisting(main);
     try {
       stats.sessions = (db.prepare('SELECT COUNT(*) n FROM sessions').get() as { n: number }).n;
       stats.messages = (db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number }).n;
       stats.logs = (db.prepare('SELECT COUNT(*) n FROM forget_log').get() as { n: number }).n;
+      for (const r of db.prepare('SELECT id, source, source_session_id FROM sessions').all() as Array<{ id: string; source: string; source_session_id: string }>) {
+        identities.push({ id: r.id, source: r.source, sid: r.source_session_id });
+      }
     } finally { db.close(); }
+  }
+
+  // ── [1021 审查 #06 修复] 防复活闸：删库**之前**先把身份落成持久规则 ──
+  //   病历：原实现"删库 → 建空库"，只保留原有 ignore 文件（通常为空）；下一次 sync 把源文件
+  //   原样收回来（实测 1 → 0 → 1），而摘要却写"源文件不会再被收录"——文案与实际行为相反。
+  //   现在：逐个写 session:<source>/<sid> 规则 → **回读校验** → 全写进去了才允许删库；
+  //   任何一条没写进去就中止（此时库还没删，数据还在），不许出现"宣称不复活、实际能复活"。
+  // [1021 回归 P6] **一次读写**写完所有规则。
+  //   原实现逐条调 appendSessionIgnoreRule，而它每次都读整文件+解析+写回 ⇒
+  //   1000 个会话 = 1000 次整文件读写，实测 1848ms，且随库增大呈平方增长。
+  //   语义不变（幂等、失败可感知），只是把 N 次 IO 压成 1 次。
+  let rulesWritten = 0;
+  const ruleFailures: string[] = [];
+  try {
+    rulesWritten = appendSessionIgnoreRules(root, identities.map((it) => ({ source: it.source, sourceSessionId: it.sid })));
+  } catch (e) {
+    ruleFailures.push(String((e as Error)?.message ?? e));
+  }
+  if (identities.length > 0) {
+    const present = new Set(loadIgnoreRules(root));
+    const missing = identities.filter((it) => !present.has(`session:${it.source}/${it.sid}`));
+    if (missing.length > 0) {
+      die(
+        `防复活规则只写进了 ${identities.length - missing.length}/${identities.length} 条，已中止（库未删，数据还在）`,
+        `失败样例：${missing.slice(0, 3).map((m) => m.id).join('、')}${ruleFailures.length ? ' · ' + ruleFailures[0] : ''}`,
+      );
+    }
   }
 
   for (const ext of ['', '-wal', '-shm']) fs.rmSync(main + ext, { force: true });
@@ -265,11 +320,13 @@ async function cmdForgetAll(root: string, cfg: ReturnType<typeof loadConfig>, f:
   const ts = new Date();
   const summaryName = `forgot-at-${ts.toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}.txt`;
   fs.writeFileSync(path.join(relayDir(root), summaryName),
-    `整库遗忘（srelay forget --all）\n时间：${ts.toISOString()}\n项目：${projectId}\n删除：${stats.sessions} 会话 / ${stats.messages} 消息 / ${stats.logs} 条遗忘审计\n注意：.sessionrelayignore（含全部 session: 防复活规则）已保留——源文件不会再被收录。\n`);
+    `整库遗忘（srelay forget --all）\n时间：${ts.toISOString()}\n项目：${projectId}\n删除：${stats.sessions} 会话 / ${stats.messages} 消息 / ${stats.logs} 条遗忘审计\n`
+    + `防复活：已为 ${rulesWritten} 个会话写入 session: 规则到 .sessionrelayignore——源文件不会被重新收录；\n`
+    + `  如需恢复其中某条：删除对应 session: 规则后跑 srelay rebuild（会从源文件重摄）。\n`);
 
   clearSnapshot(root);
-  if (f.json) { console.log(JSON.stringify({ ok: true, ...stats, summary: summaryName })); return; }
+  if (f.json) { console.log(JSON.stringify({ ok: true, ...stats, barriers: rulesWritten, summary: summaryName })); return; }
   console.log(pc.green('✓') + ` 整库遗忘完成：${stats.sessions} 会话 · ${stats.messages} 消息已抹除，空库已重建`);
   console.log(pc.dim(`  摘要：${summaryName}`));
-  console.log(pc.dim(`  .sessionrelayignore 已保留（防复活规则仍在，源文件不会重新入库）`));
+  console.log(pc.dim(`  防复活：${rulesWritten} 条 session: 规则已写入 .sessionrelayignore（源文件不会再被收回来；要恢复请先删规则再 rebuild）`));
 }

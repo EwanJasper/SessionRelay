@@ -71,7 +71,7 @@
   "summary_rule": "规则摘要（可空）",
   "topics": ["auth"],
   "files": ["src/db/schema.sql"],
-  "decisions": [ { "text": "决定采用 PostgreSQL", "seq": 12, "at": "…" } ],
+  "decisions": [ { "text": "决定采用 PostgreSQL", "seq": 12, "at": "…", "pinned": true } ],
   "questions": [ { "q": "刷新策略定了吗？", "seq": 30, "at": "…", "unresolved": true } ],
   "messages": [ { "seq": 1, "role": "user", "content": "…", "createdAt": "…" } ]
 }
@@ -79,6 +79,21 @@
 
 - `seq` 为**确定性序号**（同一会话重复导出保持不变）；导入方应以 `(source, source_session_id)` 为会话身份、`(身份, seq)` 为消息幂等键；
 - `messages` 可为空数组（`--decisions-only` / 隔离导入形态）。
+
+### 4.1 决策条目的**可选用户态字段**（1.0 增补，2026-10-15）
+
+`decisions[]` 的每个条目在 `text` / `seq` / `at` 之外，允许两个**可选**字段：
+
+| 字段 | 类型 | 语义 |
+|---|---|---|
+| `pinned` | `boolean` | 用户显式置顶（`srelay pin`）。置顶决策在简报中豁免新鲜度窗并排第一位 |
+| `kind` | `'decision' 'negative'` | 该条是否编码"**否掉一条路**"（ADR-001）。`negative` 在简报里带 `✗` 前缀，让模型一眼可辨 |
+
+约定：
+
+- **可选**：生产者可以不带；消费者读到缺省时必须按"普通、未置顶"处理（向后兼容老包，仍是 `hop/1.0`）。
+- **必须保留**：生产者若已知这两个字段，**不得在导出/汇总投影里丢弃**（历史 bug：`metadata/decisions.json` 的白名单投影把它们吃了，导入方看到的是退化的决策）。
+- `pinned: false` 与"字段不存在"语义相同，生产者可省略。
 
 ## 5. 隐私与脱敏（建议为默认行为）
 

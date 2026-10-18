@@ -2,16 +2,50 @@
 import { loadConfig, type CaptureMode } from '../shared/config.js';
 import { assembleScope } from '../core/scope/assemble.js';
 import { searchSessions } from '../search-svc/engine.js';
-import { findSessionByPrefix, getSession, listSessions, getMessageRange } from '../store/db.js';
+import { findSessionByPrefix, getSession, listSessions, getMessageRange, isNoteSession } from '../store/db.js';
 import { openStats } from '../core/stats/counter.js';
 import { requireRoot, openRelayDb, pc, fmtDate, stateBadge } from './ui.js';
 
 export interface SearchFlags {
   topic?: string; tag?: string; file?: string; source?: string; since?: string; until?: string;
   limit?: number; json?: boolean;
+  /** [1021 namespace] 跨项目联邦检索（只读扇出 + 名次轮转合并）。默认 false = 只查本项目 */
+  global?: boolean;
+}
+
+/**
+ * 跨项目联邦检索（namespace 两态里的 global 态）。
+ *
+ * 与默认路径的区别只有一处：命中的出处可能来自**别的项目**，所以每条都带项目名。
+ * 不合并分数（不同库 BM25 不可比），合并的是**名次**（见 search-svc/namespace.ts）。
+ * 全局模式不写任何库、不做自动 scope、不吃时间衰减 —— 它只是"看看别处有没有"的入口。
+ */
+async function cmdSearchGlobal(query: string, flags: SearchFlags): Promise<void> {
+  const { searchNamespaced } = await import('../search-svc/namespace.js');
+  const res = searchNamespaced({ mode: 'global', query, limit: flags.limit ?? 10, maxProjects: 20 });
+  if (flags.json) {
+    console.log(JSON.stringify({ mode: res.mode, scanned: res.scanned, failed: res.failed, hits: res.hits }, null, 2));
+    return;
+  }
+  if (!res.hits.length) {
+    // 容错不许静默：扫了几个库、哪个库失败，都要说出来
+    console.log('没有命中（扫描 ' + res.scanned + ' 个项目库' + (res.failed.length ? '，其中 ' + res.failed.length + ' 个打不开' : '') + '）');
+    for (const f of res.failed) console.log('  ⚠ 跳过 ' + f.projectRoot + '：' + f.reason);
+    return;
+  }
+  console.log('跨项目检索「' + query + '」：扫描 ' + res.scanned + ' 个项目库，命中 ' + res.hits.length + ' 条');
+  for (const h of res.hits) {
+    console.log('  [' + h.projectName + '] ' + h.sessionId.slice(0, 12) + '  ' + String(h.snippet || '').replace(/\s+/g, ' ').slice(0, 70));
+  }
+  if (res.failed.length) {
+    console.log('  ⚠ ' + res.failed.length + ' 个库打不开（已跳过）：');
+    for (const f of res.failed) console.log('     ' + f.projectRoot + '：' + f.reason);
+  }
 }
 
 export async function cmdSearch(query: string, flags: SearchFlags): Promise<void> {
+  // 全局态走独立分支：不打开本库、不吃本项目 scope/decay（跨项目时这些没有意义）
+  if (flags.global) return cmdSearchGlobal(query, flags);
   const root = requireRoot();
   const cfg = loadConfig(root);
   const db = openRelayDb(root);
@@ -37,6 +71,9 @@ export async function cmdSearch(query: string, flags: SearchFlags): Promise<void
       limit: flags.limit ?? 10,
       extraWhere: asm.where,
       semanticHits: semHits,
+      semanticReserve: cfg.semantic?.reserve_slots,
+      // [1021] 时间衰减（cfg.decay.enabled 默认 false ⇒ 不传等于旧行为，单一变量）
+      decay: cfg.decay,
     });
     if (flags.json) {
       const rows = hits.map((h) => {
@@ -129,8 +166,9 @@ export async function cmdList(opts: { source?: string; state?: string; limit?: n
     }
     if (rows.length === 0) { console.log(pc.dim('（空）先 srelay sync 或等待守护捕获。')); return; }
     // 笔记单独分组展示（note 是 AI 结论记录，不是对话会话）
-    const sessions = rows.filter(s => s.source !== 'note');
-    const notes = rows.filter(s => s.source === 'note');
+    // [1021 回归 P3] 判据统一走 isNoteSession（含历史 origin='note' 形态）
+    const sessions = rows.filter(s => !isNoteSession(s));
+    const notes = rows.filter(s => isNoteSession(s));
     for (const s of sessions) {
       console.log(`${pc.dim(fmtDate(s.last_event_at ?? s.created_at))}  ${s.source.padEnd(11)} ${stateBadge(s.state).padEnd(10)} 「${(s.title ?? '').slice(0, 36)}」 ${pc.dim(`${s.id} · ${s.message_count}msg`)}`);
     }

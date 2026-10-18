@@ -16,3 +16,9 @@ docs/phase3-report.md
 docs/phase35-report.md
 docs/adapters/zcode-format.md
 .release-state.json
+
+# DSH 插件的自带运行时（67MB 构建产物，由 integrations/dsh/vendor-srelay.mjs 生成）
+integrations/dsh/vendor/
+
+# 基准运行产物（题集入库，输出不入库）
+scripts/bench-out/

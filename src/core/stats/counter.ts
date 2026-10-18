@@ -42,7 +42,19 @@ export class StatsCounter {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = this.file + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(snap, null, 2));
-    fs.renameSync(tmp, this.file); // 原子替换
+    // [fork 1011] rename 目标偶发被外部句柄占住（AV 实时扫描 / 并发 CLI 计数），
+    // EPERM 丢本周期计数（状态面板计数陈旧，watch.log 反复报错）。短同步退避
+    // 重试两次；仍失败则静默放弃本周期——下一周期 overwrite tmp 自愈，不打断守护。
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.renameSync(tmp, this.file);
+        return;
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code ?? '';
+        if (attempt >= 2 || !['EPERM', 'EACCES', 'EBUSY'].includes(code)) return;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      }
+    }
   }
 }
 

@@ -19,7 +19,8 @@ describe('schema v5 迁移 · zcode 游标重置', () => {
     db.close();
     // 打开：迁移自动跑
     const db2 = openExisting(f);
-    expect(db2.pragma('user_version', { simple: true })).toBe(5);
+    // [1021] 原写死 5；SCHEMA_VERSION=6 后须同步（欠账见 test/forget/functional.spec.ts 同处）
+    expect(db2.pragma('user_version', { simple: true })).toBe(6);
     expect((db2.prepare("SELECT COUNT(*) n FROM source_files WHERE source = 'zcode'").get() as { n: number }).n).toBe(0);
     expect((db2.prepare("SELECT COUNT(*) n FROM source_files WHERE source = 'claude-code'").get() as { n: number }).n).toBe(1);
     db2.close();

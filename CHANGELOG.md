@@ -3,6 +3,106 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.5.1-fork.2] - 2026-10-18
+
+### ⚠️ 契约变化（消费方请注意）
+
+- **DSH 原生工具面 14 → 4**（`integrations/dsh`）：
+  - `srelay_search` 现在吃 `kind`：`sessions`（默认）/ `decisions` / `unresolved` / `lessons` / `files` / `related`
+  - `srelay_show` 不变（其余四个都是「找」，只有它是「读全文」）
+  - `srelay_remember`：`summary` → 记决策；`text` → 置顶/取消置顶
+  - `srelay_project`：`action` = init / bind / confirm / cancel / stats
+  - 被合并的 10 个旧工具名**不再注册**；实现保留（新工具路由到同一份代码，零逻辑复制）
+  - `srelay_search.query` 不再是必填（`kind=decisions/unresolved` 不需要它）
+- **`srelay_search(limit)`**：负数不再返回「全部减 N 条」，入口统一 clamp 到非负
+- **采集 seq 代际**：源文件被整段重写后，新内容进 `seq = rewrites × 1e6 + 行号` 的独立空间
+  （旧文保留、新文也进库）。同一 seq 上不再发生「读得到写不进」
+- **地图不再从看板反推 status**：地图是结构真值，看板只是它的投影（`docs/map-cli.md` §415 的承诺现在是真的）
+
+### 新增
+
+- **地图增量同步**：看板新增行 → 地图新增节点（落 `inbox` 层，**不猜它属于哪层**）；
+  只增不删、只同步状态、单轮上限 20；匹配极少时判为人写结构图、不新增
+- **地图开工档位** `map.hatch`：`always`（默认）/ `complex`（人写行 ≥ complex_min_rows）/ `manual`
+- **决策时效标注**：`ageDays` 字段 + 30 天旧标。**明确不做自动推翻**（判不出来，且误判无声无息）
+- **评测基建**：305 题 paraphrase 题集 + 唯一校验脚本 + 按**会话聚簇**重采样的配对比较（McNemar）
+  - 实测：hit@1 11.5% ±[题级 3.44pt / 簇级 3.85pt]，hit@10 45.6%；
+  - 簇级只比题级宽 1.12 倍 ⇒ 同一会话的题**并不高度相关**（原先按题数推算的 ×1.70 是错的）
+
+### 修复（三路独立红队 + 一轮验证红队，共 30+ 条）
+
+**静默类**（坏了不吭声，最难发现）：
+- 采集 `warnings` 与 `source_files.suspect/bad_lines` **全仓无读取方** ⇒ 现在真的打出来（跨轮去重）
+- 单源/单会话抛错拖垮整轮采集 ⇒ per-source / per-session 隔离
+- `extract` / `cleanup` 吞 per-project 错误 ⇒ note 里显形
+- **`guard` / `repair` 的 `ok` 恒真** ⇒ `runOne` 支持 `{ok:false}`
+  （实测：「283 轮 11 阶段全 OK」对 guard/repair/extract/cleanup 四个阶段原本不携带任何信息）
+- `guard` 从恒真变成会失败后**自己进了熔断** ⇒ 加 `NO_BREAKER` 白名单（体检不该被冷却）
+
+**数据丢失类**：
+- `cleanup` 重写 `meta_text` 只写 title+topics ⇒ **决策从检索索引里静默消失**；改用 `recomputeSessionMetaText` 唯一口径
+- 源文件**变大式**整段重写后新正文永久丢（连 conflict 都不报）⇒ `readTailProbe` 搬进共享 tailer，三适配器共用
+- ZCode 压缩摘要占位 seq 撞掉真实消息 ⇒ 挪到 1e9 起的独立空间（按 `time_created` 偏移，跨轮幂等）
+- `last_event_at` 可倒退（10-17 被 06-01 盖掉）⇒ 改 MAX。**它参与归档判定，倒退 = 可能提前蒸发正文**
+- 0 字节库被判 `error` ⇒ repair 永久「本轮跳过」而 guard 报异常（两阶段自相矛盾）⇒ 归入 `missing`
+- `runArchive`：`BEGIN IMMEDIATE` 之后、`try` 之外的 `insertCleanupLog` 抛错 ⇒ 写锁不放、归档永久失败
+
+**项目隔离**：
+- Qoder 同名项目会互相认领会话（`company-a/app` 与 `company-b/app`）⇒ 按「绝对路径的常见摘要」精确匹配，
+  对不上就**拒绝认领并报出来**（`SRELAY_QODER_TRUST_NAME=1` 可退回按名字认领）
+
+**地图**：
+- 节点 id 生成器产出**非法 id**（`kb1_x`，下划线不符合 `MAP_ID_RULE`）⇒ 第二次新增起整批被拒、**永久停摆**
+- 每轮从看板反推 status ⇒ **静默回滚文档明写的地图改法**（见上方契约变化）
+- 人写行只要**文本含** `auto:todos` 字样就被整行删除 ⇒ 判据改成模块列精确匹配
+- 「0 匹配」护栏被 1 个偶然同名节点、以及同轮重复行击穿 ⇒ `matched` 只认存量 + 相对量上限
+- 节点 label 含竖线时投影出的行被读回成「人写行」、多出幻影节点 ⇒ 在**投影侧**剥离
+- `hatch` 补齐分层整页 remove+declare 会把人的 `blocked` 改回 `doing` ⇒ declare 时保住原 status
+
+**边界**：
+- `mcnemar` 在 `b+c ≥ 1075` 时下溢 ⇒ **p 恒 0（假显著）**；改对数空间（实测 (700,650) 从 0 修正回 0.1823）
+- `limit` 负数 ⇒ `slice(0,-1)` 返回「全部减一条」
+- `global.sqlite` 缺 `busy_timeout`（守护 + MCP 双进程写 ⇒ 立即 SQLITE_BUSY）
+- `forget` 的防复活提示指向写死的 `.sessionrelayignore`，规则实际写进配置里那个文件
+
+### 已知未修（有理由）
+
+- `pathSlug` 有损（`D:/a-b/c` 与 `D:/a/b/c` 同 slug）⇒ 修它要改 slug 算法，现有库 `project_id` 全变，
+  已采集会话全部对不上。属**迁移级**改动，需单独拍板
+- 非 ISO 时间戳（`2026/10/10 10:00`）永不 pending/confirmed：概率低，而时间规范化会改所有时间比较行为
+- meta 模式的计数口径：`meta` 本来就不存正文，该按什么算属**产品决策**而非缺陷
+## [0.5.1-fork.1] - 2026-10-18
+
+### ⚠️ 契约变化（MCP 消费方请注意）
+- **`get_session_context`**：`range` 在空结果时从 `[from, from-1]` 变为 `null`；
+  `totalInDb` 从会话的 `message_count` 改为**真实消息行数**（条数与序号不再是同一个量）。
+- **`srelay_search` 的 `limit` 现在真的生效**（`kind=decisions` / `kind=unresolved` 以前静默忽略）；
+  `scope` 对这两个 kind 也生效了 —— 以前它们会返回 scope 范围外的条目。
+- `kind=decisions` / `kind=unresolved` **不按 `query` 过滤**（决策是结论清单，不是全文索引）。
+  为免静默，响应里带 `not_applied: ['query']` 与说明；要按词筛请改用 `kind=sessions`。
+- 其余 11 个工具只有新增字段，无删除/改名。
+
+### 修复
+- **DSH 事件钩子依赖的导出从未存在于发布模块**（审查 #17）：`integrations/dsh/src/hooks.mjs` 用
+  `recall.js` 的 `loadConfig` / `runSync` 做宿主内即时采集，而产物只导出 `runLifecycle`
+  ⇒ 事件驱动这一路恒失败；且失败日志被 `SRELAY_BRIEF_DEBUG=1` 挡着，等于默认静默
+  （主路径 `srelay watch` 正常，所以症状是"偶尔慢半拍"而非完全没采集，更难发现）。
+  现在 `src/recall-entry.ts` 显式导出这两个原语，钩子在**挂载时**校验一次导出契约，
+  缺失/载入失败一律 `console.warn` 到宿主正常日志（去抖 8s + 冷却 60s 防刷屏）。
+- **发布检查与实现脱节**（审查 #18）：`scripts/check-artifacts.mjs` 用 `registerTool(` 正则提取
+  MCP 工具名，而实现早已改成封装过的 `register(` ⇒ 提取恒为空，脚本在第一条失败即停，
+  「文档覆盖 / 旧计数」两段**从未执行**。改为解析真实 `register(...)` 调用，并加三条不变量
+  （抽到 0 个 / 出现裸 `registerTool(` / 调用数与名字数不符，任一都判红），防止抽取规则再静默漂移。
+  新增断言：从 `dist/recall.js` 加载并**真跑一次采集**（临时项目 + 合成 claude-code 会话），
+  要求 1 会话 / 2 消息落库。
+- **文档工具清单同步**：MCP 侧实际 **13 个工具（7 读 + 6 写）**；`README.md` 与
+  `docs/user-guide.md` 里残留的「16 个工具」、旧工具名（`search_sessions` / `get_decisions` /
+  `get_session_detail` / `get_file_history` / `get_unresolved`）以及 `set_scope` 的读写归属已改正。
+
+### 新增
+- 工作区根 `tools/ses-rebuild.mjs` 守门从 7 门增至 **8 门**：新增 `check:artifacts` ——
+  此前天天说"七门全绿"，而发布检查红着却没人知道（不进守门的检查等于没有）。
+
 ## [0.5.1] - 2026-09-18
 
 ### 修复

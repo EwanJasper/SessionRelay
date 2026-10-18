@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 import { runSync } from '../../src/capture/sync.js';
 import { resetConn } from '../../src/adapters/zcode/index.js';
 import { runJudge } from '../../src/capture/judge.js';
-import { createDb, countsByState, listSessions, getSession, countMessages } from '../../src/store/db.js';
+import { createDb, countsByState, listSessions, getSession, countMessages, searchTextOf, metaTextOf } from '../../src/store/db.js';
 import { defaultConfig, type RelayConfig } from '../../src/shared/config.js';
 import { projectIdOf } from '../../src/shared/paths.js';
 import { searchSessions } from '../../src/search-svc/engine.js';
@@ -215,5 +215,35 @@ describe('P1 · zcode 捕获链（假库）', () => {
     const row = listSessions(relay, { projectId: PID }).find(r => r.source === 'zcode')!;
     expect(countMessages(relay, row!.id)).toBe(3);
     relay.close();
+  });
+});
+
+// ── 1014 深夜：索引路径的注入盲区（与 decisions 污染并列的第二个）──
+// 清洗规则此前只接进抽取路径（sanitizeMsgs），索引路径从来没剥。客户端把 XML 外壳
+// 剥掉后才存进 user 消息的系统上下文，于是原样进了 search_text。
+// 实测 D:\agent1super：4361 条消息带同一句 TodoWrite 提醒，占全部 search_text 的 15.9%
+// （E:\music player 7.3%）。症状是"索引胀大"而非简报出错，所以一直没被发现。
+describe('searchTextOf：进索引的文本也必须剥注入', () => {
+  const TODO = "The TodoWrite tool hasn't been used recently. If you're working on tasks that would benefit from tracking progress, consider using the TodoWrite tool to track progress. This is just a gentle reminder - ignore if not applicable.";
+
+  it('剥掉无标签注入，只留用户真话的词元', () => {
+    const out = searchTextOf(TODO + '\n\n我们决定改用 pwsh 直查 SQL');
+    expect(out.toLowerCase()).not.toContain('todowrite');
+    expect(out).not.toContain('gentle reminder');
+    expect(out).toContain('pwsh');
+  });
+
+  it('纯用户消息不受影响（不能误杀）', () => {
+    const out = searchTextOf('我们决定改用 pwsh 直查 SQL，拿到 registry 原始 packument');
+    expect(out).toContain('pwsh');
+    expect(out).toContain('registry');
+  });
+
+  it('metaTextOf 同样走剥离（会话标题/话题也要干净）', () => {
+    // 只把提醒放标题里；topics 传正常词——剥离管注入文本，不管调用方显式传的参数
+    const out = metaTextOf(TODO, ['提取规则', '分词器']);
+    expect(out.toLowerCase()).not.toContain('todowrite');
+    expect(out).not.toContain('gentle reminder');
+    expect(out).toContain('分词');
   });
 });

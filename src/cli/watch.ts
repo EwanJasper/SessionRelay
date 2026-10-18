@@ -2,13 +2,13 @@
 import fs from 'node:fs';
 import { loadConfig } from '../shared/config.js';
 import { isDaemonAlive } from '../shared/lock.js';
-import { runWatch } from '../capture/watch.js';
+import { runWatch, runWatchGlobal } from '../capture/watch.js';
 import { findRelayRoot } from '../shared/paths.js';
 import { touchRegistry } from '../shared/registry.js';
 import { pc } from './ui.js';
 import { installWatchService, uninstallWatchService, watchServiceStatus, watchLogPath, rotateWatchLog, readLogTail } from './service.js';
 
-export async function cmdWatch(opts: { foreground?: boolean; installService?: boolean; uninstall?: boolean; status?: boolean }): Promise<void> {
+export async function cmdWatch(opts: { foreground?: boolean; global?: boolean; installService?: boolean; uninstall?: boolean; status?: boolean }): Promise<void> {
   // watch 默认前台运行（服务与手动皆同路径）
   const root = process.cwd();
   if (opts.uninstall) return uninstallWatchService(root);
@@ -26,7 +26,26 @@ export async function cmdWatch(opts: { foreground?: boolean; installService?: bo
     }
     return;
   }
-  if (opts.installService) return installWatchService(root);
+  if (opts.installService) return installWatchService(root, { global: opts.global });
+  // [fork 0922] 全局守护：一个进程看管项目注册表里的全部项目（无需 cwd 在某项目内）
+  if (opts.global) {
+    const rr = findRelayRoot(root);
+    if (rr) {
+      rotateWatchLog(rr); // 启动时轮转
+      const rotator = setInterval(() => rotateWatchLog(rr), 3_600_000);
+      rotator.unref();
+    }
+    // [fork 1011] 守护自写日志：watch-task.cmd 在 --global 下不再 >> 重定向
+    // （cmd 的追加句柄会锁死 watch.log，轮转的截断永远 EBUSY——实测 33.7MB 不轮转）。
+    // 全局层的消息由这里 appendFile 落盘；worker 层消息仍走 adopt 的双写。
+    await runWatchGlobal({
+      log: (m) => {
+        process.stderr.write(`[srelay-watch] ${m}\n`);
+        if (rr) fs.appendFile(watchLogPath(rr), `[srelay-watch] ${m}\n`, () => {});
+      },
+    });
+    return;
+  }
   // 前台守护：要求已初始化
   const rr = findRelayRoot(root);
   if (!rr) {

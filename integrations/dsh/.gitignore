@@ -1,0 +1,9 @@
+# 插件自带的 srelay 运行时（67MB 构建产物）
+# 由 vendor-srelay.mjs 生成，不进版本库——否则仓库会从 100KB 膨胀到 67MB。
+# npm 发布包由 package.json 的 files 白名单显式列入，不受此规则影响。
+vendor/
+
+node_modules/
+
+*.tgz
+.DS_Store

@@ -15,14 +15,14 @@ import { pc, fmtDate } from './ui.js';
 import { installWatchService } from './watch.js';
 
 /** 检测本机已安装的 AI 工具（跨平台路径检测） */
-interface DetectedSource {
+export interface DetectedSource {
   id: string;
   displayName: string;
   installed: boolean;
   path: string;
 }
 
-function detectSources(): DetectedSource[] {
+export function detectSources(): DetectedSource[] {
   const home = os.homedir();
   const platform = process.platform;
 
@@ -42,30 +42,45 @@ function detectSources(): DetectedSource[] {
     ],
   };
 
+  // [fork 1015] 环境变量必须优先于内置默认路径。
+  // 病历：config.ts 早就承诺「环境变量 > config.json > 默认值」，init 的交互界面也明文让用户
+  // 去设 CODEX_DIR 之类，但 detectSources() 里全是硬编码路径 —— 用户按提示设了变量，
+  // 探测照样只看默认位置，于是「装了的源显示未安装」（或反过来），init 与 doctor 双双失聪。
+  // 这里不接 config.json（init 常常发生在还没有 config.json 的时候），只做 env > 默认。
+  const envFirst = (key: string, def: string): string => process.env[key]?.trim() || def;
+
   const checks: Array<{ id: string; name: string; paths: string[] }> = [
     {
       id: 'claude-code', name: 'Claude Code',
-      paths: [path.join(home, '.claude', 'projects')],
+      paths: [envFirst('CLAUDE_PROJECTS_DIR', path.join(home, '.claude', 'projects'))],
     },
     {
       id: 'zcode', name: 'ZCode',
-      paths: [path.join(home, '.zcode', 'cli', 'db', 'db.sqlite')],
+      paths: [envFirst('ZCODE_DB_PATH', path.join(home, '.zcode', 'cli', 'db', 'db.sqlite'))],
+    },
+    {
+      id: 'dsh', name: 'DeepSeek Harness',
+      // 会话按工作目录 slug 分组存放；探测目录本身即可判定源可用。
+      // 此前漏了这一项：--yes 走「只选已安装的源」，故裸跑 srelay init 建出的库
+      // 永远采不到 DSH 会话（适配器 src/adapters/dsh/ 早已存在，只差这个探测项）。
+      paths: [envFirst('DSH_SESSIONS_DIR', path.join(home, '.dsh', 'sessions'))],
     },
     {
       id: 'codex', name: 'Codex',
-      paths: [path.join(home, '.codex')],
+      paths: [envFirst('CODEX_DIR', path.join(home, '.codex'))],
     },
     {
       id: 'qoder', name: 'Qoder',
       paths: [
-        path.join(home, '.qoder-cn'),           // 中国版
+        envFirst('QODER_DIR', path.join(home, '.qoder-cn')),  // 中国版（env 优先）
         path.join(home, '.qoder'),              // 国际版
         path.join(home, '.qoder-cn', 'cache', 'projects'),  // 会话数据子目录
       ],
     },
     {
       id: 'trae', name: 'Trae（部分支持）',
-      paths: traePaths[platform] ?? traePaths.linux ?? [],
+      // TRAE_DIR 优先；未设时按平台候选逐个探测（Trae 各平台目录名不同，见上表）
+      paths: [...(process.env.TRAE_DIR?.trim() ? [process.env.TRAE_DIR.trim()] : []), ...(traePaths[platform] ?? traePaths.linux ?? [])],
     },
   ];
 
@@ -155,6 +170,20 @@ export async function cmdInit(opts: { backfill?: string; yes?: boolean; installS
   }
 
   touchRegistry(root); // 全局注册表（design-serve-resolve §5）：serve 多项目解析的候选来源
+
+  // [1015 夜] 看板自动起草：简报的「计划/下一步」段唯一来源就是项目根的 progress.md，
+  // 而全仓库此前只有读、没有写——没人写就是空的（b3 实测该维度只捕获 3.3%，全库最大盲区）。
+  // 放在 init 里 = 新项目「开箱即有」；**已存在则绝不覆盖**（那是人手写的文件）。
+  // 插件对新工作区的自动接入走的也是 srelay init，所以那条路同样会自动拿到看板。
+  try {
+    const { writeKanbanDraft } = await import('./kanban.js');
+    const kdb = fs.existsSync(dbFile(root)) ? openExisting(dbFile(root)) : null;
+    try {
+      const k = writeKanbanDraft(root, kdb, projectIdOf(root));
+      if (k.created) console.log(pc.green('✓') + ` 已生成看板初稿 ${pc.dim(k.path)}（${k.rows} 行，此后由人维护）`);
+    } finally { try { kdb?.close(); } catch { /* 已关 */ } }
+  } catch { /* 看板生成失败不影响 init 主流程 */ }
+
 
   const cfg = loadConfig(root);
   const backfill = parseBackfill(opts.backfill ?? '30d');

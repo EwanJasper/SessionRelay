@@ -77,15 +77,85 @@ const call = async (name: string, args: Record<string, unknown> = {}) => {
   return JSON.parse(text) as Record<string, unknown>;
 };
 
+// Phase 1：SRELAY_MCP_TOOLS 只读子集。ZCode 侧只配这 5 个，省的是**每一轮**的
+// 工具 schema 上下文（未注册的工具连 schema 都不进 tools/list）。
+const READONLY = ['srelay_search', 'srelay_show'];
+
+describe('P7 · MCP 只读子集（SRELAY_MCP_TOOLS 白名单，Phase 1）', () => {
+  it('白名单=只读 2 工具 → tools/list 恰好这 2 个，写域工具连 schema 都不在', async () => {
+    const t = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', `file:///${path.join(REPO, 'node_modules/tsx/dist/loader.mjs').replace(/\\/g, '/')}`, path.join(REPO, 'src/bin/srelay.ts'), 'serve'],
+      env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT, SRELAY_NO_DAEMON_SPAWN: '1', SRELAY_MCP_TOOLS: READONLY.join(',') } as Record<string, string>,
+      stderr: 'ignore',
+    });
+    const c = new Client({ name: 'srelay-readonly-test', version: '0.0.0' });
+    try {
+      await c.connect(t);
+      const names = (await c.listTools()).tools.map((x) => x.name).sort();
+      expect(names).toEqual([...READONLY].sort());
+      // 写域一个都不能在——尤其 save_note/annotate_session 这种会改库的
+      for (const n of names) expect(n).not.toMatch(/save_note|annotate|set_scope|export|import|link|release/);
+      expect(names).toHaveLength(2);
+    } finally {
+      try { await c.close(); } catch {}
+    }
+  }, 30000);
+
+  it('白名单里的工具真的能调（不是注册了却调不动）', async () => {
+    const t = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', `file:///${path.join(REPO, 'node_modules/tsx/dist/loader.mjs').replace(/\\/g, '/')}`, path.join(REPO, 'src/bin/srelay.ts'), 'serve'],
+      env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT, SRELAY_NO_DAEMON_SPAWN: '1', SRELAY_MCP_TOOLS: READONLY.join(',') } as Record<string, string>,
+      stderr: 'ignore',
+    });
+    const c = new Client({ name: 'srelay-readonly-call', version: '0.0.0' });
+    try {
+      await c.connect(t);
+      const r = await c.callTool({ name: 'srelay_search', arguments: { query: 'db', kind: 'decisions' } });
+      expect(r.isError ?? false).toBe(false);
+      const dec = await c.callTool({ name: 'srelay_search', arguments: { query: 'x', kind: 'unresolved' } });
+      expect(dec.isError ?? false).toBe(false);
+      const ses = await c.callTool({ name: 'srelay_search', arguments: { query: 'db' } });
+      expect(ses.isError ?? false).toBe(false);
+      const fil = await c.callTool({ name: 'srelay_search', arguments: { query: 'src/db.ts', kind: 'files' } });
+      expect(fil.isError ?? false).toBe(false);
+    } finally {
+      try { await c.close(); } catch {}
+    }
+  }, 30000);
+
+  it('白名单写满全部 14 个 = 等于没设（走全注册，不会少一个）', async () => {
+    const t = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--import', `file:///${path.join(REPO, 'node_modules/tsx/dist/loader.mjs').replace(/\\/g, '/')}`, path.join(REPO, 'src/bin/srelay.ts'), 'serve'],
+      env: { ...process.env, SRELAY_PROJECT_ROOT: PROJECT, SRELAY_NO_DAEMON_SPAWN: '1', // [1026] 名单必须与 TOOL_NAMES **逐字对齐**（这里原本漏了 srelay_lessons）：
+    //   漏一个的后果实测到了 —— 写满 13 个时 `want.size >= all.size` 不成立，于是走了白名单分支、
+    //   只注册 13 个，而这条测试断言 14 ⇒ 红。它红的时机恰好是「TOOL_NAMES 补全之后」，
+    //   说明这条测试真正测的是「两份名单是否一致」，而它自己的那份名单没人维护。
+    //   ⇒ 现在两份都对到 14，TOOL_NAMES 那边有 test/unit/mcp-tool-names.spec.ts 静态对拍兜底。
+    SRELAY_MCP_TOOLS: 'srelay_search,srelay_show,srelay_lessons,list_sessions,get_stats,set_scope,annotate_session,save_note,export_handoff,import_handoff,release_quarantine,link_sessions,get_linked_sessions,suggest_related_sessions' } as Record<string, string>,
+      stderr: 'ignore',
+    });
+    const c = new Client({ name: 'srelay-full-wl', version: '0.0.0' });
+    try {
+      await c.connect(t);
+      expect((await c.listTools()).tools.length).toBe(14);
+    } finally {
+      try { await c.close(); } catch {}
+    }
+  }, 30000);
+});
+
 describe('P3 · MCP 契约（stdio 真握手）', () => {
-  it('initialize + tools/list：16 个工具全部注册（9 读 + 7 写域）+ 删除类名称黑名单扫描', async () => {
+  it('initialize + tools/list：14 个工具全部注册（Phase 1 检索四合一后）+ 删除类名称黑名单扫描', async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      'annotate_session', 'export_handoff', 'get_decisions', 'get_file_history',
-      'get_linked_sessions', 'get_session_detail', 'get_stats', 'get_unresolved',
+      'annotate_session', 'export_handoff', 'get_linked_sessions', 'get_stats',
       'import_handoff', 'link_sessions', 'list_sessions', 'release_quarantine',
-      'save_note', 'search_sessions', 'set_scope', 'suggest_related_sessions',
+      'save_note', 'set_scope', 'srelay_lessons', 'srelay_search', 'srelay_show',
+      'suggest_related_sessions',
     ]);
     // 不变量（forget 设计 §2 的真正意图）：删除是人的特权——工具名含删除语义即 fail，
     // 这条不随工具数增长失效（比"恒 N 个"计数更强）
@@ -111,7 +181,7 @@ describe('P3 · MCP 契约（stdio 真握手）', () => {
       expect(s.reason).toBeTruthy(); // 每条推荐说得出为什么（可解释性）
       expect(typeof s.viaVector).toBe('boolean');
     }
-    expect(out.hint).toContain('get_session_detail');
+    expect(out.hint).toContain('srelay_show');
   });
 
   it('suggest_related_sessions：scope 收窄不拦截推荐（导航辅助，钉住 design-related §4 裁决）', async () => {
@@ -126,8 +196,8 @@ describe('P3 · MCP 契约（stdio 真握手）', () => {
     }
   });
 
-  it('search_sessions：A 档 auto-scope 生效（老会话被裁剪）+ 出处块 + 命中不足 hint', async () => {
-    const out = (await call('search_sessions', { query: '数据库' })) as {
+  it('srelay_search(kind=sessions)：A 档 auto-scope 生效（老会话被裁剪）+ 出处块 + 命中不足 hint', async () => {
+    const out = (await call('srelay_search', { query: '数据库' })) as {
       count: number; hits: Array<{ provenance: { sessionId: string; msg: number } }>; hint?: string;
     };
     expect(out.count).toBe(1); // sNew 命中；sOld 被 A 档（近30天）裁剪
@@ -140,24 +210,24 @@ describe('P3 · MCP 契约（stdio 真握手）', () => {
   it('B 档 scope.json 收窄：按提取出的 topic 过滤；CLI/MCP 共用契约', async () => {
     fs.writeFileSync(path.join(PROJECT, '.sessionrelay', 'scope.json'),
       JSON.stringify({ version: '1.0', mode: 'predicate', filters: { topics: ['认证'] }, issued_at: new Date().toISOString() }));
-    const out = (await call('search_sessions', { query: '认证' })) as { count: number; hits: Array<{ sessionId: string }> };
+    const out = (await call('srelay_search', { query: '认证' })) as { count: number; hits: Array<{ sessionId: string }> };
     expect(out.count).toBe(1);
     expect(out.hits[0].sessionId).toBe('sauth0000000000001');
-    const miss = (await call('search_sessions', { query: '数据库' })) as { count: number };
+    const miss = (await call('srelay_search', { query: '数据库' })) as { count: number };
     expect(miss.count).toBe(0); // B 档交集：只能收窄（验收：scoped 语境不串台）
   });
 
   it('热更新 + 逃生口（T28/D5）：set_scope full 后老会话立即恢复可见', async () => {
     const out = (await call('set_scope', { mode: 'full' })) as { ok: boolean };
     expect(out.ok).toBe(true);
-    const search = (await call('search_sessions', { query: '数据库' })) as { count: number; escaped: boolean; hits: Array<{ sessionId: string }> };
+    const search = (await call('srelay_search', { query: '数据库' })) as { count: number; escaped: boolean; hits: Array<{ sessionId: string }> };
     expect(search.escaped).toBe(true);
     expect(search.count).toBe(2); // sNew + sOld（A 档随 full 解除）
     expect(search.hits.map((h) => h.sessionId).sort()).toEqual(['snew000000000001', 'sold0000000000001']);
   });
 
-  it('get_session_detail：前缀解析 + 消息返回', async () => {
-    const out = (await call('get_session_detail', { session_id: 'snew' })) as {
+  it('srelay_show：前缀解析 + 消息返回', async () => {
+    const out = (await call('srelay_show', { session_id: 'snew' })) as {
       found: boolean; messages: Array<{ seq: number; role: string }>; provenance: { sessionId: string };
     };
     expect(out.found).toBe(true);
@@ -165,8 +235,8 @@ describe('P3 · MCP 契约（stdio 真握手）', () => {
     expect(out.provenance.sessionId).toBe('snew000000000001');
   });
 
-  it('get_decisions：决策含出处（msg 序号）', async () => {
-    const out = (await call('get_decisions', {})) as {
+  it('srelay_search(kind=decisions)：决策含出处（msg 序号）', async () => {
+    const out = (await call('srelay_search', { query: 'x', kind: 'decisions' })) as {
       decisions: Array<{ text: string; provenance: { sessionId: string; msg: number } }>;
     };
     expect(out.decisions.length).toBeGreaterThanOrEqual(1);
@@ -182,9 +252,9 @@ describe('P3 · MCP 契约（stdio 真握手）', () => {
       tags: ['发布', '里程碑'],
     })) as { ok: boolean; sessionId: string };
     expect(note.ok).toBe(true);
-    const search = (await call('search_sessions', { query: '里程碑 发布' })) as { hits: Array<{ sessionId: string }> };
+    const search = (await call('srelay_search', { query: '里程碑 发布' })) as { hits: Array<{ sessionId: string }> };
     expect(search.hits.some((h) => h.sessionId === note.sessionId)).toBe(true);
-    const decs = (await call('get_decisions', {})) as { decisions: Array<{ text: string }> };
+    const decs = (await call('srelay_search', { query: 'x', kind: 'decisions' })) as { decisions: Array<{ text: string }> };
     expect(decs.decisions.some((d) => d.text.includes('v0.1.0'))).toBe(true); // 笔记决策句式直接进决策库
   });
 

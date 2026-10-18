@@ -7,8 +7,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { relayDir, pathSlug } from '../shared/paths.js';
+import { relayDir, pathSlug, watchLogPath } from '../shared/paths.js';
+import { rotateLogFile } from '../shared/logrotate.js';
 import pc from 'picocolors';
+
+// [fork 1011] watchLogPath 提升至 shared/paths（capture 层的轮转也要用），此处原样再导出保持兼容
+export { watchLogPath };
 
 const execFileP = promisify(execFile);
 
@@ -46,25 +50,24 @@ export function resolveWatchEntryFrom(moduleUrl: string): { entry: string; exist
   return { entry, exists: fs.existsSync(entry) };
 }
 
-/** 守护启动命令参数（dev=tsx loader / prod=dist/srelay.js 稳定入口） */
-export function buildWatchArgs(root: string): string[] {
+/** 守护启动命令参数（dev=tsx loader / prod=dist/srelay.js 稳定入口；global=全局单守护模式） */
+export function buildWatchArgs(root: string, opts?: { global?: boolean }): string[] {
   const isDev = import.meta.url.endsWith('.ts');
+  const extra = opts?.global ? ['--global'] : [];
   if (isDev) {
     const loader = path.join(repoRoot(), 'node_modules', 'tsx', 'dist', 'loader.mjs');
     const { entry } = resolveWatchEntry();
-    return ['--import', pathToFileURLSafe(loader), entry, 'watch', '--foreground'];
+    return ['--import', pathToFileURLSafe(loader), entry, 'watch', '--foreground', ...extra];
   }
-  return [resolveWatchEntry().entry, 'watch', '--foreground'];
+  return [resolveWatchEntry().entry, 'watch', '--foreground', ...extra];
 }
 
 function pathToFileURLSafe(p: string): string {
   return 'file:///' + p.replace(/\\/g, '/');
 }
 
-/** 守护日志（三平台统一）：服务化运行的输出落点，watch --status / doctor 展示尾部 */
-export function watchLogPath(root: string): string {
-  return path.join(relayDir(root), 'watch.log');
-}
+// 守护日志（三平台统一）：服务化运行的输出落点，watch --status / doctor 展示尾部
+// （实现已提升至 shared/paths.ts，见顶部 re-export）
 
 /**
  * 只读日志尾部（内存评估修复）：绝不 readFileSync 全量——5MB 日志全读进堆
@@ -144,33 +147,30 @@ WantedBy=default.target
 
 // ── 安装/卸载/状态（分平台执行） ──
 
-function windowsRunScript(root: string): string {
+/** 守护启动脚本（Windows）。导出仅供测试：global 分支不得重定向。 */
+export function windowsRunScript(root: string, opts?: { global?: boolean }): string {
   const nodeAbs = process.execPath;
-  const args = buildWatchArgs(root).map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
+  const args = buildWatchArgs(root, opts).map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
   const logFile = watchLogPath(root);
   // 输出全部落盘：静默启动后报错必须可诊断（用户教训：闪框有信号，纯静默=故障不可见）
-  return ['@echo off', `cd /d "${root}"`, `${nodeAbs} ${args} >> "${logFile}" 2>&1`, ''].join('\r\n');
+  // [fork 0922] ①nodeAbs 加引号（默认装在 C:\Program Files\nodejs，含空格裸奔必死于 'C:\Program'，上游 #1）；
+  //       ②首行 chcp 65001：cmd.exe 按 OEM 码页（中文系统=GBK）逐行解析本文件，
+  //         而 fs.writeFileSync 落盘是 UTF-8——项目路径含中文时 cd/重定向全部乱码；
+  //         chcp 行本身纯 ASCII 任何码页下都先被正确解析，之后各行按 UTF-8 解析，与文件编码对齐
+  // [fork 1011] --global 不重定向：守护自写日志（runWatchGlobal 的 log 回调 appendFile），
+  //   否则 cmd 的 >> 追加句柄锁死 watch.log，轮转的截断永远 EBUSY（实测 33.7MB 不轮转的根因）。
+  //   非 global 保持重定向（单项目守护不自写日志）。
+  const redirect = opts?.global ? '' : ` >> "${logFile}" 2>&1`;
+  return ['@echo off', 'chcp 65001 >nul', `cd /d "${root}"`, `"${nodeAbs}" ${args}${redirect}`, ''].join('\r\n');
 }
 
 /**
- * 日志轮转：>1MB 时只保留尾部 100KB（服务化输出无限追加，不自转就会慢慢吃盘）。
+ * 日志轮转（某项目根）：>1MB 只保留尾部 100KB（服务化输出无限追加，不自转就会慢慢吃盘）。
+ * 实现已提升至 shared/logrotate.ts（capture 层的全局守护轮转也要用）；
  * 在服务启动路径（cmdWatch 前台入口）调用——三平台统一由 node 自理，脚本不掺和。
  */
-export function rotateWatchLog(root: string, maxBytes = 1_048_576, keepBytes = 102_400): boolean {
-  try {
-    const f = watchLogPath(root);
-    if (!fs.existsSync(f)) return false;
-    const size = fs.statSync(f).size;
-    if (size <= maxBytes) return false;
-    const fh = fs.openSync(f, 'r');
-    const buf = Buffer.alloc(keepBytes);
-    fs.readSync(fh, buf, 0, keepBytes, size - keepBytes);
-    fs.closeSync(fh);
-    const kept = buf.toString('utf8');
-    const trimmed = kept.slice(kept.indexOf('\n') + 1); // 丢弃可能被截断的首行
-    fs.writeFileSync(f, `...（日志超 1MB，已截断保留尾部）\n${trimmed}`);
-    return true;
-  } catch { return false; }
+export function rotateWatchLog(root: string): boolean {
+  return rotateLogFile(watchLogPath(root));
 }
 
 /** 静默启动器：Run 键指向 vbs（wscript 无窗），cmd 以隐藏窗口运行——消除开机闪黑框 */
@@ -178,7 +178,7 @@ export function windowsSilentVbs(cmdPath: string): string {
   return `CreateObject("Wscript.Shell").Run """${cmdPath}""", 0, False\r\n`;
 }
 
-export async function installWatchService(root: string): Promise<void> {
+export async function installWatchService(root: string, opts?: { global?: boolean }): Promise<void> {
   fs.mkdirSync(relayDir(root), { recursive: true });
   // 入口预检（chunk-hash 事故防线）：守护入口必须是稳定存在文件——
   // 0.4.0 前这里写入带 hash 的 chunk 路径，dist 重建后开机即 MODULE_NOT_FOUND
@@ -191,9 +191,15 @@ export async function installWatchService(root: string): Promise<void> {
   if (process.platform === 'win32') {
     const { REG_PATH, REG_NAME } = await import('./winregistry.js');
     const cmdPath = path.join(relayDir(root), 'watch-task.cmd');
-    fs.writeFileSync(cmdPath, windowsRunScript(root), 'utf8');
+    fs.writeFileSync(cmdPath, windowsRunScript(root, opts), 'utf8');
     const vbsPath = path.join(relayDir(root), 'watch-task.vbs');
-    fs.writeFileSync(vbsPath, windowsSilentVbs(cmdPath), 'utf8');
+    // [fork] vbs 必须 UTF-16LE+BOM：wscript 只认 ANSI/UTF-16，
+    // UTF-8 落盘的中文路径会被按 GBK 误读（cmd 之下更深一层的同款编码坑）
+    fs.writeFileSync(vbsPath, Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(windowsSilentVbs(cmdPath), 'utf16le'),
+    ]));
+    if (opts?.global) console.log(pc.dim('  模式：全局守护（--global，一个进程看管注册表全部项目）'));
     try {
       await execFileP('powershell', ['-Command',
         `Set-ItemProperty -Path '${REG_PATH}' -Name '${REG_NAME}' -Value 'wscript.exe "${vbsPath}"'`]);

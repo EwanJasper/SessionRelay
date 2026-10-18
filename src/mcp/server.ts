@@ -12,7 +12,7 @@ import { loadConfig, type RelayConfig } from '../shared/config.js';
 import { dbFile, findRelayRoot, relayDir } from '../shared/paths.js';
 import { touchRegistry, registryCandidates, type RegistryCandidate } from '../shared/registry.js';
 import { openExisting, listSessions, listDecisions, listUnresolved,
-         getMessageRange, findSessionByPrefix, getSession, countsByState, countsBySource,
+         getMessageById, resolveMessageRef, findSessionByPrefix, getSession, countsByState, countsBySource,
          insertScopeLog, addSessionLink, getLinkedSessions, createNoteSession,
          getSessionFull, metaTextOf, type DB } from '../store/db.js';
 import { searchSessions } from '../search-svc/engine.js';
@@ -28,6 +28,11 @@ import type { ScopePredicate } from '../core/scope/evaluator.js';
 import { compilePredicate } from '../core/scope/evaluator.js';
 import { assembleScope } from '../core/scope/assemble.js';
 import { loadScopeFile, saveScopeFile, makeScopeFile } from '../core/scope/scopeFile.js';
+// [1021] 经验层：MCP 侧要能**主动查**经验。
+//   此前经验只有"每轮自动注入 3 条"这一条路 —— 库一大，命中率必然下降，而模型没有
+//   任何手段去深挖。这个工具就是那条缺失的路：自动注入保底，需要时主动查。
+import { openGlobal, listLessons, searchLessons, liveImportance, isInjectable, INJECT_THRESHOLD } from '../store/global.js';
+import { resolveWorkspaceId, resolveDomain } from '../shared/workspace.js';
 
 /** 一次工具调用时的服务上下文（连接内可随项目选中而切换） */
 export interface ServeCtx { root: string; db: DB; cfg: RelayConfig; project: string }
@@ -78,8 +83,57 @@ function sessionBrief(db: DB, sessionId: string) {
     : { sessionId };
 }
 
+/** ZCode 侧只读 5 工具的规范名（Phase 1 检索折中：让"查历史"这条路真能用上，
+ *  但不把 7 个写域工具塞进每个会话的上下文）。顺序即计划 §七 的清单。 */
+/** Phase 1 集成后只剩两个入口（原五个：search_sessions / get_decisions /
+ *  get_session_detail / get_file_history / get_unresolved） */
+export const MCP_READONLY_TOOLS = [
+  'srelay_search',   // 四类内容一个入口（sessions/decisions/unresolved/files）
+  'srelay_show',     // 读一个会话的完整消息
+] as const;
+
+/** 读 SRELAY_MCP_TOOLS 白名单。未设/空 = 全注册（默认行为逐字节不变，契约测试不受影响）。
+ *  设了 = 只注册列出的工具。故意用白名单而不是黑名单：新增工具默认可见，
+ *  想要"只读子集"必须显式点名——与 forget 设计"删除是人的特权"同向。 */
+function toolAllowlist(): Set<string> | null {
+  const raw = process.env.SRELAY_MCP_TOOLS;
+  if (!raw || !raw.trim()) return null;
+  const want = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+  // 全写白名单 = 等于没设，走全注册，避免"想全开却少了一个"的静默半失效
+  const all = new Set<string>(Object.keys(TOOL_NAMES));
+  if (want.size >= all.size && [...want].every((n) => all.has(n))) return null;
+  return want;
+}
+
+/** 全部工具名（用于白名单完整性校验与 selftest 断言） */
+// ⚠️ 这张表必须**逐字覆盖**下面每一个注册调用的名字（2026-10-18 实测漏过 srelay_lessons）：
+//   漏一个的后果不是崩，而是「全写白名单 = 走全注册」那条优化对它静默失效 ——
+//   用户把 14 个全列上、以为走了白名单，实际走的是全注册分支，行为一样但判据已经错了。
+//   新增工具时**必须同时改这里**；判据在 test/unit/mcp-tool-names.spec.ts（静态对拍，不靠手工数）。
+//   （措辞注意：这里不要写出注册调用的字面写法 —— scripts/check-artifacts.mjs 是按它计数的，
+//     注释长得像代码就会被数成第 15 个调用。）
+const TOOL_NAMES = {
+  srelay_search: 1, srelay_show: 1, list_sessions: 1, get_stats: 1, set_scope: 1,
+  annotate_session: 1, save_note: 1, export_handoff: 1, import_handoff: 1,
+  release_quarantine: 1, link_sessions: 1, get_linked_sessions: 1, suggest_related_sessions: 1,
+  srelay_lessons: 1,
+} as const;
+
 export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise<unknown>): McpServer {
   const server = new McpServer({ name: 'sessionrelay', version: VERSION });
+  // Phase 1：只读子集。白名单命中才注册——未注册的工具连 schema 都不进客户端的
+  // tools/list，所以省的是**每一轮**的上下文，不是"调的时候才付"。
+  const allow = toolAllowlist();
+  // ⚠️ 两条分支都必须用**绑定过**的 rawRegister：else 分支若直接赋 server.registerTool，
+  //    调用时 this 丢失，SDK 内部读 this._registeredTools 直接崩（默认路径全挂，
+  //    且只在真起 serve 时才暴露——tsc 看不出来，是靠真握手测试抓到的）。
+  // 签名用宽松 unknown[]：registerTool 是重载的，Parameters<> 会取到 never，
+  // 再用 as 收回精确类型（守卫/ zod 推断都在各 register 调用点上，不受影响）。
+  const rawRegister = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
+  const register = ((name: string, ...rest: unknown[]) => {
+    if (allow && !allow.has(name)) return undefined;
+    return rawRegister(name, ...rest);
+  }) as typeof server.registerTool;
 
   /** 统一守卫：显式 project 优先（选中/切换），解析失败转指导性 isError 响应 */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 直通保住 registerTool 的 zod 参数推断
@@ -107,19 +161,133 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return null;
   };
 
-  server.registerTool('search_sessions', {
-    title: '搜索历史会话',
-    description: '搜索本项目的历史会话记忆。何时用：用户问"之前/上次/为什么当时/我们讨论过吗"、接手项目需要背景、实现前确认已有决策、报错排查怀疑有历史结论。何时不调：纯新问题、当前对话刚说过的内容',
-    inputSchema: { query: z.string().describe('搜索词，支持 "短语" 精确匹配'), limit: z.number().optional(), ...zPred, ...zProject },
-  }, guard(async (args: { query: string; limit?: number; project?: string } & zPredShape) => {
+  // ── Phase 1：检索类四工具集成成一个入口 ──────────────────────────────
+  // 原为 search_sessions / get_decisions / get_unresolved / get_file_history 四个工具。
+  // 集成为 srelay_search(kind=…) 的理由（用户 10-14 要求"工具尽量少、能力不变、集成后效果更好"）：
+  //   · 四个工具共享同一套 schema 参数（query/limit/zPred/zProject）——原先定义四遍，
+  //     省的是**每一轮**的 tools/list 上下文，不是"调的时候才付"
+  //   · 简报已经每天告诉模型"有哪些决策/未决"，所以最常见的需求就是"检索"，
+  //     一个入口 + 一个 kind 参数比四个名字更好记
+  //   · 能力一件不少：四个 kind 分支的处理逻辑与原四个工具逐字相同
+  // 命名带 srelay_ 前缀：ZCode 侧同时挂着 one-search-mcp 等 8 个 server，
+  // 裸名 search 会撞车。
+  register('srelay_search', {
+    title: '检索项目记忆',
+    description: '检索本项目历史记忆，四类内容一个入口。kind：sessions=搜会话（默认；用户问"之前/上次/我们讨论过吗"、接手项目要背景、实现前确认已有结论、报错排查怀疑有历史结论）；decisions=全部已确认技术决策（response 里 kind=negative 的是"被否掉的路"，看到就别再提议同一条）；unresolved=提出过但未解决的问题；files=某文件路径被哪些会话讨论过。何时不调：纯新问题、当前对话刚说过的内容。深入某一个会话用 srelay_show',
+    inputSchema: {
+      query: z.string().describe('搜索词，支持 "短语" 精确匹配；kind=files 时传文件路径'),
+      kind: z.enum(['sessions', 'decisions', 'unresolved', 'files']).optional().describe('检索哪类内容，默认 sessions'),
+      limit: z.number().optional(),
+      decision_kind: z.enum(['decision', 'negative']).optional().describe('仅 kind=decisions：只看拍板采用的 / 被否掉的路'),
+      ...zPred, ...zProject,
+    },
+  }, guard(async (args: { query: string; kind?: 'sessions' | 'decisions' | 'unresolved' | 'files'; limit?: number; topic?: string; source?: string; decision_kind?: 'decision' | 'negative'; project?: string } & zPredShape) => {
     const cur = get();
+    const kind = args.kind ?? 'sessions';
+    // [1021 红队 R13] 检索命中出处补稳定主键：msg 是 seq（位置索引），会话被归档/裁剪后
+    //   按它回跳会指到错的那条。这里用 seq 反查一次拿到 messages.id，一并发给调用方。
+    const prov = (sessionId: string, seq: number) => {
+      const ref = resolveMessageRef(cur.db, sessionId, { seq });
+      return { msg: ref.message?.seq_num ?? seq, msgId: ref.message?.id ?? null };
+    };
+
+    // ── [1021 红队 R13] scope 装配**提前到分派之前**：四个 kind 共用同一套过滤 ──
+    // 病历：decisions / unresolved 两个分支在装配之前就 return 了，于是 scope.json 的 B 档、
+    // auto A 档对它们完全不生效 —— 实测「scope 只允许会话 A」时，决策检索照样返回范围外的 B
+    // （**隐私边界失守**），且 limit / since / until 被静默忽略。交接技能文档明确教用户
+    // 「以前定过吗 → srelay_search(kind='decisions')」，这条路不能越界。
     const callPred = predFrom(args);
     // T28：每次调用重新装配（scope.json 热更新）
     const asm = assembleScope({ root: cur.root, cfg: cur.cfg, callPred, includeAuto: true });
+    /** scope 收窄后的会话 id 集合；null = 没收窄（full 逃生口 或 无过滤条件） */
+    const scopeSessionIds = (): Set<string> | null => {
+      const w = asm.where;
+      if (!w) return null;
+      const rows = cur.db.prepare(
+        `SELECT s.id FROM sessions s WHERE s.project_id = ?${w.sql ? ` AND ${w.sql}` : ''}`,
+      ).all(cur.project, ...(w.params ?? [])) as Array<{ id: string }>;
+      return new Set(rows.map((r) => r.id));
+    };
+    /** 本 kind 用不上的参数：加进响应的 not_applied 里**明说**，不许静默吞掉 */
+    const notApplied: string[] = [];
+    if (args.decision_kind !== undefined && kind !== 'decisions') notApplied.push('decision_kind');
+
+    // ── kind=decisions：已确认技术决策（带出处，可回跳）──
+    if (kind === 'decisions') {
+      const all = listDecisions(cur.db, cur.project, { topic: args.topic, source: args.source, kind: args.decision_kind });
+      const ids = scopeSessionIds();
+      const inScope = ids ? all.filter((r) => ids.has(r.sessionId)) : all;
+      const limited = typeof args.limit === 'number' && args.limit > 0 ? inScope.slice(0, args.limit) : inScope;
+      const outOfScope = all.length - inScope.length;
+      // query 在这条分支**没有词法含义**（决策是结论清单，不是全文索引）。老实现直接无视它，
+      // 于是"传一个不存在的词"也照样返回全部——现在改为明说：not_applied + note。
+      if (args.query) notApplied.push('query');
+      return toolOut({
+        kind: 'decisions',
+        scoped: !!asm.where, escaped: asm.escaped,
+        count: limited.length,
+        ...(notApplied.length ? { not_applied: notApplied } : {}),
+        ...(args.query ? { note: 'kind=decisions 不按 query 过滤（返回本项目决策，受 scope/limit 约束）；按词筛请用 kind=sessions' } : {}),
+        ...(outOfScope > 0 ? { hint: `另有 ${outOfScope} 条决策在 scope 之外，可调用 set_scope({mode:'full'}) 放宽（隐私 ignore 不受影响）` } : {}),
+        decisions: limited.map((r) => ({
+          at: r.at, text: r.text, kind: r.kind ?? 'decision', pinned: r.pinned === true,
+          // [1026 决策时效] 多旧了 —— 只提醒，不隐藏、不自动推翻（理由见 decisionAgeDays）。
+          //   老结论照样返回，让读的一方自己判断还算不算数；藏起来才是不可恢复的错。
+          ageDays: r.ageDays,
+          // [R13] 优先 msgId（稳定主键）；msg 仍是 seq，供不认 msgId 的老消费方用
+          provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msgId: r.msgId ?? null, msg: r.seq },
+        })),
+      });
+    }
+
+    // ── kind=unresolved：提出过但（启发式判定）未解决的问题 ──
+    if (kind === 'unresolved') {
+      // 先取全量（listUnresolved 内部已做跨会话去重），再按 scope 收窄，最后才限量——
+      // 顺序反了就会"先砍 20 条再过滤"，返回 1 条却其实还有更多在 scope 内。
+      const limit = typeof args.limit === 'number' && args.limit > 0 ? args.limit : 20;
+      const all = listUnresolved(cur.db, cur.project, Number.MAX_SAFE_INTEGER);
+      const ids = scopeSessionIds();
+      const inScope = ids ? all.filter((r) => ids.has(r.sessionId)) : all;
+      const rows = inScope.slice(0, limit);
+      const outOfScope = all.length - inScope.length;
+      if (args.query) notApplied.push('query');
+      return toolOut({
+        kind: 'unresolved',
+        scoped: !!asm.where, escaped: asm.escaped,
+        count: rows.length,
+        ...(notApplied.length ? { not_applied: notApplied } : {}),
+        ...(args.query ? { note: 'kind=unresolved 不按 query 过滤；按词筛请用 kind=sessions' } : {}),
+        ...(outOfScope > 0 ? { hint: `另有 ${outOfScope} 条在 scope 之外，可调用 set_scope({mode:'full'}) 放宽` } : {}),
+        unresolved: rows.map((r) => ({ q: r.q, at: r.at, provenance: sessionBrief(cur.db, r.sessionId) })),
+      });
+    }
+
+    // ─── 以下两个 kind 走全文检索（语义补充） ──
+    // [1017 夜] 语义档的开关/模型**必须每次调用重读配置**：serve 是常驻进程，把 config 读一次就缓存
+    // ⇒ 用户关掉语义档或换模型都不生效，出现"看起来在工作"的半开状态（调研件 §4 的头号风险）。
+    // 重读代价是一次小文件读+parse，MCP 工具调用不在 prompt 热路径上，可以接受。
+    let cfgNow = cur.cfg;
+    try { cfgNow = loadConfig(cur.root); } catch { /* 配置坏了就沿用旧的，语义档本身也有状态记录 */ }
     // 语义补充命中（design-semantic：未启用返回 null = 纯 FTS，行为与 0.2.5 等价）
     const { semanticSearch } = await import('../search-svc/semantic.js');
-    const semHits = await semanticSearch(cur.db, cur.cfg, args.query, { project: cur.project, extraWhere: asm.where });
-    const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits });
+    const semHits = await semanticSearch(cur.db, cfgNow, args.query, { project: cur.project, extraWhere: asm.where });
+
+    // ── kind=files：某文件路径被哪些会话讨论过（跨 agent）──
+    if (kind === 'files') {
+      const hits = searchSessions(cur.db, { project: cur.project, query: `"${args.query.replace(/\\/g, '/')}"`, limit: args.limit ?? 20, extraWhere: asm.where, decay: cur.cfg.decay });
+      return toolOut({
+        kind: 'files', file: args.query,
+        count: hits.length,
+        sessions: hits.map((h) => ({ ...sessionBrief(cur.db, h.sessionId), snippet: h.snippet, provenance: { ...sessionBrief(cur.db, h.sessionId), ...prov(h.sessionId, h.seq) } })),
+      });
+    }
+
+    // ── kind=sessions：搜会话（默认） ──
+    // [1021 红队 T9] kind=sessions 分支原来**没传 decay** —— 而 files 分支传了。
+//   同一行 searchSessions、只差一个参数，结果就是「按文件搜」受时间衰减、「按会话搜」不受。
+//   这不是写错，是**漏写**，而且没有任何断言会发现 —— 判据散在两处的典型。
+//   顺带按同文件 205-209 的规矩用 `cfgNow`（每次重读）而不是缓存的 `cur.cfg`。
+const hits = searchSessions(cur.db, { project: cur.project, query: args.query, limit: args.limit ?? 10, extraWhere: asm.where, semanticHits: semHits, semanticReserve: cfgNow.semantic?.reserve_slots, decay: cfgNow.decay });
     const out = hits.map((h) => ({
       ...sessionBrief(cur.db, h.sessionId),
       score: Number(h.score.toFixed(3)),
@@ -127,67 +295,146 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       viaMeta: h.viaMeta,
       viaSemantic: h.viaSemantic ?? false,
       snippet: h.snippet,
-      provenance: { ...sessionBrief(cur.db, h.sessionId), msg: h.seq, note: `get_session_detail 可取全文` },
+      provenance: { ...sessionBrief(cur.db, h.sessionId), ...prov(h.sessionId, h.seq), note: `srelay_show 可取全文` },
     }));
     // token 感知：告诉 AI 本次响应量 + 省 token 的深入路径
     const respBytes = Buffer.byteLength(JSON.stringify(out), 'utf8');
-    const tokenHint = `本次响应约 ${Math.round(respBytes / 3)} tokens。深入时省 token：get_session_detail(role:'user') 只看用户提问；get_decisions() 直接拿结论`;
+    const tokenHint = `本次响应约 ${Math.round(respBytes / 3)} tokens。深入时省 token：srelay_show(role:'user') 只看用户提问；srelay_search(kind:'decisions') 直接拿结论`;
     const hint2 = buildHint(cur.db, cur.cfg, cur.project, callPred, hits.length);
     return toolOut({
-      query: args.query, scoped: !!asm.where, escaped: asm.escaped,
+      kind: 'sessions', query: args.query, scoped: !!asm.where, escaped: asm.escaped,
       count: out.length, hits: out,
       estimated_tokens: Math.round(respBytes / 3),
       hint: [tokenHint, hint2].filter(Boolean).join(' | '),
     });
   }));
 
-  server.registerTool('get_session_detail', {
+  register('srelay_show', {
     title: '会话详情',
     description: '取某会话的消息（可按角色过滤、限制范围与长度）。默认安全：最多 20 条 × 1000 字 ≈ 20KB。要更多请显式传 start_msg/end_msg 或 max_chars。session_id 支持前缀',
     inputSchema: {
       session_id: z.string(),
       start_msg: z.number().optional().describe('起始消息序号（含）'),
       end_msg: z.number().optional().describe('结束消息序号（含）'),
+      message_id: z.union([z.string(), z.number()]).optional().describe('消息稳定主键（出处块里的 msgId）。回跳单条出处时**优先用它**：seq 是位置索引，会话归档/裁剪后会漂'),
       role: z.enum(['user', 'assistant']).optional().describe('只取该角色的消息（user=用户提问，轻量）'),
       include_exchanges: z.boolean().optional().describe('附带关键往返（用户提问+AI结论对，约 3KB）——理解"为什么"的中间粒度，省去拉全文'),
       max_chars: z.number().optional().describe('单条截断长度（默认 1000；需全文时显式传大值如 5000）'),
       ...zProject,
     },
-  }, guard(async (args: { session_id: string; start_msg?: number; end_msg?: number; role?: 'user' | 'assistant'; include_exchanges?: boolean; max_chars?: number }) => {
+  }, guard(async (args: { session_id: string; start_msg?: number; end_msg?: number; message_id?: string | number; role?: 'user' | 'assistant'; include_exchanges?: boolean; max_chars?: number }) => {
     const { db, project } = get();
     const s = findSessionByPrefix(db, args.session_id, project) ?? getSession(db, args.session_id);
     if (!s) return toolOut({ found: false, reason: '未找到会话' });
     const DEFAULT_MSGS = 20;    // 上下文安全护栏（D22）
     const DEFAULT_CHARS = 1000;
     const HARD_TOTAL = 50 * 1024; // 50KB 硬顶
+    const cap = Math.max(1, Math.floor(Number(args.max_chars ?? DEFAULT_CHARS)));
 
-    const from = args.start_msg ?? 1;
-    const requestedTo = args.end_msg ?? Math.max(s.message_count, 1);
-    const to = Math.min(requestedTo, from + DEFAULT_MSGS - 1); // 不指定 end_msg 时最多 20 条
-    const cap = args.max_chars ?? DEFAULT_CHARS;
-
-    let msgs = getMessageRange(db, s.id, from, to);
-    if (args.role) msgs = msgs.filter((m) => m.role === args.role);
-
-    // 逐条累积，超 50KB 硬顶即停
-    const result: Array<{ seq: number; role: string; content: string; createdAt: string | null }> = [];
-    let totalBytes = 0;
-    let sizeTruncated = false;
-    for (const m of msgs) {
-      const content = m.content.length > cap
-        ? m.content.slice(0, cap) + `…(全文 ${m.content.length} 字，max_chars 可调大)`
-        : m.content;
-      const bytes = Buffer.byteLength(content, 'utf8');
-      if (totalBytes + bytes > HARD_TOTAL) { sizeTruncated = true; break; }
-      totalBytes += bytes;
-      result.push({ seq: m.seq_num, role: m.role, content, createdAt: m.created_at });
+    // [1021 红队 R14] **条数 ≠ 序号**。旧代码 requestedTo = s.message_count 把"条数"当 seq 上界、
+    //   默认 from=1；seq 有空洞时（两条消息 seq=100/500、message_count=2）查 seq 1..2
+    //   → **返回 0 条且不报错**。现在一律按 messages 里**真实存在的 seq** 分页。
+    const bounds = db.prepare('SELECT COUNT(*) AS n, MIN(seq_num) AS lo, MAX(seq_num) AS hi FROM messages WHERE session_id = ?')
+      .get(s.id) as { n: number; lo: number | null; hi: number | null } | undefined;
+    const totalMsgs = Number(bounds?.n ?? 0);
+    if (totalMsgs === 0) {
+      // 归档会话正文已删：明说，别回一个空数组让调用方猜（正文没了但决策骨架还在）
+      return toolOut({
+        found: false, sessionId: s.id, totalInDb: 0,
+        reason: '该会话在库里已无正文消息（归档/裁剪后只剩决策骨架）；要结论请用 srelay_search(kind:"decisions")',
+      });
     }
+    const startAt = Number.isFinite(Number(args.start_msg)) && Number(args.start_msg) > 0
+      ? Math.floor(Number(args.start_msg)) : Number(bounds?.lo ?? 1);
+    const endAt = Number.isFinite(Number(args.end_msg)) && Number(args.end_msg) > 0
+      ? Math.floor(Number(args.end_msg)) : null;
+    const roleFilter = args.role ?? null;
+
+    /** 一页消息：按现存 seq 升序取；end_msg / role 在 SQL 层过滤（先取后筛会让"条数"飘） */
+    const pageOf = (fromSeq: number, toSeq: number | null, limit: number) =>
+      db.prepare(
+        'SELECT id, seq_num, role, content, created_at FROM messages'
+        + ' WHERE session_id = ? AND seq_num >= ? AND (? IS NULL OR seq_num <= ?) AND (? IS NULL OR role = ?)'
+        + ' ORDER BY seq_num LIMIT ?',
+      ).all(s.id, fromSeq, toSeq, toSeq, roleFilter, roleFilter, limit) as Array<{ id: string | number; seq_num: number; role: string; content: string; created_at: string | null }>;
+
+    /** 按字节安全截断（不切碎多字节字符）——中文 1 字 = 3 字节，按字截断挡不住 50KB */
+    const clipBytes = (s0: string, maxBytes: number): string => {
+      let acc = ''; let used = 0;
+      for (const ch of s0) {
+        const w = Buffer.byteLength(ch, 'utf8');
+        if (used + w > maxBytes) break;
+        used += w; acc += ch;
+      }
+      return acc;
+    };
+
+    /** 内容裁剪 + **字节**硬顶的**唯一实现**（#14：msgId 分支此前完全没过这层，实测泄出 90,000 字节） */
+    const clipToBudget = (list: Array<{ id: string | number; seq_num: number; role: string; content: string; created_at: string | null }>) => {
+      const items: Array<{ seq: number; msgId: string | number; role: string; content: string; createdAt: string | null }> = [];
+      let bytes = 0; let truncated = false; let omitted = 0;
+      for (let i = 0; i < list.length; i++) {
+        const m = list[i];
+        const full = String(m.content ?? '');
+        // ① 先按 max_chars 截字；② 再按剩余字节硬顶截——**提示文案的字节也要预留**，
+        //    否则"截到 50KB 再加一句说明"会重新超顶（实测 51,265 > 51,200）。
+        let content = full.length > cap ? full.slice(0, cap) : full;
+        let cut = content.length !== full.length;
+        const room = HARD_TOTAL - bytes;
+        const note = `…(原文 ${full.length} 字，已按 max_chars=${cap}/50KB 硬顶截断)`;
+        const noteBytes = Buffer.byteLength(note, 'utf8');
+        if (Buffer.byteLength(content, 'utf8') + (cut ? noteBytes : 0) > room) {
+          if (items.length > 0) { omitted = list.length - i; truncated = true; break; }
+          // 第一条必须给出（否则整个响应是空的），但绝不超硬顶
+          content = clipBytes(content, Math.max(0, room - noteBytes));
+          cut = true;
+        }
+        if (cut) { content += note; truncated = true; }
+        bytes += Buffer.byteLength(content, 'utf8');
+        items.push({ seq: m.seq_num, msgId: m.id, role: m.role, content, createdAt: m.created_at });
+      }
+      return { items, bytes, truncated, omitted };
+    };
+
+    // [1021 红队 R14] 稳定主键回查（seq 会漂）：给了 message_id 就只回这一条。
+    //   查不到 = 原文已归档 —— 明说，不许回一个空数组让调用方猜。
+    //   ⚠️ 这条分支以前**完全没过 50KB 硬顶**，只按 max_chars 截单条内容，
+    //   实测一个 90,000 字节的长消息原样泄出（声明上限 51,200）。现在与主分支共用 clipToBudget。
+    if (args.message_id !== undefined && args.message_id !== null) {
+      const m = getMessageById(db, s.id, args.message_id);
+      if (!m) {
+        return toolOut({ found: false, sessionId: s.id, msgId: args.message_id, reason: '原文已归档：该 msgId 在库里已无对应消息（seq 也不可信，故不回落）' });
+      }
+      const one = clipToBudget([m]);
+      return toolOut({
+        found: true, via: 'msgId', session: sessionBrief(db, s.id),
+        range: [m.seq_num, m.seq_num], totalInDb: totalMsgs, returned: one.items.length,
+        totalBytesKB: Math.round(one.bytes / 1024),
+        estimated_tokens: Math.round(one.bytes / 3),
+        truncated: one.truncated,
+        messages: one.items,
+        provenance: { sessionId: s.id, source: s.source, createdAt: s.created_at, state: s.state },
+      });
+    }
+
+    const page = pageOf(startAt, endAt, DEFAULT_MSGS);
+    const got = clipToBudget(page);
+    const result = got.items;
+    // 实际返回的区间 vs 请求的区间分开给：旧实现把 [from, from+len-1] 当区间，
+    // 在 seq 有空洞时是一句谎话（说 1..2 其实给的是 100..500）。
+    const lastSeq = result.length ? result[result.length - 1].seq : startAt - 1;
+    const restWhere: string[] = ['session_id = ?', 'seq_num > ?'];
+    const restParams: unknown[] = [s.id, lastSeq];
+    if (endAt !== null) { restWhere.push('seq_num <= ?'); restParams.push(endAt); }
+    if (roleFilter) { restWhere.push('role = ?'); restParams.push(roleFilter); }
+    const restRow = db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE ${restWhere.join(' AND ')}`).get(...restParams) as { n: number };
+    const rest = Number(restRow?.n ?? 0) + got.omitted;
 
     // 构建 hint（AI 行动指引——不信任 AI 自觉，用提示引导正确行为）
     const hints: string[] = [];
-    if (to < requestedTo || sizeTruncated) {
-      hints.push(`当前显示 ${result.length} 条（共 ${s.message_count} 条）`);
-      if (s.message_count > 20) hints.push('建议：role="user" 只看用户提问（通常很少）；get_decisions() 直接拿全部决策；start_msg 翻页');
+    if (rest > 0 || got.truncated) {
+      hints.push(`当前显示 ${result.length} 条（库里共 ${totalMsgs} 条${rest > 0 ? `，还有 ${rest} 条未返回` : ''}）`);
+      if (totalMsgs > DEFAULT_MSGS) hints.push('建议：role="user" 只看用户提问（通常很少）；srelay_search(kind:"decisions") 直接拿全部决策；start_msg 翻页');
     }
     // 关键往返（可选）：从 code_changes 列的 keyExchanges 字段取（归档后仍保留）
     let keyExchanges: unknown = undefined;
@@ -203,13 +450,14 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       found: true,
       session: sessionBrief(db, s.id),
       summary_rule: s.summary_rule,
-      range: [from, from + result.length - 1],
-      roleFilter: args.role ?? 'all',
-      totalInDb: s.message_count,
+      range: result.length ? [result[0].seq, result[result.length - 1].seq] : null,
+      requestedRange: [startAt, endAt ?? null],
+      roleFilter: roleFilter ?? 'all',
+      totalInDb: totalMsgs,
       returned: result.length,
-      totalBytesKB: Math.round(totalBytes / 1024),
-      estimated_tokens: Math.round(totalBytes / 3),
-      truncated: to < requestedTo || sizeTruncated,
+      totalBytesKB: Math.round(got.bytes / 1024),
+      estimated_tokens: Math.round(got.bytes / 3),
+      truncated: rest > 0 || got.truncated,
       ...(keyExchanges !== undefined ? { key_exchanges: keyExchanges } : {}),
       ...(hints.length > 0 ? { hint: hints.join('；') } : {}),
       messages: result,
@@ -217,7 +465,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     });
   }));
 
-  server.registerTool('list_sessions', {
+  register('list_sessions', {
     title: '列出会话',
     description: '按过滤条件列出本项目会话（scope 生效）',
     inputSchema: { limit: z.number().optional(), state: z.string().optional().describe('active|pending_end|confirmed'), ...zPred, ...zProject },
@@ -229,48 +477,10 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ count: rows.length, sessions: rows.map((s) => ({ ...sessionBrief(db, s.id), messageCount: s.message_count, summary: s.summary_rule?.split('\n')[0] ?? null })) });
   }));
 
-  server.registerTool('get_decisions', {
-    title: '决策列表',
-    description: '本项目全部已确认技术决策（带出处，可回跳）',
-    inputSchema: { topic: z.string().optional(), source: z.string().optional(), ...zProject },
-  }, guard(async (args: { topic?: string; source?: string }) => {
-    const { db, project } = get();
-    const rows = listDecisions(db, project, { topic: args.topic, source: args.source });
-    return toolOut({
-      count: rows.length,
-      decisions: rows.map((r) => ({
-        at: r.at, text: r.text,
-        provenance: { sessionId: r.sessionId, source: r.source, title: r.title, msg: r.seq },
-      })),
-    });
-  }));
 
-  server.registerTool('get_file_history', {
-    title: '文件讨论史',
-    description: '某文件路径被哪些会话讨论过（跨 agent）',
-    inputSchema: { file_path: z.string(), ...zProject },
-  }, guard(async (args: { file_path: string }) => {
-    const { root, cfg, db, project } = get();
-    const asm = assembleScope({ root, cfg, includeAuto: true });
-    const hits = searchSessions(db, { project, query: `"${args.file_path.replace(/\\/g, '/')}"`, limit: 20, extraWhere: asm.where });
-    return toolOut({
-      file: args.file_path,
-      count: hits.length,
-      sessions: hits.map((h) => ({ ...sessionBrief(db, h.sessionId), snippet: h.snippet, provenance: { ...sessionBrief(db, h.sessionId), msg: h.seq } })),
-    });
-  }));
 
-  server.registerTool('get_unresolved', {
-    title: '未决问题',
-    description: '会话中提出但（启发式判定）未解决的问题',
-    inputSchema: { limit: z.number().optional(), ...zProject },
-  }, guard(async (args: { limit?: number }) => {
-    const { db, project } = get();
-    const rows = listUnresolved(db, project, args.limit ?? 20);
-    return toolOut({ count: rows.length, unresolved: rows.map((r) => ({ q: r.q, at: r.at, provenance: sessionBrief(db, r.sessionId) })) });
-  }));
 
-  server.registerTool('get_stats', {
+  register('get_stats', {
     title: '索引统计',
     description: '本项目记忆库统计（会话数/状态/来源/体积/当前 scope）。开始处理项目任务前可调用，了解记忆库规模与覆盖范围',
     inputSchema: { ...zProject },
@@ -290,7 +500,60 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     });
   }));
 
-  server.registerTool('set_scope', {
+  register('srelay_lessons', {
+    title: '查经验',
+    description: '查跨项目经验（全局库）。给 q 就按关键词检索，不给就按重要度列出。'
+      + '**这是"自动注入那 3 条之外"的深挖入口**：开场自动注入只保底 3 条（200 字符），'
+      + '库变大后想找特定主题的经验时必须用这个工具主动查。'
+      + '返回里 injectable=true 表示它现在真会进注入层（状态/定级/阈值三样都过）。',
+    inputSchema: {
+      q: z.string().optional().describe('关键词（中文可，走 FTS + 分词器）'),
+      top: z.number().optional().describe('最多几条（默认 10，上限 50）'),
+      scope: z.string().optional().describe('过滤作用域：global|project|domain'),
+      status: z.string().optional().describe('过滤状态：draft|verified|confirmed|retired|rejected'),
+      ...zProject,
+    },
+  }, guard(async (args: { q?: string; top?: number; scope?: string; status?: string } & zPredShape) => {
+    const { root } = get();
+    let gdb: ReturnType<typeof openGlobal> | null = null;
+    try {
+      gdb = openGlobal();
+      const workspaceId = resolveWorkspaceId(root);
+      const domain = resolveDomain(root);
+      const top = Math.min(50, Math.max(1, Number(args.top ?? 10)));
+      const raw = String(args.q ?? '').trim()
+        ? searchLessons(gdb, args.q!, { workspaceId, domain, top: top * 2 })
+        : listLessons(gdb, { workspaceId, domain, top: top * 2 });
+      // scope/status 过滤放在取数之后：listLessons/searchLessons 的可见性判据
+      // （visibleWhere）是**权威**，这里只是让调用方能收窄，不另写一套可见性。
+      let rows = raw;
+      if (args.scope) rows = rows.filter((r) => String(r.scope) === args.scope);
+      if (args.status) rows = rows.filter((r) => String(r.status) === args.status);
+      rows = rows.slice(0, top);
+      const items = rows.map((r) => ({
+        id: r.id,
+        scope: r.scope,
+        grade: r.grade,
+        status: r.status,
+        text: r.text,
+        // 实时分（含年龄衰减 + uses/hits 加成），不是入库时的静态 importance
+        importance: Number(liveImportance(r).toFixed(2)),
+        injectable: isInjectable(r),
+        uses: r.uses ?? 0,
+        sourceRef: r.source_ref ?? null,
+        quote: r.quote ?? null,
+      }));
+      return toolOut({
+        count: items.length,
+        threshold: INJECT_THRESHOLD,
+        // 说清楚口径：injectable 与"自动注入"共用同一个判据函数，不另算一套
+        note: 'injectable 与开场自动注入共用 isInjectable（同一份判据）；自动注入每轮只取 top3/200字',
+        items,
+      });
+    } finally { try { gdb?.close(); } catch { /* 已关 */ } }
+  }));
+
+  register('set_scope', {
     title: '调整检索边界（逃生口）',
     description: '收得太紧时的放宽通道：mode:"full" 解除裁剪（隐私 ignore 永不受影响）；或设置新过滤条件',
     inputSchema: {
@@ -312,7 +575,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
 
   // ══════════ 写域工具（D21：内容不可变的旁路写入；状态迁移仍归 watch/CLI） ══════════
 
-  server.registerTool('annotate_session', {
+  register('annotate_session', {
     title: '注释会话（标签/摘要）',
     description: '为会话添加/移除标签、设置人工摘要（进入检索索引）。这是元数据编辑，不改写对话内容',
     inputSchema: {
@@ -330,13 +593,15 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     if (!full) return toolOut({ ok: false, reason: '会话数据缺失' });
     const remove = new Set(args.remove_tags ?? []);
     const tags = [...new Set([...full.userTags, ...(args.add_tags ?? [])])].filter((t) => !remove.has(t));
+    // [fork 0922] 重写 meta_text 必须并回决策文本（confirm 时 meta_text 含决策，
+    // 原实现覆盖后 viaMeta 检索面静默变窄）
     db.prepare('UPDATE sessions SET user_tags = ?, user_summary = COALESCE(?, user_summary), meta_text = ? WHERE id = ?')
       .run(JSON.stringify(tags), args.summary ?? null,
-        metaTextOf(full.title, [...full.topics, ...tags, ...(args.summary ? [args.summary] : [])]), s.id);
+        metaTextOf(full.title, [...full.topics, ...tags, ...(args.summary ? [args.summary] : []), ...full.decisions.map((d) => d.text.slice(0, 30))]), s.id);
     return toolOut({ ok: true, sessionId: s.id, userTags: tags, ...(args.summary ? { userSummary: args.summary } : {}), note: '标签与摘要已进入检索索引' });
   }));
 
-  server.registerTool('save_note', {
+  register('save_note', {
     title: '写入结论笔记',
     description: '把结论/备忘写入项目记忆（source=note，origin=manual，立即确认并提取）。笔记中的决策句式会直接进入决策库',
     inputSchema: {
@@ -349,10 +614,10 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     const { db, project } = get();
     const id = createNoteSession(db, { projectId: project, title: args.title, content: args.content, tags: args.tags });
     insertScopeLog(db, 'note', { id, title: args.title }, 'mcp:save_note');
-    return toolOut({ ok: true, sessionId: id, source: 'note', state: 'confirmed', note: '笔记已可被 search / get_decisions / export 检索；可由用户以 srelay forget 移除' });
+    return toolOut({ ok: true, sessionId: id, source: 'note', state: 'confirmed', note: '笔记已可被 srelay_search / export 检索；可由用户以 srelay forget 移除' });
   }));
 
-  server.registerTool('export_handoff', {
+  register('export_handoff', {
     title: '导出交接包',
     description: '生成 .hop 交接包（sha256 完整性 + 默认脱敏）或 HANDOFF.md。默认尊重当前 scope',
     inputSchema: {
@@ -379,7 +644,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     }
   }));
 
-  server.registerTool('import_handoff', {
+  register('import_handoff', {
     title: '导入交接包（默认隔离）',
     description: '导入 .hop 交接包：sha256 全量校验 + 归化到当前项目。经 AI 发起的导入默认走隔离模式（只入元数据与摘要，正文待 release）',
     inputSchema: {
@@ -401,7 +666,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     }
   }));
 
-  server.registerTool('release_quarantine', {
+  register('release_quarantine', {
     title: '放行隔离会话',
     description: '把隔离导入的会话正文放行入库（用户确认后使用）',
     inputSchema: { session_id_prefix: z.string(), ...zProject },
@@ -411,7 +676,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ ok: true, released: r.released });
   }));
 
-  server.registerTool('link_sessions', {
+  register('link_sessions', {
     title: '建立会话关联',
     description: '把两个会话建立关联（continues=延续 / related=相关 / pinned=挂载），供 get_linked_sessions 与跨会话追溯',
     inputSchema: {
@@ -432,7 +697,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     return toolOut({ ok: missed.length === 0, sessionId: a.id, linked: resolved, missed, kind: args.kind ?? 'related' });
   }));
 
-  server.registerTool('get_linked_sessions', {
+  register('get_linked_sessions', {
     title: '查询会话关联',
     description: '某会话的全部关联（双向：它指向的 / 指向它的），带 kind 与方向',
     inputSchema: { session_id: z.string(), ...zProject },
@@ -445,9 +710,9 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
   }));
 
   // 第 16 个工具（design-related）：算法发现的相关会话——与 get_linked_sessions（显式建立）语义不同
-  server.registerTool('suggest_related_sessions', {
+  register('suggest_related_sessions', {
     title: '相关会话推荐',
-    description: '推荐与某会话主题相关的其他历史会话（算法发现，非显式关联）。何时用：正在看一个会话想知道"还有哪些相关讨论"、开新会话前想找可 attach 的历史、记不清关键词搜不到时以会话为锚找线索。注意：推荐仅为导航线索，内容以 get_session_detail 为准',
+    description: '推荐与某会话主题相关的其他历史会话（算法发现，非显式关联）。何时用：正在看一个会话想知道"还有哪些相关讨论"、开新会话前想找可 attach 的历史、记不清关键词搜不到时以会话为锚找线索。注意：推荐仅为导航线索，内容以 srelay_show 为准',
     inputSchema: {
       session_id: z.string().describe('锚会话 ID（支持前缀）'),
       limit: z.number().optional().describe('默认 5，上限 10'),
@@ -464,7 +729,7 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
       anchor: sessionBrief(db, s.id),
       count: items.length,
       suggestions: items.map((it) => ({ ...it, provenance: { sessionId: it.sessionId, source: it.source, createdAt: it.createdAt } })),
-      hint: '推荐仅为导航线索（不过 scope 契约）；深入内容用 get_session_detail，检索仍用 search_sessions',
+      hint: '推荐仅为导航线索（不过 scope 契约）；深入内容用 srelay_show，检索仍用 srelay_search',
     });
   }));
 
@@ -511,6 +776,9 @@ class RootHolder {
       if (this.maySpawn) { const { ensureDaemon } = await import('../cli/ui.js'); ensureDaemon(abs); }
       const cfg = loadConfig(abs);
       const db = openExisting(dbFile(abs));
+      // [fork 0922] 换根先关旧句柄——原实现直接覆盖 this.cur，旧 better-sqlite3 连接泄漏，
+      // 且被持有的 relay.sqlite 会让 forget/rebuild 的文件操作报 EBUSY
+      try { this.cur?.db?.close(); } catch { /* 已关 */ }
       this.cur = { root: abs, db, cfg, project: cfg.identity.project_id ?? abs };
       if (via === 'project') this.tried.project = abs; else this.tried[via] = abs;
       if (this.maySpawn) touchRegistry(abs);

@@ -4,7 +4,7 @@ import { loadConfig } from '../shared/config.js';
 import { dbFile } from '../shared/paths.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { openStats } from '../core/stats/counter.js';
-import { countsByState, countsBySource, listSessions } from '../store/db.js';
+import { countsByState, countsBySource, listSessions, countProbeSessions } from '../store/db.js';
 import { requireRoot, openRelayDb, pc, fmtDate, stateBadge } from './ui.js';
 import { watchServiceStatus } from './watch.js';
 
@@ -31,7 +31,7 @@ export async function cmdStatus(opts?: { json?: boolean }): Promise<void> {
         project: pid,
         mode: cfg.capture.mode,
         daemon: { alive: alive.alive, pid: alive.pid ?? null, service },
-        sessions: { total: Object.values(st).reduce((a, b) => a + b, 0), ...st },
+        sessions: { total: Object.values(st).reduce((a, b) => a + b, 0), ...st, probes: countProbeSessions(db, pid) },
         notes: noteCount,
         bySource: convSources,
         ignoredByRules: blocked,
@@ -53,7 +53,10 @@ export async function cmdStatus(opts?: { json?: boolean }): Promise<void> {
     const stText = `active ${st.active ?? 0} · pending ${st.pending_end ?? 0} · confirmed ${st.confirmed ?? 0}`;
     // note 是 AI 笔记不是对话，从会话统计中分离
     const noteAdj = noteCount > 0 ? ` ${pc.dim(`+ ${noteCount} 条 AI 笔记`)}` : '';
-    console.log(`会话    ${stText}${noteAdj}`);
+    // [B3] 一次性探针会话：仍在总数里，但明确标出来（它们不参与「最近在动」等信号）
+    const probeN = countProbeSessions(db, pid);
+    const probeAdj = probeN > 0 ? ` ${pc.dim(`（其中 ${probeN} 场为一次性探针，不进信号）`)}` : '';
+    console.log(`会话    ${stText}${noteAdj}${probeAdj}`);
     console.log(`来源    ${Object.entries(convSources).map(([k, v]) => `${k} ${v}`).join(' · ') || pc.dim('（空）')}`);
     console.log(`拦截    ignore 规则累计拦截 ${blocked} 次${cfg.capture.mode !== 'full' ? pc.yellow(` · 当前模式 ${cfg.capture.mode}（不落正文）`) : ''}`);
     // R8：语义一行（未启用也显示，保持可发现性）

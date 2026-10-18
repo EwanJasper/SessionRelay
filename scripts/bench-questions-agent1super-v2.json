@@ -1,0 +1,4899 @@
+{
+  "at": "2026-10-16T21:23:01.983Z",
+  "dbPath": "D:/agent1super/.sessionrelay/relay.sqlite",
+  "limit": 10,
+  "n": 700,
+  "perSession": 6,
+  "items": [
+    {
+      "arm": "K",
+      "query": "workflow",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "S",
+      "query": "workflow 特别",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "M",
+      "query": "workflow 特别 相关",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "K",
+      "query": "cpu",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "S",
+      "query": "这边 容器",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "M",
+      "query": "这边 容器 里面",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "K",
+      "query": "goal",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "S",
+      "query": "goal 自己",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "M",
+      "query": "goal 自己 自助",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "K",
+      "query": "agent1super",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "S",
+      "query": "agent1super scratch",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "M",
+      "query": "agent1super scratch handoff",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e0f4823cd52a9162"
+    },
+    {
+      "arm": "K",
+      "query": "嵌入式",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "S",
+      "query": "一定 要加",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "M",
+      "query": "一定 要加 嵌入式",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "K",
+      "query": "thesis-pipeline",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "S",
+      "query": "thesis-pipeline 加载",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "M",
+      "query": "thesis-pipeline 加载 skill",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "S",
+      "query": "网上 一些",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "M",
+      "query": "网上 一些 这种",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "K",
+      "query": "就是说",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "S",
+      "query": "这么 提醒",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "M",
+      "query": "这么 提醒 就是说",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "K",
+      "query": "走一遍",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "S",
+      "query": "几轮 下来",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "M",
+      "query": "几轮 下来 看看",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f3657e3c176deb4c"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "ustwo",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "里面 哪个",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "里面 哪个 渠道",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "ollama",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "ollama 里面",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "ollama 里面 一个",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "llama-server",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "S",
+      "query": "llama-server 启动",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "M",
+      "query": "llama-server 启动 优化",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "S",
+      "query": "模型 月份",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "M",
+      "query": "模型 月份 出来",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "S",
+      "query": "不及 一查",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "M",
+      "query": "不及 一查 配置",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "K",
+      "query": "差不多",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "S",
+      "query": "其实 真正",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "M",
+      "query": "其实 真正 来说",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "K",
+      "query": "note",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "S",
+      "query": "note users",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "M",
+      "query": "note users crx",
+      "target": "c46b9d0c6250e858"
+    },
+    {
+      "arm": "K",
+      "query": "文件夹",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "直接 直接",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "直接 直接 同步",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "好几遍",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "之后 一份",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "之后 一份 工作",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "刚才 分发",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "刚才 分发 那些",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "就行了",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "昨天 改错",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "昨天 改错 地方",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "之前 之前",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "之前 之前 比如说",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "几个 比如说",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "几个 比如说 自己",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "html",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "S",
+      "query": "生成 一个",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "M",
+      "query": "生成 一个 文件",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "K",
+      "query": "html",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "S",
+      "query": "生成 一个",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "M",
+      "query": "生成 一个 文件",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "K",
+      "query": "html",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "S",
+      "query": "生成 一个",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "M",
+      "query": "生成 一个 文件",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "K",
+      "query": "qwen",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "S",
+      "query": "一个 项目",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "M",
+      "query": "一个 项目 12g",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "K",
+      "query": "试一下",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "S",
+      "query": "模型 整体",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "M",
+      "query": "模型 整体 权重",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "K",
+      "query": "coder",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "S",
+      "query": "coder 拿来",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "M",
+      "query": "coder 拿来 当作",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "K",
+      "query": "如果说",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "S",
+      "query": "这么 提示",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "M",
+      "query": "这么 提示 如果说",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "S",
+      "query": "调取 本地",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "M",
+      "query": "调取 本地 提示",
+      "target": "40068e8a2f457d40"
+    },
+    {
+      "arm": "K",
+      "query": "大白话",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "剩下 方案",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "剩下 方案 里面",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "skill",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "加载 交接",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "加载 交接 skill",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "记忆系统",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "记忆系统 一整套",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "记忆系统 一整套 市面上",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "skill",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "直接 开始",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "直接 开始 刚才",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "直接 推送",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "直接 推送 那边",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "adr",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "记得 哪些",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "记得 哪些 adr",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "自动化",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "S",
+      "query": "自动化 出来",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "M",
+      "query": "自动化 出来 效果",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "K",
+      "query": "一下一下",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "S",
+      "query": "看版 还要",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "M",
+      "query": "看版 还要 忘记",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "S",
+      "query": "直接 推送",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "M",
+      "query": "直接 推送 那边",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "S",
+      "query": "自己 安排",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "M",
+      "query": "自己 安排 反正",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "K",
+      "query": "遵守纪律",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "S",
+      "query": "不用 一些",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "M",
+      "query": "不用 一些 直接",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "K",
+      "query": "sessionrelay",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "S",
+      "query": "附注 sessionrelay",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "M",
+      "query": "附注 sessionrelay 简报",
+      "target": "732adf1bc9055e9d"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "S",
+      "query": "插入 外部",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "M",
+      "query": "插入 外部 键盘",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "S",
+      "query": "几张 打包",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "M",
+      "query": "几张 打包 一个",
+      "target": "bac9779496c2cc8e"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "K",
+      "query": "多不多",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "S",
+      "query": "整体 自己",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "M",
+      "query": "整体 自己 修改",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "K",
+      "query": "就行了",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "S",
+      "query": "卸载 卸载",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "M",
+      "query": "卸载 卸载 就行了",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "K",
+      "query": "为什么",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "S",
+      "query": "为什么 有时候",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "M",
+      "query": "为什么 有时候 是不是",
+      "target": "de9bd2d4872b58e6"
+    },
+    {
+      "arm": "K",
+      "query": "folia-qq",
+      "target": "45e025e56acb1790"
+    },
+    {
+      "arm": "S",
+      "query": "folia-qq 发现",
+      "target": "45e025e56acb1790"
+    },
+    {
+      "arm": "M",
+      "query": "folia-qq 发现 交接",
+      "target": "45e025e56acb1790"
+    },
+    {
+      "arm": "K",
+      "query": "thesis-pipeline",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "thesis-pipeline 加载",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "thesis-pipeline 加载 skill",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "forked",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "forked previous",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "forked previous message.",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "code",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "端点 模型",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "端点 模型 code",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "当前工作",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "记得 全局",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "记得 全局 记忆",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "就是说",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "仓库 一个",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "仓库 一个 评价",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "怎么样",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "里面 提示",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "里面 提示 介绍",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "功能 整体",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "功能 整体 来说",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "施工进度",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "S",
+      "query": "看板 数据",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "M",
+      "query": "看板 数据 哪里",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "K",
+      "query": "kolaente",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "S",
+      "query": "使用 go",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "M",
+      "query": "使用 go 语言",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "K",
+      "query": "zcode",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "S",
+      "query": "pi zcode",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "M",
+      "query": "pi zcode zcode",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "K",
+      "query": "先不急",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "S",
+      "query": "先不急 结合",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "M",
+      "query": "先不急 结合 方案",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "K",
+      "query": "hook",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "S",
+      "query": "整体 这些",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "M",
+      "query": "整体 这些 框架",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "K",
+      "query": "哲学家",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "S",
+      "query": "开元 几个",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "M",
+      "query": "开元 几个 热门",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "K",
+      "query": "skill",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "S",
+      "query": "正常 聊天",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "M",
+      "query": "正常 聊天 当作",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "K",
+      "query": "查一查",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "S",
+      "query": "具体 其他",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "M",
+      "query": "具体 其他 这些",
+      "target": "a54eac68b51a1c03"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "K",
+      "query": "github",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "S",
+      "query": "github github",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "M",
+      "query": "github github zcode-plugins-official",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "9b4998c18819c311"
+    },
+    {
+      "arm": "K",
+      "query": "dsh",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "dsh 这边",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "dsh 这边 相关",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "确保 之后",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "确保 之后 比如说",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "不然的话",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "直接 不然的话",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "直接 不然的话 机扣",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "code",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "全部 真实",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "全部 真实 推荐",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "发给你",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "地方 出来",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "地方 出来 发给你",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "解释一下",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "不用 只是",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "不用 只是 那里",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "K",
+      "query": "token",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "S",
+      "query": "整体 所有",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "M",
+      "query": "整体 所有 模型",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "S",
+      "query": "不及 一查",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "M",
+      "query": "不及 一查 配置",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "K",
+      "query": "调查结果",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "S",
+      "query": "目前 所有",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "M",
+      "query": "目前 所有 调查结果",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "K",
+      "query": "kvmem",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "S",
+      "query": "清楚 看看",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "M",
+      "query": "清楚 看看 技术",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "K",
+      "query": "google",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "S",
+      "query": "3.6 本体",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "M",
+      "query": "3.6 本体 3.6",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "K",
+      "query": "moe",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "S",
+      "query": "moe 那边",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "M",
+      "query": "moe 那边 建议",
+      "target": "f5dc58d9e667aef9"
+    },
+    {
+      "arm": "K",
+      "query": "bug",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "S",
+      "query": "出现 bug",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "M",
+      "query": "出现 bug 有时候",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "K",
+      "query": "fork",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "S",
+      "query": "目录 里面",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "M",
+      "query": "目录 里面 单独",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "K",
+      "query": "看一看",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "S",
+      "query": "进去 出来",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "M",
+      "query": "进去 出来 点歌",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "K",
+      "query": "mct",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "S",
+      "query": "加载 思考",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "M",
+      "query": "加载 思考 工具",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "S",
+      "query": "看看 样子",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "M",
+      "query": "看看 样子 是不是",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "K",
+      "query": "个别人",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "S",
+      "query": "登陆 状态",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "M",
+      "query": "登陆 状态 登陆",
+      "target": "0eed0a09f936bde0"
+    },
+    {
+      "arm": "K",
+      "query": "deepseek-v4-flash",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "S",
+      "query": "deepseek-v4-flash comad",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "M",
+      "query": "deepseek-v4-flash comad deepseek-v4-flash",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "K",
+      "query": "哪几个",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "S",
+      "query": "算了 资产",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "M",
+      "query": "算了 资产 模型",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "K",
+      "query": "文件夹",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "S",
+      "query": "这些 闪卡",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "M",
+      "query": "这些 闪卡 桌面",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "K",
+      "query": "好几张",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "S",
+      "query": "这些 单纯",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "M",
+      "query": "这些 单纯 工作",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "K",
+      "query": "就是说",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "S",
+      "query": "直接 开始",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "M",
+      "query": "直接 开始 就是说",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "K",
+      "query": "users",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "S",
+      "query": "users crx",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "M",
+      "query": "users crx desktop",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "K",
+      "query": "html",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "S",
+      "query": "一个 html",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "M",
+      "query": "一个 html 格式",
+      "target": "22d63be72905a369"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "open",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "着急 着急",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "着急 着急 open",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "改一改",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "只是 人家",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "只是 人家 违法",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "gemini",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "最好 gemini",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "最好 gemini opencode",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "整个 时间",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "整个 时间 关键",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "后段 前端",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "后段 前端 服务",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "note",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "note users",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "note users crx",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "差不多",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "呃查 厦门",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "呃查 厦门 厦门",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "brainstorming",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "brainstorming first-principles",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "brainstorming first-principles 沙滩",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "差不多",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "呃查 厦门",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "呃查 厦门 厦门",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "是不是 增强",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "是不是 增强 输出",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "bvi",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "整体 整个",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "整体 整个 的话",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "系统托盘",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "看见 系统托盘",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "看见 系统托盘 astrbot",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "角色扮演",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "里面 主动",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "里面 主动 对话",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "aastrbot",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "继续 好像",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "继续 好像 启动",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "dsh",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "S",
+      "query": "不要 样子",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "M",
+      "query": "不要 样子 你测",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "K",
+      "query": "他妈的",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "S",
+      "query": "注意 修复",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "M",
+      "query": "注意 修复 而且",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "K",
+      "query": "根本原因",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "S",
+      "query": "处理 根本原因",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "M",
+      "query": "处理 根本原因 处理",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "S",
+      "query": "反正 做到",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "M",
+      "query": "反正 做到 一定",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "S",
+      "query": "确认 这里",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "M",
+      "query": "确认 这里 这些",
+      "target": "0f482250fa809f52"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "28d4df393824ea02"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "28d4df393824ea02"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "28d4df393824ea02"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "fd7a268a26d34847"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "fd7a268a26d34847"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "fd7a268a26d34847"
+    },
+    {
+      "arm": "K",
+      "query": "就是说",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "S",
+      "query": "具体 会慢",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "M",
+      "query": "具体 会慢 多少",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "K",
+      "query": "怎么样",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "S",
+      "query": "自己 加载",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "M",
+      "query": "自己 加载 一些",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "K",
+      "query": "一点点",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "S",
+      "query": "觉得 合理",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "M",
+      "query": "觉得 合理 觉得",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "K",
+      "query": "为什么",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "S",
+      "query": "不行 为什么",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "M",
+      "query": "不行 为什么 模型",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "K",
+      "query": "发给你",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "S",
+      "query": "结合 发给你",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "M",
+      "query": "结合 发给你 这些",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "S",
+      "query": "后续 是不是",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "M",
+      "query": "后续 是不是 启动",
+      "target": "68e7553a361907e7"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "774fb6b4793a4f15"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "774fb6b4793a4f15"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "774fb6b4793a4f15"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "K",
+      "query": "stdio",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "S",
+      "query": "stdio users",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "M",
+      "query": "stdio users crx",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "K",
+      "query": "为什么",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "S",
+      "query": "核心 感觉",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "M",
+      "query": "核心 感觉 为什么",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "K",
+      "query": "betteru",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "S",
+      "query": "天才 思考",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "M",
+      "query": "天才 思考 如此",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "59bc0d7106e159ff"
+    },
+    {
+      "arm": "K",
+      "query": "preceding",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "preceding conversation",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "preceding conversation inherited",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "就行了",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "不用 那边",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "不用 那边 不用",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "嵌入式",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "开始 来说",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "开始 来说 分子",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "ses",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "反正 这么",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "反正 这么 有查",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "dsh",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "而且 感觉",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "而且 感觉 那边",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "dsh",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "主要 dsh",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "主要 dsh 测一测",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "jinjin",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "jinjin glm-5.3-flash",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "jinjin glm-5.3-flash 连接",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "zcode",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "S",
+      "query": "看看 zcode",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "M",
+      "query": "看看 zcode 里面",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "K",
+      "query": "command",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "S",
+      "query": "command 端点",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "M",
+      "query": "command 端点 模型",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "K",
+      "query": "他妈的",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "S",
+      "query": "他妈的 command",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "M",
+      "query": "他妈的 command 接入",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "K",
+      "query": "zdjd",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "S",
+      "query": "页面 配置",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "M",
+      "query": "页面 配置 zcode",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "K",
+      "query": "zcode",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "S",
+      "query": "而且 看用",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "M",
+      "query": "而且 看用 节点",
+      "target": "e0aab165e65ea14c"
+    },
+    {
+      "arm": "K",
+      "query": "看清楚",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "S",
+      "query": "看清楚 看清楚",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "M",
+      "query": "看清楚 看清楚 对照",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "K",
+      "query": "保证质量",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "S",
+      "query": "主要 前提",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "M",
+      "query": "主要 前提 还要",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "K",
+      "query": "就行了",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "S",
+      "query": "直接 就行了",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "M",
+      "query": "直接 就行了 主要",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "K",
+      "query": "搞清楚",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "S",
+      "query": "可是 模型",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "M",
+      "query": "可是 模型 着急",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "K",
+      "query": "为什么",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "S",
+      "query": "查查 其他",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "M",
+      "query": "查查 其他 人家",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "S",
+      "query": "重新 或者说",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "M",
+      "query": "重新 或者说 看看",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "K",
+      "query": "留下来",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "S",
+      "query": "千万 3.827",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "M",
+      "query": "千万 3.827 今天",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "K",
+      "query": "看一看",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "S",
+      "query": "ok 作者",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "M",
+      "query": "ok 作者 视频",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "K",
+      "query": "如果说",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "S",
+      "query": "大哥 如果说",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "M",
+      "query": "大哥 如果说 平台",
+      "target": "f779b3c5888047e1"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "73d3c9e500cb97f6"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "ai 项目",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "ai 项目 是不是",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "users",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "users crx",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "users crx desktop",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "word",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "另外 补充",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "另外 补充 一个",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "而且 有没有",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "而且 有没有 发现",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "pad",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "S",
+      "query": "针对 这种",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "M",
+      "query": "针对 这种 稳定",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "S",
+      "query": "最好 一个",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "M",
+      "query": "最好 一个 模型",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "K",
+      "query": "一步到位",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "S",
+      "query": "都行 主要",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "M",
+      "query": "都行 主要 本地",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "K",
+      "query": "skill",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "S",
+      "query": "不急 看看",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "M",
+      "query": "不急 看看 pi",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "K",
+      "query": "api",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "S",
+      "query": "那些 api",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "M",
+      "query": "那些 api 那边",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "K",
+      "query": "ban",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "S",
+      "query": "不要 禁止",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "M",
+      "query": "不要 禁止 简单",
+      "target": "a91d92bfe61da1fb"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "直接 电脑",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "直接 电脑 控制",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "不用 启动",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "不用 启动 不用",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "怎么回事",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "仔细 到底",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "仔细 到底 怎么回事",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "出片确",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "S",
+      "query": "想想 确实",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "M",
+      "query": "想想 确实 有点",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "K",
+      "query": "压缩包",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "S",
+      "query": "这套 列个",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "M",
+      "query": "这套 列个 清单",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "K",
+      "query": "闪光灯",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "S",
+      "query": "算了 来个",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "M",
+      "query": "算了 来个 写实",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "K",
+      "query": "qwen-image-2-1-prompter",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "S",
+      "query": "qwen-image-2-1-prompter 加载",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "M",
+      "query": "qwen-image-2-1-prompter 加载 一个",
+      "target": "3f2b4f0b3b2f58d4"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "ef00ec195e312052"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "ef00ec195e312052"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "ef00ec195e312052"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "S",
+      "query": "单纯 逆向",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "M",
+      "query": "单纯 逆向 整个",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "K",
+      "query": "行不行",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "S",
+      "query": "一条 随便",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "M",
+      "query": "一条 随便 一条",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "K",
+      "query": "列出来",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "S",
+      "query": "搜索 其他",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "M",
+      "query": "搜索 其他 几个",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "0af62673368d886d"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "K",
+      "query": "crash",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "S",
+      "query": "葡萄 能力",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "M",
+      "query": "葡萄 能力 打开",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c483a0acd7cdefc5"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "那边 歌曲",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "那边 歌曲 展示",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "首先 仓库",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "首先 仓库 有没有",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "第一点",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "几个 第一点",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "几个 第一点 广场",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "雷达 进去",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "雷达 进去 推送",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "单独 支持",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "单独 支持 星星",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "看着办",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "反正 必须",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "反正 必须 实现",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "干什么",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "S",
+      "query": "那些 配置",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "M",
+      "query": "那些 配置 没开",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "K",
+      "query": "替换成",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "S",
+      "query": "本地 链路",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "M",
+      "query": "本地 链路 里面",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "K",
+      "query": "cyrene",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "S",
+      "query": "那些 不用",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "M",
+      "query": "那些 不用 特别",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "K",
+      "query": "上下文",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "S",
+      "query": "不急 看看",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "M",
+      "query": "不急 看看 其他",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "K",
+      "query": "不急要",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "S",
+      "query": "多查 一查",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "M",
+      "query": "多查 一查 主要",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "K",
+      "query": "astrbot",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "S",
+      "query": "人格 那边",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "M",
+      "query": "人格 那边 优化",
+      "target": "a55b4d958af4d0f7"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "cacb49f09218dd6c"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cacb49f09218dd6c"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cacb49f09218dd6c"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "K",
+      "query": "api",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "S",
+      "query": "api 里面",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "M",
+      "query": "api 里面 一个",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "K",
+      "query": "就行了",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "S",
+      "query": "欧克 的话",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "M",
+      "query": "欧克 的话 设计",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "K",
+      "query": "dsh",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "S",
+      "query": "而且 而且",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "M",
+      "query": "而且 而且 插电",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "K",
+      "query": "dssh",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "S",
+      "query": "插件 整体",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "M",
+      "query": "插件 整体 运行",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "K",
+      "query": "step",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "S",
+      "query": "仔细 设置",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "M",
+      "query": "仔细 设置 填到",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "S",
+      "query": "这么 来说",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "M",
+      "query": "这么 来说 的话",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "S",
+      "query": "为啥 侧边",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "M",
+      "query": "为啥 侧边 插件",
+      "target": "8a443ed202b2a683"
+    },
+    {
+      "arm": "K",
+      "query": "dsh",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "S",
+      "query": "后面 自己",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "M",
+      "query": "后面 自己 选择",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "K",
+      "query": "蓝天白云",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "S",
+      "query": "骑车 值得",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "M",
+      "query": "骑车 值得 优化",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "S",
+      "query": "而且 是不是",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "M",
+      "query": "而且 是不是 好像",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "S",
+      "query": "都行 pi",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "M",
+      "query": "都行 pi 那边",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "K",
+      "query": "怎么样",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "S",
+      "query": "反正 目标",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "M",
+      "query": "反正 目标 接入",
+      "target": "9d9501d267abd345"
+    },
+    {
+      "arm": "K",
+      "query": "有的是",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "直接 那些",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "直接 那些 砍掉",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "zcode",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "清楚 一些",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "清楚 一些 很细",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "lmstudio",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "007 整合",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "007 整合 lmstudio",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "工具箱",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "原生 这些",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "原生 这些 调用",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "doctor",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "好像 整体",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "好像 整体 doctor",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "K",
+      "query": "接进来",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "S",
+      "query": "里面 接入",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "M",
+      "query": "里面 接入 里面",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "K",
+      "query": "接进来",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "S",
+      "query": "这些 模型",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "M",
+      "query": "这些 模型 记得",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "K",
+      "query": "哪几个",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "S",
+      "query": "大哥 老子",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "M",
+      "query": "大哥 老子 他妈",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "K",
+      "query": "glm",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "S",
+      "query": "glm 5.3",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "M",
+      "query": "glm 5.3 v4.1",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "afd5655523f19598"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "afd5655523f19598"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "afd5655523f19598"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "7d211565188ec63b"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "7d211565188ec63b"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "7d211565188ec63b"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "S",
+      "query": "开源 这些",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "M",
+      "query": "开源 这些 功能",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "S",
+      "query": "像素 蛋糕",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "M",
+      "query": "像素 蛋糕 本身",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "K",
+      "query": "怎么样",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "S",
+      "query": "像素 蛋糕",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "M",
+      "query": "像素 蛋糕 那种",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "K",
+      "query": "好人家",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "S",
+      "query": "主要 太晚",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "M",
+      "query": "主要 太晚 之前",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "K",
+      "query": "具体内容",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "S",
+      "query": "分类 之后",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "M",
+      "query": "分类 之后 出来",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "K",
+      "query": "task-notification",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "S",
+      "query": "启动 记录",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "M",
+      "query": "启动 记录 起点",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "K",
+      "query": "上下文",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "S",
+      "query": "加载 交接",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "M",
+      "query": "加载 交接 文件",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "K",
+      "query": "快捷方式",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "S",
+      "query": "最后 优化",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "M",
+      "query": "最后 优化 启动",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "K",
+      "query": "cpu",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "S",
+      "query": "捕捉 cpu",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "M",
+      "query": "捕捉 cpu 进程",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "K",
+      "query": "cpu",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "S",
+      "query": "目前 cpu",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "M",
+      "query": "目前 cpu 进程",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "S",
+      "query": "有没有 不会",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "M",
+      "query": "有没有 不会 修好",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "K",
+      "query": "tmd",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "S",
+      "query": "tmd 必须",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "M",
+      "query": "tmd 必须 解决",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "K",
+      "query": "cpu",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "S",
+      "query": "继续 想想",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "M",
+      "query": "继续 想想 继续",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "S",
+      "query": "方面 这种",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "M",
+      "query": "方面 这种 比如说",
+      "target": "24ee14f4a9205dd1"
+    },
+    {
+      "arm": "K",
+      "query": "什么样",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "S",
+      "query": "而且 看到",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "M",
+      "query": "而且 看到 鼠标",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "S",
+      "query": "有没有 数据",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "M",
+      "query": "有没有 数据 保存",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "K",
+      "query": "各种各样",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "S",
+      "query": "打开 网页",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "M",
+      "query": "打开 网页 仔细",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "S",
+      "query": "着急 做成",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "M",
+      "query": "着急 做成 自动",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "S",
+      "query": "仔细 查询",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "M",
+      "query": "仔细 查询 有没有",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "K",
+      "query": "reconstruct",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "S",
+      "query": "reconstruct https",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "M",
+      "query": "reconstruct https vd_source",
+      "target": "68d0125e15aae888"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "K",
+      "query": "到时候",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "S",
+      "query": "电脑 就要",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "M",
+      "query": "电脑 就要 断电",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "S",
+      "query": "出厂 确实",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "M",
+      "query": "出厂 确实 太高",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "K",
+      "query": "基本上",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "S",
+      "query": "继续 这些",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "M",
+      "query": "继续 这些 弄完",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "S",
+      "query": "多久 不能",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "M",
+      "query": "多久 不能 加速",
+      "target": "734f3cc50b8c2fe2"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "K",
+      "query": "是因为",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "S",
+      "query": "那边 一个",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "M",
+      "query": "那边 一个 运维",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "K",
+      "query": "或者说",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "S",
+      "query": "自己 对话",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "M",
+      "query": "自己 对话 一些",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "K",
+      "query": "有没有",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "S",
+      "query": "我查 有没有",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "M",
+      "query": "我查 有没有 谷歌",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "K",
+      "query": "知识库",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "S",
+      "query": "本地 知识库",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "M",
+      "query": "本地 知识库 根本",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "K",
+      "query": "算了算",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "S",
+      "query": "skill 里面",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "M",
+      "query": "skill 里面 mc",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "S",
+      "query": "看看 而且",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "M",
+      "query": "看看 而且 之前",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "K",
+      "query": "接上去",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "S",
+      "query": "手册 的话",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "M",
+      "query": "手册 的话 一个",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "K",
+      "query": "step",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "S",
+      "query": "模型 模型",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "M",
+      "query": "模型 模型 一个",
+      "target": "5a6145ee1df11d65"
+    },
+    {
+      "arm": "K",
+      "query": "是不是",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "注意 模型",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "注意 模型 限制",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "curl",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "curl http",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "curl http setsid",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "urgent",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "代码 urgent",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "代码 urgent 那边",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "先不急",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "先不急 一次",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "先不急 一次 就够",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "角色扮演",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "9b 那边",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "9b 那边 后面",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "看一看",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "整体 实验",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "整体 实验 整个",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "98273a2560e4dc8a"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "98273a2560e4dc8a"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "98273a2560e4dc8a"
+    },
+    {
+      "arm": "K",
+      "query": "比如说",
+      "target": "99b7d699d665f586"
+    },
+    {
+      "arm": "S",
+      "query": "补充 几点",
+      "target": "99b7d699d665f586"
+    },
+    {
+      "arm": "M",
+      "query": "补充 几点 比如说",
+      "target": "99b7d699d665f586"
+    },
+    {
+      "arm": "K",
+      "query": "宣传片",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "S",
+      "query": "布局 测试",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "M",
+      "query": "布局 测试 搞个",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "K",
+      "query": "动漫画",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "S",
+      "query": "整体 画风",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "M",
+      "query": "整体 画风 像是",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "K",
+      "query": "skill",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "S",
+      "query": "skill 告诉",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "M",
+      "query": "skill 告诉 最好",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "K",
+      "query": "私底下",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "S",
+      "query": "生成 很多",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "M",
+      "query": "生成 很多 敏感",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "K",
+      "query": "todowrite",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e86052317e440eed"
+    }
+  ]
+}

@@ -1,0 +1,624 @@
+{
+  "at": "2026-10-17T12:59:10.488Z",
+  "dbPath": "D:/dsh插件  记忆/tmp/graph-bench-snapshot.sqlite",
+  "limit": 10,
+  "n": 400,
+  "perSession": 1,
+  "items": [
+    {
+      "arm": "K",
+      "query": "满足要求",
+      "target": "99b7d699d665f586"
+    },
+    {
+      "arm": "S",
+      "query": "补充 几点",
+      "target": "99b7d699d665f586"
+    },
+    {
+      "arm": "M",
+      "query": "补充 几点 比如说",
+      "target": "99b7d699d665f586"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "356958fe2c807bef"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "28d4df393824ea02"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "28d4df393824ea02"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "28d4df393824ea02"
+    },
+    {
+      "arm": "K",
+      "query": "管太多",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "S",
+      "query": "而且 对于",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "M",
+      "query": "而且 对于 框架",
+      "target": "ee28bbcac74d7410"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "4ab918bd6310aaa8"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "32678c283eef26ae"
+    },
+    {
+      "arm": "K",
+      "query": "azure",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "S",
+      "query": "功能 整体",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "M",
+      "query": "功能 整体 来说",
+      "target": "a08110930a5d22ad"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "bbe0229c88709362"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "473adf91f642a899"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "eb32bf4fc514a757"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "fd7a268a26d34847"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "fd7a268a26d34847"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "fd7a268a26d34847"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "7d211565188ec63b"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "7d211565188ec63b"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "7d211565188ec63b"
+    },
+    {
+      "arm": "K",
+      "query": "长长的",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "S",
+      "query": "那边 歌曲",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "M",
+      "query": "那边 歌曲 展示",
+      "target": "c0f6f811753ef8e6"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "061b3409dd467317"
+    },
+    {
+      "arm": "K",
+      "query": "测一测",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "S",
+      "query": "主要 dsh",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "M",
+      "query": "主要 dsh 测一测",
+      "target": "646f6bd8b9b63e88"
+    },
+    {
+      "arm": "K",
+      "query": "honeys",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "S",
+      "query": "首先 这份",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "M",
+      "query": "首先 这份 报告",
+      "target": "d5c9843eb13e5388"
+    },
+    {
+      "arm": "K",
+      "query": "folia-qq",
+      "target": "45e025e56acb1790"
+    },
+    {
+      "arm": "S",
+      "query": "folia-qq 发现",
+      "target": "45e025e56acb1790"
+    },
+    {
+      "arm": "M",
+      "query": "folia-qq 发现 交接",
+      "target": "45e025e56acb1790"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "cacb49f09218dd6c"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cacb49f09218dd6c"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cacb49f09218dd6c"
+    },
+    {
+      "arm": "K",
+      "query": "方便管理",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "S",
+      "query": "看看 发给你",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "M",
+      "query": "看看 发给你 上下文",
+      "target": "9d061832d5a139ce"
+    },
+    {
+      "arm": "K",
+      "query": "comad",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "S",
+      "query": "deepseek-v4-flash comad",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "M",
+      "query": "deepseek-v4-flash comad deepseek-v4-flash",
+      "target": "4914d7b7d2f63a89"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "c3a62be16af3e8b9"
+    },
+    {
+      "arm": "K",
+      "query": "summarized",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "S",
+      "query": "note users",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "M",
+      "query": "note users crx",
+      "target": "54e4846d58a21971"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "cee9bf412f264861"
+    },
+    {
+      "arm": "K",
+      "query": "能不输",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "S",
+      "query": "配置 很多",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "M",
+      "query": "配置 很多 那种",
+      "target": "5b58a704925ad3ac"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "98273a2560e4dc8a"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "98273a2560e4dc8a"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "98273a2560e4dc8a"
+    },
+    {
+      "arm": "K",
+      "query": "exec_513c32ac-1590-484f-ae30-db577289e50e",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "S",
+      "query": "启动 记录",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "M",
+      "query": "启动 记录 起点",
+      "target": "270161f5ca553fa7"
+    },
+    {
+      "arm": "K",
+      "query": "有的是",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "S",
+      "query": "直接 那些",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "M",
+      "query": "直接 那些 砍掉",
+      "target": "cb50ec73876412ce"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "774fb6b4793a4f15"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "774fb6b4793a4f15"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "774fb6b4793a4f15"
+    },
+    {
+      "arm": "K",
+      "query": "使用手册",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "S",
+      "query": "users crx",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "M",
+      "query": "users crx desktop",
+      "target": "3086914cb95ac891"
+    },
+    {
+      "arm": "K",
+      "query": "不太对",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "S",
+      "query": "我要 干嘛",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "M",
+      "query": "我要 干嘛 那边",
+      "target": "cd61ddb51cc5fd3d"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "ef00ec195e312052"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "ef00ec195e312052"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "ef00ec195e312052"
+    },
+    {
+      "arm": "K",
+      "query": "国际版",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "S",
+      "query": "qoder 接入",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "M",
+      "query": "qoder 接入 9router",
+      "target": "a220277a92acdd79"
+    },
+    {
+      "arm": "K",
+      "query": "boba-server-ssh.bat",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "S",
+      "query": "users crx",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "M",
+      "query": "users crx desktop",
+      "target": "cc9566218c29eda9"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "b23082289e016ac8"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "f78ffe84eb7bceca"
+    },
+    {
+      "arm": "K",
+      "query": "自行车",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "S",
+      "query": "生成 一个",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "M",
+      "query": "生成 一个 文件",
+      "target": "29246406e4d4af63"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "e7a286f4167ab22e"
+    },
+    {
+      "arm": "K",
+      "query": "转换成",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "S",
+      "query": "整个 时间",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "M",
+      "query": "整个 时间 关键",
+      "target": "400836d1d9b7510b"
+    },
+    {
+      "arm": "K",
+      "query": "qwen3.827",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "S",
+      "query": "感觉 没差",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "M",
+      "query": "感觉 没差 模型",
+      "target": "e640a0153c0833d8"
+    },
+    {
+      "arm": "K",
+      "query": "qwen-image-2.1",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "S",
+      "query": "模型 配置",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "M",
+      "query": "模型 配置 上面",
+      "target": "e86052317e440eed"
+    },
+    {
+      "arm": "K",
+      "query": "recently.",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "S",
+      "query": "todowrite tool",
+      "target": "41e4fdb5b9512ea4"
+    },
+    {
+      "arm": "M",
+      "query": "todowrite tool hasn",
+      "target": "41e4fdb5b9512ea4"
+    }
+  ]
+}
