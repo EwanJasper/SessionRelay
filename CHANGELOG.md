@@ -3,7 +3,7 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.5.1-fork.2] - 2026-10-18
 
 ### ⚠️ 契约变化（消费方请注意）
 

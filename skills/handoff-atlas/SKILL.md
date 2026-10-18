@@ -15,7 +15,9 @@ description: 交接、全资源地图与状态栈（原 handoff + project-atlas 
 > 合并理由：三者**本来就是同一条流水线的三段**——状态栈是「底座怎么跑」，交接件是「交给人看什么」，地图是「项目有什么」。
 > 分开维护的实测代价：handoff 的 B5-2 只是「指向 project-atlas」，常只刷文件全图、忘写现状节；而 state-stack 的看板填表纪律又与交接侧的看板同步各写一遍。
 
-> **适配版本**：本技能对齐 **SessionRelay v0.5.1-fork.1+**（DSH 13 个原生工具 / MCP `srelay serve` 13 个）。
+> **适配版本**：本技能对齐 **SessionRelay v0.5.1-fork.2+**（DSH **4 个**原生工具 / MCP `srelay serve` 14 个）。
+> ⚠️ v0.5.1-fork.2 起 DSH 工具面从 14 合并为 4（`srelay_search` 吃 `kind` / `remember` / `project`）——
+> 旧工具名不再注册，按旧名字调会「工具不存在」。
 > 早期版本（工具名还是 `search_sessions` / `get_decisions` 那一代）下 §0.2 的表会对不上，
 > 遇到调不到的工具名，先用 `srelay serve` 看实际清单，别硬猜。
 
