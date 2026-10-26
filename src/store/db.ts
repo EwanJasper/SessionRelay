@@ -367,14 +367,14 @@ export function findSessionByPrefix(db: DB, prefix: string, projectId: string): 
   return db.prepare('SELECT id, source, source_session_id, state, origin, title, created_at, last_event_at, message_count, summary_rule FROM sessions WHERE project_id = ? AND id LIKE ? ORDER BY last_event_at DESC LIMIT 1').get(projectId, prefix + '%') as SessionRow | undefined;
 }
 
-export function listSessions(db: DB, opts: { projectId: string; source?: string; state?: string; limit?: number; where?: { sql: string; params: unknown[] } | null }): SessionRow[] {
+export function listSessions(db: DB, opts: { projectId: string; source?: string; state?: string; limit?: number; offset?: number; where?: { sql: string; params: unknown[] } | null }): SessionRow[] {
   const conds = ['project_id = ?'];
   const params: unknown[] = [opts.projectId];
   if (opts.source) { conds.push('source = ?'); params.push(opts.source); }
   if (opts.state) { conds.push('state = ?'); params.push(opts.state); }
   if (opts.where) { conds.push(opts.where.sql); params.push(...opts.where.params); }
-  params.push(opts.limit ?? 20);
-  return db.prepare(`SELECT id, source, source_session_id, state, origin, title, created_at, last_event_at, message_count, summary_rule FROM sessions s WHERE ${conds.join(' AND ')} ORDER BY COALESCE(s.last_event_at, s.created_at) DESC LIMIT ?`).all(...params) as SessionRow[];
+  params.push(opts.limit ?? 20, opts.offset ?? 0);
+  return db.prepare(`SELECT id, source, source_session_id, state, origin, title, created_at, last_event_at, message_count, summary_rule FROM sessions s WHERE ${conds.join(' AND ')} ORDER BY COALESCE(s.last_event_at, s.created_at) DESC LIMIT ? OFFSET ?`).all(...params) as SessionRow[];
 }
 
 /** Scope 审计（方针 §7.2 scope_log；Team 版复用） */
@@ -399,6 +399,64 @@ export function countsBySource(db: DB, projectId: string): Record<string, number
 
 export function recentSessions(db: DB, projectId: string, n = 3): SessionRow[] {
   return listSessions(db, { projectId, limit: n });
+}
+
+// ── ui 仪表盘只读查询（design-dashboard §4.3；不写库、不迁移） ──
+
+/** 只读连接（ui 用）：readonly 模式，库不存在由 better-sqlite3 抛错（不静默建库） */
+export function openReadonly(file: string): DB {
+  const db = new Database(file, { readonly: true });
+  db.pragma('busy_timeout = 3000');
+  return db;
+}
+
+/** 每日增长（ui 仪表盘）：消息数 + 当天有活动的会话数，按 UTC date() 聚合（U12） */
+export function growthByDay(db: DB, projectId: string, days = 30): Array<{ date: string; msgs: number; sess: number }> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const msgRows = db.prepare(`
+    SELECT date(m.created_at) AS d, COUNT(*) AS c
+    FROM messages m JOIN sessions s ON s.id = m.session_id
+    WHERE s.project_id = ? AND m.created_at IS NOT NULL AND date(m.created_at) >= ?
+    GROUP BY d
+  `).all(projectId, since) as Array<{ d: string; c: number }>;
+  const sessRows = db.prepare(`
+    SELECT date(COALESCE(last_event_at, created_at)) AS d, COUNT(*) AS c
+    FROM sessions WHERE project_id = ? AND last_event_at IS NOT NULL
+      AND date(COALESCE(last_event_at, created_at)) >= ?
+    GROUP BY d
+  `).all(projectId, since) as Array<{ d: string; c: number }>;
+  const mm = new Map(msgRows.map((r) => [r.d, r.c]));
+  const sm = new Map(sessRows.map((r) => [r.d, r.c]));
+  const dates = new Set([...mm.keys(), ...sm.keys()]);
+  return [...dates].sort().map((d) => ({ date: d, msgs: mm.get(d) ?? 0, sess: sm.get(d) ?? 0 }));
+}
+
+/** 项目汇总（总览卡片）：消息总数 + 最近事件时刻 */
+export function projectSummary(db: DB, projectId: string): { messageTotal: number; lastEventAt: string | null } {
+  const r = db.prepare(
+    'SELECT COALESCE(SUM(message_count), 0) AS t, MAX(last_event_at) AS e FROM sessions WHERE project_id = ?'
+  ).get(projectId) as { t: number; e: string | null };
+  return { messageTotal: r.t, lastEventAt: r.e };
+}
+
+/** 会话内关键词扫描（ui）：字面 LIKE 匹配（不经分词，中文按原文命中），% _ \ 转义 */
+export function searchInSession(db: DB, sessionId: string, q: string, limit = 200): { total: number; matches: Array<{ seq: number; role: string; at: string | null; snippet: string }> } {
+  const pat = `%${q.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+  const total = (db.prepare(
+    "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND content LIKE ? ESCAPE '\\'"
+  ).get(sessionId, pat) as { n: number }).n;
+  const rows = db.prepare(
+    "SELECT seq_num, role, created_at, content FROM messages WHERE session_id = ? AND content LIKE ? ESCAPE '\\' ORDER BY seq_num LIMIT ?"
+  ).all(sessionId, pat, limit) as Array<{ seq_num: number; role: string; created_at: string | null; content: string }>;
+  const lower = q.toLowerCase();
+  const matches = rows.map((r) => {
+    const idx = r.content.toLowerCase().indexOf(lower);
+    const start = Math.max(0, idx - 60);
+    const end = idx + q.length + 80;
+    const snippet = (start > 0 ? '…' : '') + r.content.slice(start, end).replace(/\s+/g, ' ').trim() + (end < r.content.length ? '…' : '');
+    return { seq: r.seq_num, role: r.role, at: r.created_at, snippet };
+  });
+  return { total, matches };
 }
 
 export function dueIdle(db: DB, projectId: string, cutoffIso: string): string[] {

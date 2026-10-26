@@ -7,9 +7,9 @@ import { loadConfig } from '../shared/config.js';
 import { dbFile, relayDir, findRelayRoot, ignoreFile } from '../shared/paths.js';
 import {
   openExisting, createDb, getSessionFull, getLinkedSessions,
-  insertTombstone, insertForgetLog, finalizeForgetLog, insertForgetDetail, getForgetHistory,
+  getForgetHistory,
 } from '../store/db.js';
-import { appendSessionIgnoreRule } from '../capture/ignore.js';
+import { forgetSession, needsBarriers } from '../core/forget.js';
 import { isDaemonAlive } from '../shared/lock.js';
 import { die, pc, fmtDate } from './ui.js';
 import type { DB } from '../store/db.js';
@@ -106,8 +106,7 @@ function typeFilterMismatch(f: ForgetFlags, row: SessionFull): string | null {
   return null;
 }
 
-/** note/imported 无本地源文件，不在复活路径上——跳过双闸（设计 §3.6） */
-const needsBarriers = (row: SessionFull) => row.origin !== 'imported' && row.source !== 'note';
+// needsBarriers / 执行核心已上移至 core/forget（与 ui 共享，U14）
 
 export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> {
   const root = findRelayRoot(process.cwd());
@@ -214,33 +213,21 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
       }
     }
 
-    const now = new Date().toISOString();
-    const del = db.transaction(() => {
-      const logId = insertForgetLog(db, { triggeredBy: 'cli:forget', mode: isNote ? 'note' : 'session', criteria: refArg });
-      insertForgetDetail(db, {
-        forgetLogId: logId, sessionId: row.id, title: row.title, source: row.source,
-        messageCount: row.messageCount, createdAt: row.createdAt,
-      });
-      const changes = db.prepare('DELETE FROM sessions WHERE id = ?').run(row.id).changes; // FK CASCADE：messages/session_links；FTS 触发器同步
-      if (needsBarriers(row)) insertTombstone(db, row.source, row.sourceSessionId, now);
-      finalizeForgetLog(db, logId, changes, row.messageCount);
-      return changes;
-    });
-    const changes = del();
+    // 执行核心已抽至 core/forget（ui 仪表盘与 CLI 同一路径，U14）
+    let fres;
+    try {
+      fres = forgetSession(db, root, row, { triggeredBy: 'cli:forget', criteria: refArg });
+    } catch (e) {
+      die(e instanceof Error ? e.message : String(e));
+    }
     clearSnapshot(root);
 
-    // 库外文件操作（顺序：先库后文件；文件失败时墓碑在库内兜底）
-    if (changes > 0 && needsBarriers(row)) {
-      try { appendSessionIgnoreRule(root, row.source, row.sourceSessionId); } catch { /* 墓碑已兜底 */ }
-    }
-
-    if (changes === 0) die(`会话 ${row.id} 已不存在（可能已被删除）`);
     if (f.json) {
-      console.log(JSON.stringify({ ok: true, id: row.id, messageCount: row.messageCount, barriers: needsBarriers(row) }));
+      console.log(JSON.stringify({ ok: true, id: fres.id, messageCount: fres.messageCount, barriers: fres.barriers }));
       return;
     }
-    console.log(pc.green('✓') + ` 已遗忘 ${row.id} 「${(row.title ?? row.sourceSessionId).slice(0, 40)}」（${row.messageCount} 条消息）`);
-    if (needsBarriers(row)) {
+    console.log(pc.green('✓') + ` 已遗忘 ${fres.id} 「${(row.title ?? row.sourceSessionId).slice(0, 40)}」（${fres.messageCount} 条消息）`);
+    if (fres.barriers) {
       console.log(pc.dim(`  防复活闸已写入：${ignoreFile(root).replace(/\\/g, '/')} + 墓碑`));
       console.log(pc.yellow(`  ⚠️ 原始会话文件仍在磁盘（${row.sourceFile ?? ''}），本库不再收录`));
     }

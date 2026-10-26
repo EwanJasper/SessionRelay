@@ -32,10 +32,8 @@ beforeAll(() => {
   for (let i = 0; i < 3; i++) { try { fs.rmSync(TMP, { recursive: true, force: true }); break; } catch { /* retry */ } }
   makeProject(PROJECT);
   process.chdir(PROJECT);
-  const db = createDb(dbFile(PROJECT));
-  // [fork] S1 年龄用相对时间：原夹具写死 2026-08-20，A1 断言"天前"——
-  // 写测试时是 N 天前，30 天边界一过（9 月中起）输出变"个月前"，套件永久变红（时间炸弹）
   const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const db = createDb(dbFile(PROJECT));
   insertSession(db, { id: S1, source: 'zcode', sourceSessionId: 'z-s1', projectId: PID, createdAt: threeDaysAgo, title: '数据库选型（PG vs MongoDB）', topics: ['db'] });
   for (let i = 1; i <= 12; i++) insertMessage(db, { sessionId: S1, role: i % 2 ? 'user' : 'assistant', content: i === 3 ? '磁悬浮轴承选型讨论：决定采用 PG' : `消息 ${i}：普通内容`, seqNum: i, createdAt: threeDaysAgo });
   db.prepare('UPDATE sessions SET message_count = 12, decisions = ?, last_event_at = ? WHERE id = ?')

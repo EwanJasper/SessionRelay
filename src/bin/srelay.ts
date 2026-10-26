@@ -81,6 +81,17 @@ program
   .action(async (f) => { const { cmdStatus } = await import('../cli/status.js'); await cmdStatus(f); });
 
 program
+  .command('ui')
+  .description('本地记忆仪表盘（只读 · 仅 127.0.0.1 · 随机端口 + 一次性令牌；design-dashboard）')
+  .option('--port <n>', '固定端口（默认随机）')
+  .option('--no-open', '不自动打开浏览器')
+  .action(async (f: { port?: string; open?: boolean }) => {
+    const { cmdUi } = await import('../ui/server.js');
+    const port = f.port && Number.isFinite(Number(f.port)) ? Number(f.port) : undefined;
+    await cmdUi({ port, open: f.open !== false });
+  });
+
+program
   .command('mode <full|meta|off>')
   .description('切换捕获模式')
   .action(async (mode) => { const { cmdMode } = await import('../cli/misc.js'); await cmdMode(mode); });
