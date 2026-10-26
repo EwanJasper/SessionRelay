@@ -3,6 +3,25 @@
 所有显著变更将记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- **本地记忆仪表盘 `srelay ui`（design-dashboard v1-v1.4）**：第三个薄呈现层（CLI / MCP / 浏览器共用同一批查询函数，核心域零改动）。总览（注册表全项目卡片：会话构成/来源分布/磁盘/守护存活）→ 项目详情（可交互增长图：悬停浮层/网格线/消息·新会话双指标/点柱下钻当天会话；FTS 全文过滤；健康卡片含守护日志尾部）→ **会话详情下钻**（元信息/决策/关键问题/分页消息流/**会话内关键词搜索**——点击命中或决策直接跳到对应消息并高亮）。安全模型（U13/U14）：默认关闭、仅绑 127.0.0.1、一次性令牌 + Host 校验（防 DNS rebinding）+ 永不 CORS + root 注册表白名单 + 前台生命周期；HTML 外壳免令牌（刷新/收藏可用）。**首个写口「会话遗忘」**：与 CLI `srelay forget` 同一核心（core/forget：事务删除 + 墓碑 + ignore 双防复活闸 + 审计，触发者 `ui:forget`），确认弹窗防误触；消息级删除明确不做（会话不可变，遗忘权粒度是会话级）。零新增依赖，npm 发布面零变化
+- `store` 层新增只读查询：`openReadonly` / `growthByDay`（消息 + 活跃会话双序列）/ `projectSummary` / `searchInSession`（字面 LIKE，`% _` 转义）/ `listSessions` 支持 OFFSET（真分页）
+
+### 修复（PR #3 批一，贡献者 @rui08984-dot，已逐项独立复核后摘取）
+- **#1 Windows 自启链静默失效**：`windowsRunScript` 的 nodeAbs 裸拼（含空格路径开机即 `'C:\Program' 不是内部或外部命令`）加引号；cmd 首行 `chcp 65001`（OEM 码页 vs UTF-8 落盘，中文路径腐蚀 cd/重定向）；vbs 改写 UTF-16LE+BOM（wscript 不认 UTF-8）
+- **#2 守护单实例锁失效**：文件锁先查后写非原子、并发同秒全过 → 每项目**命名管道锁**（内核对象随进程死亡自动消失，EADDRINUSE 即活实例；非 Windows 平台不变）
+- **#2 句柄/内存泄漏根因**：zcode `detectCompaction` 每会话每周期新开 better-sqlite3 连接且从不关闭（实测定位：句柄斜率 ~378/h、内存 1GB 锯齿）→ 复用 `getConn` 缓存连接
+- **跨项目污染（CRITICAL）**：discover 缓存键补项目根——多项目共享同一源库时 B/C 项目会收到 A 的会话列表并错误入库（实测 music 42→559）
+- **捕获水位线**：`adapter.changeProbe` 内容签名（zcode = MAX(rowid) 聚合，每周期 2 条 SQL）+ "仍在库中"守卫 + 10 分钟全量兜底——空闲守护 CPU 7.5% → ~0.1%；`ensureRegistered` 双调吞掉 custom adapter 加载错误一并修复
+- 捕获正确性一组：决策/未决提取合理性守卫（表格行、Markdown 残片、JSON 残渣、语音填充词拒收）；`decisions --limit` 取最新 N（原是最旧 N）；`unresolved --json` 真正输出 JSON；增量决策刷新（seq 水位，长会话周期性 CPU/内存脉冲根治）+ workflow 子代理会话排除；`meta_text` 重写时 user_tags 三处补全；未决问题跨会话去重；弱动词锚定句首；claude-code watcher 补 error 监听（被删目录不再杀死守护）
+- forget A1 测试时间炸弹拆除（绝对日期 + "天前"断言，30 天边界一过套件永久变红——主干 9 月 19 日起已红）
+- S7/S9 dist 存在性断言改为双构建态诚实（按上游评审意见，贡献者修复）
+
+### 测试
+- 套件 224 → 260 条：新增 test/ui（数据装配/安全矩阵/会话详情/遗忘写路由）与 test/fork 回归锁（origin=workflow 排除、增量刷新幂等）
+
 ## [0.5.1] - 2026-09-18
 
 ### 修复
