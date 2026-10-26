@@ -1,7 +1,7 @@
 {
   "name": "@ewanjasper/sessionrelay",
   "version": "0.6.0",
-  "description": "会话接力 SessionRelay — 属于项目、不属于任何厂商的本地记忆层（跨 Agent 会话记忆 / 中文检索 / MCP / HOP 交接协议）",
+  "description": "SessionRelay — a local-first, session-level memory layer for AI coding agents that belongs to your project, not to any vendor (cross-agent memory / Chinese+semantic search / MCP / HOP handoff protocol)",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -51,7 +51,7 @@
     "docs/adapters/README.md",
     "spec",
     "README.md",
-    "README.en.md",
+    "README.zh-CN.md",
     "LICENSE",
     "CHANGELOG.md"
   ],

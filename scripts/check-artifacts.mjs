@@ -17,7 +17,7 @@ const serverSrc = read('src/mcp/server.ts');
 const toolNames = [...serverSrc.matchAll(/registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
 if (toolNames.length === 0) fail('未能从 server.ts 提取到任何 registerTool');
 const readme = read('README.md');
-const readmeEn = read('README.en.md');
+const readmeZh = read('README.zh-CN.md');
 const guide = read('docs/user-guide.md');
 for (const name of toolNames) {
   for (const [doc, label] of [[readme, 'README.md'], [guide, 'user-guide.md']]) {
@@ -28,7 +28,7 @@ if (failures === 0) ok(`${toolNames.length} 个 MCP 工具名在 README.md 与 u
 
 // ── 2) 无旧计数残留（若将来加第 17 个工具，此处随源码计数自动演进） ──
 const count = toolNames.length;
-for (const [doc, label] of [[readme, 'README.md'], [readmeEn, 'README.en.md'], [guide, 'user-guide.md']]) {
+for (const [doc, label] of [[readme, 'README.md'], [readmeZh, 'README.zh-CN.md'], [guide, 'user-guide.md']]) {
   const stale = new RegExp(`[^0-9]${count - 1} (个工具|tools)`, 'g');
   if (stale.test(doc)) fail(`${label} 仍含旧计数 "${count - 1} 工具" 表述`);
 }

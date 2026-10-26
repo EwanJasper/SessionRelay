@@ -1,83 +1,84 @@
-# 会话接力 SessionRelay
+# SessionRelay 会话接力
 
-简体中文 | [English](./README.en.md)
+English | [简体中文](./README.zh-CN.md)
 
 [![CI](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml/badge.svg)](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
 [![downloads](https://img.shields.io/npm/dm/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933)
-![MCP](https://img.shields.io/badge/MCP-16%E5%B7%A5%E5%85%B7-6C5CE7)
-![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows_%7C_macOS_%7C_Linux-2D7DD2)
-![语义检索](https://img.shields.io/badge/%E8%AF%AD%E4%B9%89%E6%A3%80%E7%B4%A2-%E5%8F%AF%E9%80%89-F4A261)
+![MCP](https://img.shields.io/badge/MCP-16_tools-6C5CE7)
+![Platform](https://img.shields.io/badge/Platform-Windows_%7C_macOS_%7C_Linux-2D7DD2)
+![Semantic](https://img.shields.io/badge/Semantic_Search-optional-F4A261)
 ![License](https://img.shields.io/badge/License-MIT-EAC435)
 
-> **属于项目、不属于任何厂商的本地记忆层。**
+> **A local memory layer that belongs to your project — not to any vendor.**
 > Memory is always complete. Retrieval is always yours to shape.
-> 记忆始终完整收录；检索边界由你划定。
 
-你和 AI 聊了 3 天的方案，不应该随关窗消失。它属于项目，属于下一个接手的人。
+You spent three days settling an architecture with your AI. That shouldn't vanish when the window closes. It belongs to the project — and to whoever picks it up next.
 
-## 60 秒演示
+> 📖 中文文档：[README.md](./README.md)
 
-![会话接力 SessionRelay 演示](assets/demo-zh.gif)
+## 60-second demo
 
-GIF 无声音——完整配音版（中文/英文 + 手机竖版）在 [Releases · v0.2.2](https://github.com/EwanJasper/SessionRelay/releases/tag/v0.2.2) 页面内可直接播放。
+![SessionRelay demo](assets/demo-en.gif)
 
-## 它解决什么
+The GIF is silent — full narrated versions (English / 中文, plus a 9:16 vertical cut) are playable directly on the [Releases · v0.2.2](https://github.com/EwanJasper/SessionRelay/releases/tag/v0.2.2) page.
 
-| 痛点 | 会话接力的答案 |
-| ---- | -------------- |
-| **跨时间失忆**：新会话问"上周讨论的方案？"——AI 不知道 | 按需检索历史会话，带出处 |
-| **跨工具断裂**：Claude Code 定的方案，ZCode 不知道 | 双源同库，任何 agent 通过 MCP 查同一份记忆 |
-| **跨人交接**：你和 AI 聊了 3 天，接手的人只能"去看代码" | 导出 `.hop` 交接包，对方的 AI 立刻拥有全部上下文 |
+## What it solves
 
-## 与 claude-mem 的架构区别：会话级存储
+| Pain point | SessionRelay's answer |
+| ---------- | --------------------- |
+| **Amnesia across time**: you ask a new session "what did we decide last week?" — the AI has no idea | Search historical sessions on demand, with mandatory provenance |
+| **Fragmentation across tools**: the plan was settled in Claude Code; ZCode knows nothing | Multi-source, one database — any agent queries the same memory via MCP |
+| **Handoff across people**: you spent 3 days with your AI; your teammate inherits "go read the code" | Export a `.hop` handoff package — their AI instantly owns the full context |
 
-这是最核心的设计决策，不是功能差异，是**存储粒度**的架构差异：
+## The architectural difference vs. claude-mem: session-level storage
 
-| | claude-mem | **SessionRelay** |
-| -- | ---------- | ---------------- |
-| 存储单位 | 记忆片段（压缩摘要，跨会话打散混合） | **会话**（完整对话，有标题/时间线/来源/状态/决策） |
-| AI 看到的 | 一堆"你之前说过…"碎片 | "根据 8 月 28 日 ZCode 会话《数据库选型》第 12 条…" |
-| 幻觉风险 | 高：上下文污染 + 压缩失真 + 无法溯源 | **结构性抑制**：出处强制 + 按需查询 + 原文可回跳 |
+This is the core design decision — not a feature difference, a **storage-granularity** difference:
 
-三个反幻觉设计（不是功能，是架构承诺）：
+| | Fragment memory (claude-mem style) | **SessionRelay** |
+| -- | ---------------------------------- | ---------------- |
+| Unit of storage | compressed shards, mixed across sessions | **complete sessions** (title / timeline / source / status / decisions) |
+| What the AI sees | "you once said..." shards | "ZCode session *Database Selection*, Aug 20, message 12..." |
+| Hallucination risk | high: context pollution + compression distortion + no provenance | **structurally suppressed**: mandatory provenance + on-demand queries + jump back to the original text |
 
-1. **出处强制**：AI 回答必须带"哪个会话/哪条消息/哪个 agent"——有源可查，不能瞎编
-2. **按需查询**（pull）：AI 不问就不查 → 上下文干净，不被无关记忆污染
-3. **原文可回跳**：AI 拿到的是原始对话全文，不是压缩摘要——决策的"为什么"完整保留
+Three anti-hallucination commitments (architecture, not features):
 
-## 架构总览
+1. **Mandatory provenance** — every answer must cite which session, which message, which tool. Traceable sources leave no room for confident guessing.
+2. **Pull, not push** — the AI queries only when needed. Clean context, no ambient memory pollution.
+3. **Original text, always** — the AI gets the full raw conversation, not a pre-chewed summary. The "why" survives.
 
-你和任何 AI 工具聊的内容，被统一收进一个项目级数据库；你、AI、同事都能查。换工具不丢记忆，换人可交接。
+## Architecture overview
+
+Everything you discuss with any AI tool flows into one project-level database; you, your AI, and your teammates can all query it. Switch tools without losing memory. Switch people without losing context.
 
 ```mermaid
 graph TB
-    subgraph Sources["🖥️ 你的 AI 编程工具（各聊各的）"]
-        CC["Claude Code<br/>JSONL 文件"]
-        ZC["ZCode<br/>SQLite 数据库"]
-        CX["Codex<br/>JSONL 文件"]
-        QD["Qoder<br/>JSONL 文件"]
-        TR["Trae<br/>部分支持*"]
+    subgraph Sources["🖥️ Your AI coding tools (each in its own silo)"]
+        CC["Claude Code<br/>JSONL files"]
+        ZC["ZCode<br/>SQLite database"]
+        CX["Codex<br/>JSONL files"]
+        QD["Qoder<br/>JSONL files"]
+        TR["Trae<br/>partial*"]
     end
 
-    subgraph Relay["🧠 会话接力（本地记忆层）"]
-        DAEMON["守护进程 watch<br/>每 30 秒自动同步"]
-        DB[("relay.sqlite<br/>统一记忆库")]
-        EXTRACT["结构化提取器<br/>决策 · 话题 · 摘要 · 关键往返"]
+    subgraph Relay["🧠 SessionRelay (local memory layer)"]
+        DAEMON["daemon (watch)<br/>auto-sync every 30s"]
+        DB[("relay.sqlite<br/>unified memory")]
+        EXTRACT["structured extractors<br/>decisions · topics · summaries · key exchanges"]
     end
 
-    subgraph Consumers["👥 谁来查询记忆"]
-        YOU["你（CLI）<br/>search · decisions · history"]
-        AGENT["AI Agent（MCP）<br/>16 个工具"]
-        TEAM["同事（HOP 交接包）<br/>export → import"]
+    subgraph Consumers["👥 Who queries the memory"]
+        YOU["You (CLI)<br/>search · decisions · history"]
+        AGENT["AI agents (MCP)<br/>16 tools"]
+        TEAM["Teammates (.hop handoff)<br/>export → import"]
     end
 
     CC -->|adapter| DAEMON
     ZC -->|adapter| DAEMON
     CX -->|adapter| DAEMON
     QD -->|adapter| DAEMON
-    TR -.->|仅用户提问| DAEMON
+    TR -.->|user prompts only| DAEMON
     DAEMON --> DB
     DB --> EXTRACT
     DB --> YOU
@@ -89,226 +90,204 @@ graph TB
     style Consumers fill:#0f3460,color:#fff
 ```
 
-> \* Trae 的 AI 回复端到端加密，仅能采集用户提问。其他工具不在列表里？写一个[自定义适配器](docs/adapters/README.md)即可，零改核心代码。
+> \* Trae encrypts assistant replies end-to-end; only user prompts are readable. Tool not on the list? Write a [custom adapter](docs/adapters/README.md) — zero core changes.
 
-## 记忆的生命周期
+## Memory lifecycle
 
-每个会话在记忆库中经历两阶段判定，**宁可多等，不固化没聊完的对话**：
+Every session passes through a two-phase verdict. **Better to wait than to crystallize an unfinished conversation:**
 
 ```mermaid
 stateDiagram-v2
-    [*] --> active: 对话开始/守护捕获
-    active --> pending_end: 超过10分钟没新消息
-    pending_end --> active: 你回来继续聊（复活）
-    pending_end --> confirmed: 安静超过6小时
-    active --> active: 新消息追加
-    confirmed --> active: 追加新消息（回滚+摘要重算）
-    confirmed --> archived: srelay archive（归档）
-    archived --> active: 新消息到达（复活）
+    [*] --> active: conversation starts / daemon captures
+    active --> pending_end: 10 min without new messages
+    pending_end --> active: you resume (revival)
+    pending_end --> confirmed: 6 h of silence
+    active --> active: new messages appended
+    confirmed --> active: new message (rollback + re-extraction)
+    confirmed --> archived: srelay archive
+    archived --> active: new message arrives (revival)
 
-    confirmed: ✅ 已固化
-    confirmed: 提取决策/话题/摘要
-    confirmed: 进入全文搜索主索引
+    confirmed: ✅ Confirmed
+    confirmed: decisions/topics extracted
+    confirmed: enters the main full-text index
 
-    archived: 📦 已归档
-    archived: 骨架保留（决策/话题）
-    archived: 正文已释放（99.4%空间）
+    archived: 📦 Archived
+    archived: skeleton kept (decisions/topics)
+    archived: bodies released (99.4% space)
 ```
 
-**为什么需要中间的 pending 状态**：对话可以复活（第二天 `--resume` 继续）。如果直接固化，提取的决策就是残缺的。pending 是 6 小时缓冲带；就算固化了，追加消息也会自动回滚重算。原始会话文件是唯一事实源——库里任何时候都能 `srelay rebuild` 重建。
+**Why the pending stage exists**: conversations resurrect (you `--resume` the next morning). Crystallize too early and the extracted decisions are incomplete. Pending is a 6-hour buffer; even after confirmation, appended messages trigger a rollback and re-extraction. Raw session files remain the single source of truth — the database can always be rebuilt with `srelay rebuild`.
 
-## 核心能力
+## Core capabilities
 
-### 🖥️ 被动捕获（零打扰）
-- **五源适配**：Claude Code · ZCode · Codex · Qoder（完整支持）+ Trae（部分：仅用户提问）+ [自定义适配器](docs/adapters/README.md)（加一个 JS 文件接入新工具，零改核心代码）
-- **三档隐私**：`full`（默认） / `meta`（只存元数据） / `off`（仅手动）
-- **`.sessionrelayignore` 硬边界**：隐私排除对自动捕获、手动 save、导出全部生效
-- **两阶段判定**：`active → pending_end → confirmed`，resume 自动回滚，原始会话文件是唯一事实源（库随时可 `rebuild`）
-- **历史回填**：`srelay init` 默认回填近 30 天；`srelay sync --backfill all` 一条命令全量入库
+### 🖥️ Passive capture (zero friction)
+- **Five-source adapters**: Claude Code · ZCode · Codex · Qoder (full) + Trae (partial: user prompts only) + [custom adapters](docs/adapters/README.md) (drop in one JS file, zero core changes)
+- **Three privacy modes**: `full` (default) / `meta` (metadata only) / `off` (manual only)
+- **`.sessionrelayignore` hard boundary**: privacy exclusions apply to auto-capture, manual `save`, and export alike
+- **Two-phase verdict**: `active → pending_end → confirmed`, auto-rollback on resume; raw session files are the single source of truth (the DB is always `rebuild`able)
+- **Backfill**: `srelay init` backfills the last 30 days by default; `srelay sync --backfill all` imports your full history
 
-### 🔍 中文检索
-- jieba 分词 + FTS5 双索引（正文 + 元数据），AND 覆盖度语义，OR 兜底
-- **语义检索（可选）**：`srelay semantic enable` 一键开启——换一种说法也能命中（"登录"↔"认证"、"很卡"↔"性能"），本地 CPU 推理（bge-small-zh），字面命中优先、语义只做补充，未启用时行为与纯字面检索完全一致
-- jieba 分词 + SQLite FTS5 双索引（六条中文验收用例门禁）
-- 会话级 AND 覆盖 + OR 兜底：连写词拆分（"认证方案"→ 认证+方案）、短语精确匹配（`"按月分区"`）
-- 每条结果**强制携带出处块**（会话 ID / 来源 agent / 日期 / 消息序号 / 摘要片段）
+### 🔍 Chinese-optimized search
+- jieba tokenization + SQLite FTS5 dual indexes (gated by six Chinese acceptance cases)
+- Session-level AND coverage with OR fallback: compound words split ("认证方案" → 认证 + 方案), quoted phrases match exactly (`"按月分区"`)
+- Every result **carries a mandatory provenance block** (session ID / source tool / date / message numbers / snippet)
+- **Semantic search (optional)**: `srelay semantic enable` — paraphrased queries now hit ("登录" ↔ "authentication", "很卡" ↔ "performance"). Local CPU inference (bge-small-zh), zero cloud; literal hits always rank first and are never replaced — semantic only appends, flagged `viaSemantic`, capped at top-5. Not enabled = byte-identical behavior to pure literal search. Measured: synonym-query miss rate 33% → **0%**
 
-### 🤖 MCP Server（16 个工具，9 读 + 7 写域）
-任何支持 MCP 的 AI agent 接入后，从此在这个项目里不再是失忆的：
+### 🧹 Right to be forgotten (`srelay forget`)
+Deletion belongs to humans — **AI / MCP tools have zero delete power** (tool list stays at 15, forever):
+
+```bash
+srelay forget a3f8c2d1        # preview (what gets removed vs kept)
+srelay forget a3f8c2d1 --yes  # execute (irreversible)
+srelay forget --history       # audit of what was forgotten when
+```
+
+- Rule of thumb: aging & disk space → `archive`; make one conversation disappear forever → `forget`
+- Dual anti-resurrection barriers: a precise `.sessionrelayignore` rule (survives rebuild) + a tombstone table — the raw file stays on disk but is never re-ingested
+- Prefix ambiguity guard: multiple matches are listed and rejected, never silently picking one
+
+### 🤖 MCP Server (16 tools: 9 read + 7 write-domain)
+Once your AI agent connects via MCP, it stops being amnesiac in this project:
 
 <details>
-<summary><b>9 个读工具</b>——AI 从此能回答的问题</summary>
+<summary><b>9 read tools</b> — questions your AI can finally answer</summary>
 
-| 工具 | 回答的问题 |
-| ---- | ---------- |
-| `search_sessions` | "我们之前讨论过 X 吗？"（中文全文 + 元数据过滤） |
-| `get_session_detail` | "那场讨论具体聊了什么？"（完整消息，支持范围） |
-| `list_sessions` | "这个项目都聊过哪些话题？" |
-| `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
-| `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
-| `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现的同主题会话，可解释理由） |
-| `get_unresolved` | "还有什么没定的？"（未决问题清单） |
-| `get_stats` | "记忆库什么状态？"（会话数/来源分布/体积） |
-| `set_scope` | 检索边界逃生口 |
+| Tool | Question it answers |
+| ---- | ------------------- |
+| `search_sessions` | "Did we ever discuss X?" (Chinese/English full-text + metadata filters) |
+| `get_session_detail` | "What exactly did we say?" (full messages, ranged, role-filtered) |
+| `list_sessions` | "What topics has this project covered?" |
+| `get_decisions` | "Why X instead of Y?" (all confirmed decisions, with provenance) |
+| `get_file_history` | "Why is this file written this way?" (cross-session file discussion history) |
+| `suggest_related_sessions` | "What else relates to this discussion?" (algorithmically discovered, explainable reasons) |
+| `get_unresolved` | "What's still undecided?" (open questions) |
+| `get_stats` | "How big is the memory?" (sessions/sources/size) |
+| `set_scope` | Retrieval-boundary escape hatch |
 
 </details>
 
 <details>
-<summary><b>7 个写域工具</b>——AI 不再只是读者</summary>
+<summary><b>7 write-domain tools</b> — the AI is no longer just a reader</summary>
 
-| 工具 | 能力 | 安全边界 |
-| ---- | ---- | -------- |
-| `annotate_session` | 给会话打标签 / 写人工摘要 | 只改元数据，不改写对话 |
-| `save_note` | AI 把结论写成笔记（决策句式直接入决策库） | source=note，可识别可审计 |
-| `export_handoff` | 生成 .hop 交接包 | 只读导出 |
-| `import_handoff` | 导入交接包（sha256 校验 + 归化） | **默认隔离模式**（正文待放行） |
-| `release_quarantine` | 放行隔离会话正文 | 需显式调用 |
-| `link_sessions` | 建立会话关联（continues/related/pinned） | 关联可查可撤销 |
-| `get_linked_sessions` | 双向查询会话关联（出边/入边） | 只读 |
+| Tool | Capability | Safety boundary |
+| ---- | ---------- | --------------- |
+| `annotate_session` | tag sessions / write human summaries | metadata only, never rewrites conversations |
+| `save_note` | AI records conclusions as notes (decision phrasing enters the decision library) | `source=note`, identifiable and auditable |
+| `export_handoff` | produce a .hop handoff package | read-only export |
+| `import_handoff` | import a package (sha256 verified + normalized) | **quarantine by default** (bodies pending release) |
+| `release_quarantine` | release quarantined message bodies | explicit call required |
+| `link_sessions` | relate sessions (continues/related/pinned) | links are queryable and revocable |
+| `get_linked_sessions` | bidirectional link queries | read-only |
 
 </details>
 
-**写域三原则**（D21）：旁路写入（不碰状态机）· 导入默认隔离 · 笔记可溯源——每条 AI 写入都能被识别、审计、撤销。
+**Write-domain principles (D21)**: bypass the write path (never touches the state machine) · import defaults to quarantine · notes are traceable — every AI write is identifiable, auditable, revocable.
 
-### 🖥️ 本地仪表盘（`srelay ui`，0.6.0 新增）
+### 🖥️ Local dashboard (`srelay ui`, new in 0.6.0)
 
-第三个薄呈现层：CLI / MCP / 浏览器共用同一批查询函数，核心域零改动、零新增依赖。
+A third thin presentation layer: CLI, MCP, and the browser share the same query functions — zero core changes, zero new dependencies.
 
-- **总览**：注册表内全项目卡片——会话构成、来源分布、磁盘占用、守护存活
-- **项目详情**：可交互增长图（消息 + 活跃会话双指标，点柱下钻当天会话）、FTS 全文过滤、健康卡片（含守护日志尾部）
-- **会话详情下钻**：元信息、决策、关键问题、分页消息流、**会话内关键词搜索**——点击命中或决策直接跳到对应消息并高亮
-- **首个写口「会话遗忘」**：与 CLI `srelay forget` 同一核心（事务删除 + 墓碑 + ignore 双防复活 + 审计），确认弹窗防误触；不做消息级删除（会话不可变，遗忘权粒度是会话级）
-- **安全模型**：默认关闭 · 仅绑 `127.0.0.1` · 一次性令牌 + Host 校验（防 DNS rebinding）· 永不 CORS · 前台生命周期（Ctrl-C 即停）
-
-```bash
-srelay ui    # 启动本地仪表盘（随机端口 + 一次性令牌，自动打开浏览器）
-```
-
-### 🎯 Scope 检索边界
-- **B 档**：`scope.json` 项目契约（CLI 与 MCP 共用），交集语义只能收窄
-- **A 档**：auto-scope 兜底（MCP 侧近 30 天可配），防上下文污染
-- **attach**：开新会话前挂载指定历史会话（最高优先级谓词）
-- **热更新**：scope 改动下一次调用立即生效
-
-### 🧹 遗忘权（`srelay forget`）
-AI（MCP 工具）永远没有删除能力——**删除是人的特权**。需要时由你亲手执行：
+- **Registry overview**: cards for every registered project — session composition, source distribution, disk usage, daemon liveness
+- **Project detail**: interactive growth chart (messages + active-sessions dual metric, click a bar to drill into that day), full-text filter, health cards with the daemon log tail
+- **Session drill-down**: metadata, decisions, open questions, paged message flow, and **in-session keyword search** — click a hit or a decision to jump to that message, highlighted
+- **First write op — session forget**: the exact same core as CLI `srelay forget` (transactional delete + tombstone + ignore-rule anti-resurrection + audit), behind a confirmation dialog; message-level deletion deliberately not offered (sessions are immutable, forgetting is session-granular)
+- **Security model**: off by default · binds `127.0.0.1` only · one-time token + Host validation (anti DNS-rebinding) · never returns CORS headers · foreground lifecycle (Ctrl-C stops it)
 
 ```bash
-srelay forget a3f8c2d1        # 预览：将删除什么、保留什么
-srelay forget a3f8c2d1 --yes  # 执行：整条会话彻底消失（含决策），不可逆
-srelay forget --history       # 审计：什么时候删了什么
+srelay ui    # start the local dashboard (random port + one-time token, opens the browser)
 ```
 
-- **选型口诀**：空间与老化用 `archive`（保留决策骨架）；让一条对话彻底消失、永不回来，用 `forget`
-- **双防复活闸**：`.sessionrelayignore` 精确规则（主，跨 rebuild 存活）+ 墓碑表（次，防 ignore 被清理）——原始文件还在磁盘，但本库永不重新收录
-- **前缀歧义防护**：前缀命中多个会话时列出候选拒绝执行，绝不静默猜一个
-- **注意**：forget 是项目级操作；已通过 `.hop` 交接包交出去的记忆不在管辖内（删除权已随包交出）
+### 🎯 Scope: retrieval boundaries
+- **Tier B**: `scope.json` project contract (shared by CLI and MCP), intersection semantics — can only narrow
+- **Tier A**: auto-scope backstop (MCP-side, recent-30-days configurable) against context pollution
+- **attach**: mount specific historical sessions before starting new work (highest-priority predicate)
+- **Hot reload**: scope changes take effect on the next call
 
-### 📦 HOP 交接协议（`hop/1.0`，开放格式）
-- [独立协议规格](spec/hop-1.0.md)（MIT，产品中立，欢迎第三方实现读取器）
-- sha256 逐文件完整性校验（篡改整体拒绝）
-- **默认密钥脱敏**：AWS key / 私钥 / Bearer / 密码赋值 / 数据库连接串 + 脱敏报告
-- **隔离导入**（quarantine）：只入元数据与摘要，正文经 `release` 逐条放行——反 prompt 注入的结构性防线
-- HANDOFF.md 自动生成（决策表 / 涉及文件 / 未解决问题 / 时间线 / 页脚署名）
-- **跨项目导入**：交接包可导入到任何路径/名称的项目（自动归化，`origin_project` 溯源）
+### 📦 HOP handoff protocol (`hop/1.0`, open format)
+- [Standalone protocol spec](spec/hop-1.0.md) (MIT, vendor-neutral, third-party readers welcome)
+- Per-file sha256 integrity (any tampering rejects the whole package)
+- **Default secret redaction**: AWS keys / private keys / Bearer tokens / password assignments / DB connection strings, with a redaction report
+- **Quarantined import**: metadata and summaries first; bodies released one by one — a structural defense against prompt injection
+- HANDOFF.md generated automatically (decision table / files involved / open questions / timeline / signature footer)
+- **Cross-project import**: packages land in any project path or name (auto-normalized, `origin_project` kept for provenance)
 
-一次真实的交接是这样流动的：
+## Quick start
 
-```mermaid
-sequenceDiagram
-    participant 张三 as 张三（离开）
-    participant 包 as .hop 交接包
-    participant 小王 as 小王（接手）
-    participant AI as 小王的 AI
-
-    张三->>包: srelay export --all
-    Note over 包: 自动：脱敏密钥<br/>生成 HANDOFF.md<br/>逐文件 sha256
-    包->>小王: 发送文件（微信/邮件均可）
-    小王->>包: srelay import xxx.hop --from 张三
-    Note over 小王: 自动：校验完整性<br/>归化 project_id<br/>记入审计
-    小王->>AI: "为什么数据库选了 PG？"
-    AI->>包: get_decisions()
-    包-->>AI: "决定采用 PostgreSQL（出处：张三 08-20 会话）"
-    AI-->>小王: 带出处的完整回答
-```
-
-## 快速开始
-
-要求 **Node ≥ 22**（Windows / macOS / Linux）：
+Requires **Node ≥ 22** (Windows / macOS / Linux):
 
 ```bash
-# 方式一：npm 安装（推荐）
+# Option 1: npm (recommended)
 npm install -g @ewanjasper/sessionrelay
 
-# 方式二：零安装试用
+# Option 2: zero-install trial
 npx @ewanjasper/sessionrelay init
 
-# 方式三：从源码
+# Option 3: from source
 git clone https://github.com/EwanJasper/SessionRelay.git
 cd SessionRelay && npm install && npm run build && npm link
 ```
 
-### 初始化项目
+### Initialize a project
 
 ```bash
-cd 你的项目
-srelay init              # 初始化 + 回填近 30 天（1 分钟内可搜到上月讨论）
-srelay sync --backfill all   # 或全量回填所有历史（旧会话自动确认+提取决策）
+cd your-project
+srelay init                  # initialize + backfill last 30 days (last month searchable within a minute)
+srelay sync --backfill all   # or backfill your entire history (old sessions auto-confirm + extract decisions)
 ```
 
-### 日常使用
+### Daily use
 
 ```bash
 srelay search 中文关键词 [--topic --source --since --json]
-srelay decisions         # 全部已确认决策（带出处，可回跳）
-srelay history src/db/   # 该文件被哪些会话讨论过
-srelay watch --install-service  # Windows 注册守护，登录自启
-srelay doctor            # 环境自检
+srelay decisions         # all confirmed decisions, with provenance
+srelay history src/db/   # which sessions discussed this file
+srelay watch --install-service  # register the daemon (Windows), starts at login
+srelay doctor            # environment self-check
 ```
 
-### 团队交接
+### Team handoff
 
 ```bash
-srelay export --all      # 交接包（默认脱敏）→ 发给同事
-# 同事在他的项目根（任何路径）：
-srelay import xxx.hop --from 你的名字
+srelay export --all      # handoff package (redacted by default) → send to a teammate
+# The teammate, in any project root:
+srelay import xxx.hop --from your-name
 ```
 
-👉 完整实操指南（五个场景：项目交接/新人入职/安全导入/跨项目迁移/定期归档）：[导入导出指南](docs/import-export-guide.md)
+👉 Full walkthrough (five scenarios: project handoff / onboarding / safe import / cross-project migration / periodic archiving): [Import & Export Guide](docs/import-export-guide.md)
 
-## ⚠️ 为什么需要守护进程
+## ⚠️ Why the daemon is not optional
 
-**ZCode 在上下文压缩时会物理删除旧消息**（实测确认：一个 500 条会话压缩后被删 3976 条）。守护进程每 30 秒自动同步，确保消息在被删之前入库。
+**ZCode physically deletes old messages on context compaction** (measured: one compaction deleted 3,976 messages from a long session). The daemon syncs every 30 seconds so messages land in the database before deletion.
 
-不开守护的风险：手动 sync 之间的间隔内，如果 AI 触发上下文压缩，被删的原始消息将**永久丢失**。
+Without the daemon: anything the AI compacts between two manual syncs is **permanently lost**.
 
 ```bash
-srelay watch --install-service   # Windows 注册表自启动（无需管理员）
-srelay watch --foreground        # macOS/Linux 前台运行（服务注册开发中）
+srelay watch --install-service   # Windows registry autostart (no admin required)
+srelay watch --foreground        # macOS/Linux foreground (service registration in progress)
 ```
+
+Daemon overhead: ~0% idle CPU (event-driven), ~80MB memory (resident Node.js), negligible incremental disk I/O, **zero network calls**.
 
 ```mermaid
 timeline
-    title 不开守护 vs 开守护
-    不开守护 : 你聊天（消息进 ZCode 库） : AI 触发上下文压缩 : 💥 消息被 ZCode 物理删除 : 你想起来跑 sync : ❌ 只能拿到压缩摘要，原文永久丢失
-    开守护 : 你聊天（消息进 ZCode 库） : 守护 30 秒内自动入库 : AI 触发压缩 : ZCode 删除消息 : 😌 没关系，原文已在记忆库 : 压缩摘要也被捕获
+    title Without vs. with the daemon
+    Without daemon : you chat (messages land in ZCode's store) : AI triggers context compaction : 💥 ZCode physically deletes messages : you remember to run sync : ❌ only the compaction summary remains; the original text is gone
+    With daemon : you chat (messages land in ZCode's store) : daemon syncs within 30s : AI triggers compaction : ZCode deletes messages : 😌 no problem — the original text is already in your memory : the compaction summary is captured too
 ```
 
-守护的资源开销：CPU 空闲时 ≈ 0%（事件驱动），内存 ~80MB（Node.js 常驻），磁盘 I/O 增量极低，**网络零外呼**。
+## MCP integration
 
-## MCP 接入指南
-
-### Claude Code（一条命令）
+### Claude Code (one command)
 
 ```bash
 claude mcp add sessionrelay --scope user -- srelay serve
 ```
 
-注册后在 Claude Code 里输入 `/mcp` 应看到 `sessionrelay` 已连接、16 个工具就绪。
+Run `/mcp` in Claude Code — `sessionrelay` should show as connected with 16 tools ready.
 
-### ZCode / 其他 MCP 客户端
+### ZCode / other MCP clients
 
-在项目的 MCP 配置（`.mcp.json` 或客户端设置）中添加：
+Add to your project's MCP config (`.mcp.json` or client settings):
 
 ```json
 {
@@ -318,73 +297,39 @@ claude mcp add sessionrelay --scope user -- srelay serve
 }
 ```
 
-> **Qoder 用户注意**：Qoder 启动 MCP 子进程时不把工作目录设为项目根。**0.5.0 起免配置**：serve 依次尝试 MCP roots 协议（自动问客户端"工作区在哪"）→ 全局项目注册表（恰好一个活跃项目时自动选中）；都无法确定时连接照常保持，首次工具调用返回候选项目列表，AI 带 `project` 参数选一次即可（本连接记住）。下面的环境变量仍是最稳的显式钉法。
+> **Qoder users**: Qoder launches MCP subprocesses without setting the working directory to the project root. **Since 0.5.0 this needs no config**: serve tries the MCP roots protocol (asks the client "which workspace") first, then the global project registry (auto-selects when exactly one project is alive); if neither resolves, the connection stays up and the first tool call returns a candidate list — the AI passes `project` once to pick (remembered for the connection). The env var below remains the most robust explicit pin.
 
-### 最稳兜底（任何 MCP 客户端通吃，绕过 PATH / cwd 问题）
+### Most robust fallback (any MCP client, bypasses PATH / cwd issues)
 
-`SRELAY_PROJECT_ROOT` 显式指定项目根，不依赖子进程的工作目录——PATH 解析不到 `srelay`、客户端不设 cwd、或多项目并行想钉死某一个时都能救。
+`SRELAY_PROJECT_ROOT` pins the project root regardless of the subprocess working directory — it saves you when PATH cannot resolve `srelay` or when the client does not set cwd (Qoder, in practice).
 
 ```json
 {
   "mcpServers": {
     "sessionrelay": {
       "command": "node",
-      "args": ["/你的安装路径/SessionRelay/dist/srelay.js", "serve"],
-      "env": { "SRELAY_PROJECT_ROOT": "/你的项目路径" }
+      "args": ["/your/install/path/SessionRelay/dist/srelay.js", "serve"],
+      "env": { "SRELAY_PROJECT_ROOT": "/your/project/path" }
     }
   }
 }
 ```
 
-### 接入后怎么验证
+### How to verify it works
 
-新开一个 AI 会话，问它：
+Open a fresh AI session and ask:
 
-> **"我们之前为什么决定用 PostgreSQL？"**
+> **"Why did we decide on PostgreSQL?"**
 
-正确的样子：AI 调用 `get_decisions` 或 `search_sessions`，回答里带出处（日期、来源 agent、会话 ID、消息序号）。如果它说"不知道"，说明 MCP 未接通——检查 `srelay doctor`。
+Correct behavior: the AI calls `get_decisions` or `search_sessions` and answers with provenance (date, source tool, session ID, message numbers). If it says "I don't know," MCP isn't connected — run `srelay doctor`.
 
-### 16 个工具能回答什么
+### Context safety (the AI never "eats too much")
 
-<details>
-<summary><b>读工具（8 个）</b>——点击展开</summary>
+- `get_session_detail` defaults to 20 messages × 1,000 chars ≈ 20KB, hard-capped at 50KB
+- When truncated, responses carry `truncated: true` plus actionable hints (`role="user"` to see only your prompts / `get_decisions()` for conclusions / paginate)
+- More requires explicit parameters — safe by default, no trust in model restraint
 
-| 工具 | AI 从此能回答 |
-| ---- | ------------- |
-| `search_sessions` | "我们之前讨论过 X 吗？"（中文全文 + 元数据过滤） |
-| `get_session_detail` | "那场讨论具体聊了什么？"（可按角色过滤、分页、截断） |
-| `list_sessions` | "这个项目都聊过哪些话题？" |
-| `get_decisions` | "为什么决定用 X 而不是 Y？"（全部已确认决策，带出处） |
-| `get_file_history` | "这个文件为什么这么写？"（跨会话文件讨论史） |
-| `suggest_related_sessions` | "还有哪些讨论和这个相关？"（算法发现，可解释理由） |
-| `get_unresolved` | "还有什么没定的？"（未决问题清单） |
-| `get_stats` | "记忆库什么状态？"（会话数/来源/体积） |
-| `set_scope` | 检索边界逃生口 |
-
-</details>
-
-<details>
-<summary><b>写域工具（7 个）</b>——点击展开</summary>
-
-| 工具 | 能力 | 安全边界 |
-| ---- | ---- | -------- |
-| `annotate_session` | 给会话打标签 / 写摘要 | 只改元数据，不改写对话 |
-| `save_note` | AI 把结论写成笔记 | source=note，可识别可审计 |
-| `export_handoff` | 生成 .hop 交接包 | 只读导出 |
-| `import_handoff` | 导入交接包 | **默认隔离模式** |
-| `release_quarantine` | 放行隔离正文 | 需显式调用 |
-| `link_sessions` | 建立会话关联 | 关联可查可撤销 |
-| `get_linked_sessions` | 双向查询关联 | 只读 |
-
-</details>
-
-### 上下文安全（AI 不会"吃太多"）
-
-- `get_session_detail` 默认最多 20 条 × 1000 字 ≈ 20KB，硬顶 50KB
-- 超出时返回 `truncated: true` + 行动建议（`role="user"` 只看提问 / `get_decisions()` 直接拿结论 / 翻页）
-- 要更多需显式传参——默认安全，不信任 AI 自觉
-
-### Claude Code 生命周期钩子（可选，加速会话确认）
+### Claude Code lifecycle hook (optional, speeds up session confirmation)
 
 ```json
 {
@@ -394,68 +339,69 @@ claude mcp add sessionrelay --scope user -- srelay serve
 }
 ```
 
-## 自定义适配器（新 Agent 接入）
+## Custom adapters (adding a new agent)
 
-会话接力支持插件化适配器——**加新 AI 工具 = 零改核心代码**：
+SessionRelay's adapters are pluggable — **adding a new AI tool = zero core changes**:
 
 ```
-.sessionrelay/adapters/my-agent.js   ← 放一个 JS 文件即可
+.sessionrelay/adapters/my-agent.js   ← just drop in a JS file
 ```
 
 ```javascript
-// 最小实现
+// minimal implementation
 module.exports = {
   id: 'my-agent',
   displayName: 'My Agent',
   discover(projectRoot, config) {
-    // 返回属于该项目的会话列表
+    // return the sessions belonging to this project
     return [{ source: 'my-agent', sourceSessionId: 'xxx', sourceFile: '...', sizeBytes: 1024, mtimeMs: Date.now() }];
   },
   async readNew(ds, cursor, config) {
-    // 增量读取新消息（cursor 是你自己定义的水位对象）
+    // incrementally read new messages (the cursor is your own watermark object)
     return { messages: [{ role: 'user', content: '...', seqNum: 1 }], badLines: 0, cursor: { offset: 100 } };
   },
 };
 ```
 
-完整接口和更多能力（watchRoots / healthCheck / detectCompaction）见 [Adapter SDK 文档](docs/adapters/README.md)。
+Full interface and more capabilities (watchRoots / healthCheck / detectCompaction) in the [Adapter SDK docs](docs/adapters/README.md).
 
-## 隐私设计
+## Privacy design
 
-- **本地优先**：零云依赖、零运行时网络外呼（遥测 = 本地计数器 + 自愿提交）
-- **三档捕获** + **ignore 硬边界** + **导出默认脱敏** + **隔离导入**，四层防线
-- **信任模型**：交接包内容是数据不是指令，写入 `hop/1.0` 协议
+- **Local-first**: zero cloud dependencies, zero runtime network calls (telemetry = a local counter + voluntary submission)
+- **Three capture modes** + **ignore hard boundary** + **redacted-by-default export** + **quarantined import** — four lines of defense
+- **Trust model**: handoff contents are data, not instructions — written into the `hop/1.0` protocol
 
-## 质量与验证
+## Quality & verification
 
-- **260 个测试**（单元 / 集成 / MCP stdio 真握手契约 / serve 根解析 / 守护服务真装 / UI 安全矩阵 / 端到端），`npm test` 一键
-- **CI 三平台 × Node 22/24 常绿**（typecheck + test + build + dist 冒烟）
-- TypeScript strict，`npm run typecheck` 零错误
-- 每阶段实机验收（含用产品自身记录了自身的诞生过程）
+- **260 tests** (unit / integration / MCP stdio real-handshake contract / serve root resolution / live daemon-service install / UI security matrix / end-to-end), one `npm test`
+- **CI green across 3 platforms × Node 22/24** (typecheck + test + build + dist smoke)
+- TypeScript strict, `npm run typecheck` clean
+- Real-machine acceptance at every phase (including the product recording its own birth)
 
-## 已知限制（诚实清单）
+## Known limitations (honest list)
 
-- 规则提取精度约 60-70%（出处块让你逐条回跳核验；`--ai` 增强在 Phase 4）
-- 守护服务注册三平台可用（Windows 注册表 Run 键 / macOS launchd / Linux systemd user，均登录自启动）
-- 开新会话的"自动关联重要会话"需要会话身份（branch/PID），Phase 4 落地；当前用 `attach` 手动挂载
-- 多 agent 同项目并发时 Scope 按 project+cwd 归属
-- Trae 仅部分支持：用户提问可读，AI 回复端到端加密（可用 `save_note` 补记结论）
-- 目录改名/搬迁的历史会话不被自动发现（用交接包迁移）
-- DSH / Cursor 等其他工具在路线图（当前可用[自定义适配器](docs/adapters/README.md)先行接入）
+- Rule-based extraction precision is ~60-70% (provenance blocks let you verify item by item; `--ai` enhancement is Phase 4)
+- Daemon service registration on all three platforms (Windows registry run key / macOS launchd / Linux systemd user, all login-autostart)
+- "Auto-attach important sessions to new ones" needs session identity (branch/PID), landing in Phase 4; for now use manual `attach`
+- Concurrent multi-agent sessions on one project scope by project+cwd
+- Historical sessions under renamed/moved directories are not auto-discovered (use a handoff package to migrate)
+- Trae is partial only: user prompts are readable, assistant replies are end-to-end encrypted (use `save_note` to record conclusions)
+- DSH / Cursor and other tools are on the roadmap ([custom adapters](docs/adapters/README.md) work today)
 
-## 路线图（Phase 4）
+## Roadmap (Phase 4)
 
-`--ai` 摘要与提取增强 · 会话身份（branch/PID）与自动关联 · DSH / Cursor 官方适配 · HOP 协议第三方推广
+`--ai` summary/extraction enhancement · session identity (branch/PID) and auto-attach · `suggest_related_sessions` (now cheap: session vectors from semantic search already encode topic similarity) · official DSH / Cursor adapters · macOS/Linux daemon service registration · third-party adoption of the HOP protocol
 
-## 文档
+## Documentation
 
-- **[用户手册](docs/user-guide.md)**——从安装到团队交接的完整指南（所有用户必读）
-- [导入导出实操指南](docs/import-export-guide.md)——项目交接 / 新人入职 / 安全导入 / 跨项目迁移 / 定期归档，五个场景完整命令
-- [Adapter SDK](docs/adapters/README.md)——如何编写自定义适配器（7 行代码接入新 AI 工具）
-- [HOP 交接协议规格 hop/1.0](spec/hop-1.0.md)——开放格式（MIT），欢迎第三方实现读取器
-- [隐私与数据生命周期](docs/privacy-and-lifecycle-design.md)——三层隐私模型（预防/归档/删除）+ 归档机制设计
+- **[User Guide](docs/user-guide.md)** (Chinese) — the complete manual from install to team handoff
+- [Import & Export Guide](docs/import-export-guide.md) (Chinese) — five scenarios with complete commands
+- [Adapter SDK](docs/adapters/README.md) — how to write a custom adapter (7 lines of code per new AI tool)
+- [HOP handoff protocol spec, hop/1.0](spec/hop-1.0.md) — open format, MIT
+- [Privacy & data lifecycle](docs/privacy-and-lifecycle-design.md) (Chinese) — the three-layer privacy model
+- Design decision logs (Chinese, contributor-facing): see [CONTRIBUTING.md](CONTRIBUTING.md)
 
-> 上述深读文档的英文翻译正在进行中（README 已双语），欢迎提交翻译 PR——国际用户的第一句话往往是 "docs are Chinese-only"，每一篇翻译都在直接降低使用门槛。
+> **Non-Chinese readers**: the README you're reading is fully bilingual, but most deep-dive docs above (user guide, import/export, privacy design) are still Chinese-only. English translations are in progress — if you'd like to help, translation PRs are very welcome. The [User Guide](docs/user-guide.md) is structured enough that machine translation reads reasonably well in the meantime.
 
 ## License
 

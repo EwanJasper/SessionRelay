@@ -254,7 +254,7 @@ describe('semantic · 兼容与降级', () => {
     expect(bin).toContain("command('semantic')");
     expect(bin).toContain('--enable');
     const readme = fs.readFileSync(path.resolve('README.md'), 'utf8');
-    expect(readme).toContain('语义检索（可选）');
+    expect(readme).toContain('Semantic search (optional)');
     expect(readme).toContain('srelay semantic enable');
   });
 });
