@@ -181,6 +181,20 @@ Once your AI agent connects via MCP, it stops being amnesiac in this project:
 
 **Write-domain principles (D21)**: bypass the write path (never touches the state machine) · import defaults to quarantine · notes are traceable — every AI write is identifiable, auditable, revocable.
 
+### 🖥️ Local dashboard (`srelay ui`, new in 0.6.0)
+
+A third thin presentation layer: CLI, MCP, and the browser share the same query functions — zero core changes, zero new dependencies.
+
+- **Registry overview**: cards for every registered project — session composition, source distribution, disk usage, daemon liveness
+- **Project detail**: interactive growth chart (messages + active-sessions dual metric, click a bar to drill into that day), full-text filter, health cards with the daemon log tail
+- **Session drill-down**: metadata, decisions, open questions, paged message flow, and **in-session keyword search** — click a hit or a decision to jump to that message, highlighted
+- **First write op — session forget**: the exact same core as CLI `srelay forget` (transactional delete + tombstone + ignore-rule anti-resurrection + audit), behind a confirmation dialog; message-level deletion deliberately not offered (sessions are immutable, forgetting is session-granular)
+- **Security model**: off by default · binds `127.0.0.1` only · one-time token + Host validation (anti DNS-rebinding) · never returns CORS headers · foreground lifecycle (Ctrl-C stops it)
+
+```bash
+srelay ui    # start the local dashboard (random port + one-time token, opens the browser)
+```
+
 ### 🎯 Scope: retrieval boundaries
 - **Tier B**: `scope.json` project contract (shared by CLI and MCP), intersection semantics — can only narrow
 - **Tier A**: auto-scope backstop (MCP-side, recent-30-days configurable) against context pollution
@@ -357,7 +371,7 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 
 ## Quality & verification
 
-- **222 tests** (unit / integration / MCP stdio real-handshake contract / serve root resolution / live daemon-service install / end-to-end), one `npm test`
+- **260 tests** (unit / integration / MCP stdio real-handshake contract / serve root resolution / live daemon-service install / UI security matrix / end-to-end), one `npm test`
 - **CI green across 3 platforms × Node 22/24** (typecheck + test + build + dist smoke)
 - TypeScript strict, `npm run typecheck` clean
 - Real-machine acceptance at every phase (including the product recording its own birth)
