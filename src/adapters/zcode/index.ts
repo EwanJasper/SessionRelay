@@ -153,7 +153,9 @@ export function readNew(ds: DiscoveredSession, dbPath: string, cursor: unknown):
 // ── 改动 3：compaction 检测 ──
 export function detectCompaction(ds: DiscoveredSession, dbPath: string): CompactionInfo | null {
   if (!fs.existsSync(dbPath)) return null;
-  const z = new Database(dbPath, { readonly: true });
+  // [fork] 复用 getConn 缓存连接——原实现每个会话每周期 new Database 却从不关闭
+  // （注释"缓存连接"系自 getConn 误复制），连接全靠 GC 兜底 → 句柄泄漏 + 内存锯齿 + CPU 空烧（上游 #2 根因）
+  const z = getConn(dbPath);
   try {
     z.pragma('busy_timeout = 3000');
     const comp = z.prepare(`
@@ -174,7 +176,7 @@ export function detectCompaction(ds: DiscoveredSession, dbPath: string): Compact
       summaryMessageId: data.summaryMessageId,
     };
   } finally {
-    // 缓存连接，不关闭
+    // 复用缓存连接，不关闭（与注释语义一致）
   }
 }
 
@@ -197,7 +199,7 @@ export const adapter: SessionSourceAdapter = {
     if (!fs.existsSync(dbPath)) return `数据库不存在：${dbPath}（未安装 ZCode 可忽略）`;
     try {
       const z = new Database(dbPath, { readonly: true });
-      // 缓存连接，不关闭
+      z.close(); // [fork] 探测完即关：一次性连接不留着等 GC（原实现泄漏句柄，doctor 路径）
       return null;
     } catch (e) {
       return `只读探测失败：${(e as Error).message}`;
@@ -205,5 +207,24 @@ export const adapter: SessionSourceAdapter = {
   },
   detectCompaction(ds, config) {
     return detectCompaction(ds, config.dbPath as string);
+  },
+
+  // [fork 0922] 内容签名：两条聚合查询拿全表 MAX(rowid)（消息+part，part 覆盖 compaction 追加）。
+  // 内容变更必动 rowid；mtime 不可靠（测试夹具证明追加可以不 bump time_updated）。
+  changeProbe(config) {
+    const dbPath = config.dbPath as string;
+    const out = new Map<string, string>();
+    if (!fs.existsSync(dbPath)) return out;
+    const z = getConn(dbPath);
+    try {
+      z.pragma('busy_timeout = 3000');
+      const msg = z.prepare('SELECT session_id, MAX(rowid) AS m FROM message GROUP BY session_id').all() as Array<{ session_id: string; m: number }>;
+      const part = z.prepare('SELECT session_id, MAX(rowid) AS m FROM part GROUP BY session_id').all() as Array<{ session_id: string; m: number }>;
+      for (const r of msg) out.set(r.session_id, String(r.m));
+      for (const r of part) out.set(r.session_id, `${out.get(r.session_id) ?? '0'}/${r.m}`);
+      return out;
+    } catch {
+      return out; // 探针失败 → 空签名 → 全部不命中水位线 → 全量 ingest（安全侧）
+    }
   },
 };

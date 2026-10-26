@@ -8,7 +8,7 @@ import { touchRegistry } from '../shared/registry.js';
 import { pc } from './ui.js';
 import { installWatchService, uninstallWatchService, watchServiceStatus, watchLogPath, rotateWatchLog, readLogTail } from './service.js';
 
-export async function cmdWatch(opts: { foreground?: boolean; installService?: boolean; uninstall?: boolean; status?: boolean }): Promise<void> {
+export async function cmdWatch(opts: { foreground?: boolean; global?: boolean; installService?: boolean; uninstall?: boolean; status?: boolean }): Promise<void> {
   // watch 默认前台运行（服务与手动皆同路径）
   const root = process.cwd();
   if (opts.uninstall) return uninstallWatchService(root);
@@ -26,7 +26,7 @@ export async function cmdWatch(opts: { foreground?: boolean; installService?: bo
     }
     return;
   }
-  if (opts.installService) return installWatchService(root);
+  if (opts.installService) return installWatchService(root, { global: opts.global });
   // 前台守护：要求已初始化
   const rr = findRelayRoot(root);
   if (!rr) {

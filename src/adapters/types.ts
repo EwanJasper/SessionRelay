@@ -46,6 +46,14 @@ export interface SessionSourceAdapter {
    * 返回该会话的 compaction 信息；无压缩返回 null
    */
   detectCompaction?(ds: DiscoveredSession, config: AdapterConfig): CompactionInfo | null;
+
+  /**
+   * [fork 0922] 内容变更探针：一次调用返回"会话ID → 内容签名"全表快照。
+   * 供 runSync 水位线跳过未变更会话——每周期总共一次聚合查询，而非每会话逐条探测。
+   * 签名必须由内容决定（如 MAX(rowid)），不得用 mtime：内容变更未必 bump mtime（上游测试契约）。
+   * 未实现时 runSync 退回 mtimeMs+sizeBytes 签名（对文件型源已足够）。
+   */
+  changeProbe?(config: AdapterConfig): Map<string, string>;
 }
 
 /** compaction 检测结果 */
