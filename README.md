@@ -441,6 +441,8 @@ module.exports = {
 - [HOP 交接协议规格 hop/1.0](spec/hop-1.0.md)——开放格式（MIT），欢迎第三方实现读取器
 - [隐私与数据生命周期](docs/privacy-and-lifecycle-design.md)——三层隐私模型（预防/归档/删除）+ 归档机制设计
 
+> 上述深读文档的英文翻译正在进行中（README 已双语），欢迎提交翻译 PR——国际用户的第一句话往往是 "docs are Chinese-only"，每一篇翻译都在直接降低使用门槛。
+
 ## License
 
 MIT © 2026 EwanJasper

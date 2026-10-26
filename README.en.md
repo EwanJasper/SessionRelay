@@ -385,6 +385,8 @@ Full interface and more capabilities (watchRoots / healthCheck / detectCompactio
 - [Privacy & data lifecycle](docs/privacy-and-lifecycle-design.md) (Chinese) — the three-layer privacy model
 - Design decision logs (Chinese, contributor-facing): see [CONTRIBUTING.md](CONTRIBUTING.md)
 
+> **Non-Chinese readers**: the README you're reading is fully bilingual, but most deep-dive docs above (user guide, import/export, privacy design) are still Chinese-only. English translations are in progress — if you'd like to help, translation PRs are very welcome. The [User Guide](docs/user-guide.md) is structured enough that machine translation reads reasonably well in the meantime.
+
 ## License
 
 MIT © 2026 EwanJasper
