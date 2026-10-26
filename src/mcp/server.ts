@@ -330,9 +330,11 @@ export function buildServer(get: () => ServeCtx, select?: (p: string) => Promise
     if (!full) return toolOut({ ok: false, reason: '会话数据缺失' });
     const remove = new Set(args.remove_tags ?? []);
     const tags = [...new Set([...full.userTags, ...(args.add_tags ?? [])])].filter((t) => !remove.has(t));
+    // [fork 0922] 重写 meta_text 必须并回决策文本（confirm 时 meta_text 含决策，
+    // 原实现覆盖后 viaMeta 检索面静默变窄）
     db.prepare('UPDATE sessions SET user_tags = ?, user_summary = COALESCE(?, user_summary), meta_text = ? WHERE id = ?')
       .run(JSON.stringify(tags), args.summary ?? null,
-        metaTextOf(full.title, [...full.topics, ...tags, ...(args.summary ? [args.summary] : [])]), s.id);
+        metaTextOf(full.title, [...full.topics, ...tags, ...(args.summary ? [args.summary] : []), ...full.decisions.map((d) => d.text.slice(0, 30))]), s.id);
     return toolOut({ ok: true, sessionId: s.id, userTags: tags, ...(args.summary ? { userSummary: args.summary } : {}), note: '标签与摘要已进入检索索引' });
   }));
 
@@ -511,6 +513,9 @@ class RootHolder {
       if (this.maySpawn) { const { ensureDaemon } = await import('../cli/ui.js'); ensureDaemon(abs); }
       const cfg = loadConfig(abs);
       const db = openExisting(dbFile(abs));
+      // [fork 0922] 换根先关旧句柄——原实现直接覆盖 this.cur，旧 better-sqlite3 连接泄漏，
+      // 且被持有的 relay.sqlite 会让 forget/rebuild 的文件操作报 EBUSY
+      try { this.cur?.db?.close(); } catch { /* 已关 */ }
       this.cur = { root: abs, db, cfg, project: cfg.identity.project_id ?? abs };
       if (via === 'project') this.tried.project = abs; else this.tried[via] = abs;
       if (this.maySpawn) touchRegistry(abs);

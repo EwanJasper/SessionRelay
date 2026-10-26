@@ -220,7 +220,9 @@ program
   .option('--json')
   .action(async (opts) => {
     const { cmdUnresolved } = await import('../cli/meta.js');
-    await cmdUnresolved({ limit: opts.limit ? Number(opts.limit) : undefined });
+    // [fork 0922] 原实现丢弃 opts.json（选项存在却没传）——unresolved --json 永远输出人话，
+    // 依赖 JSON 的调用方（开场简报）被迫走文本兜底、丧失一切结构化过滤
+    await cmdUnresolved({ limit: opts.limit ? Number(opts.limit) : undefined, json: opts.json });
   });
 
 program

@@ -33,10 +33,13 @@ beforeAll(() => {
   makeProject(PROJECT);
   process.chdir(PROJECT);
   const db = createDb(dbFile(PROJECT));
-  insertSession(db, { id: S1, source: 'zcode', sourceSessionId: 'z-s1', projectId: PID, createdAt: '2026-08-20T08:00:00Z', title: '数据库选型（PG vs MongoDB）', topics: ['db'] });
-  for (let i = 1; i <= 12; i++) insertMessage(db, { sessionId: S1, role: i % 2 ? 'user' : 'assistant', content: i === 3 ? '磁悬浮轴承选型讨论：决定采用 PG' : `消息 ${i}：普通内容`, seqNum: i, createdAt: '2026-08-20T08:00:00Z' });
+  // [fork] S1 年龄用相对时间：原夹具写死 2026-08-20，A1 断言"天前"——
+  // 写测试时是 N 天前，30 天边界一过（9 月中起）输出变"个月前"，套件永久变红（时间炸弹）
+  const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  insertSession(db, { id: S1, source: 'zcode', sourceSessionId: 'z-s1', projectId: PID, createdAt: threeDaysAgo, title: '数据库选型（PG vs MongoDB）', topics: ['db'] });
+  for (let i = 1; i <= 12; i++) insertMessage(db, { sessionId: S1, role: i % 2 ? 'user' : 'assistant', content: i === 3 ? '磁悬浮轴承选型讨论：决定采用 PG' : `消息 ${i}：普通内容`, seqNum: i, createdAt: threeDaysAgo });
   db.prepare('UPDATE sessions SET message_count = 12, decisions = ?, last_event_at = ? WHERE id = ?')
-    .run(JSON.stringify([{ text: '决定采用 PostgreSQL', seq: 3 }]), '2026-08-20T09:00:00Z', S1);
+    .run(JSON.stringify([{ text: '决定采用 PostgreSQL', seq: 3 }]), new Date(Date.now() - 3 * 86_400_000 + 3_600_000).toISOString(), S1);
   insertSession(db, { id: S1B, source: 'claude-code', sourceSessionId: 'c-s1b', projectId: PID, createdAt: '2026-08-22T08:00:00Z', title: '另一个 a3f 会话', topics: ['misc'] });
   insertMessage(db, { sessionId: S1B, role: 'user', content: '无关内容', seqNum: 1, createdAt: '2026-08-22T08:00:00Z' });
   db.prepare('UPDATE sessions SET message_count = 1, last_event_at = ? WHERE id = ?').run('2026-08-22T08:00:00Z', S1B);

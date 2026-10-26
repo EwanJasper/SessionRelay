@@ -77,7 +77,14 @@ export function loadConfig(root: string): RelayConfig {
   const def = defaultConfig();
   const file = configFile(root);
   if (!fs.existsSync(file)) return def;
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // [fork 0922] 配置损坏时给可读错误而非裸堆栈（doctor 把"config 可解析"当检查项，
+  // 常规命令路径却拿不到指导信息——原实现 JSON.parse 直接抛）
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  } catch (e) {
+    throw new Error(`config.json 解析失败（${file}）：${(e as Error).message} —— 修复该文件，或删除后 srelay init 重建`);
+  }
   return {
     ...def,
     ...raw,

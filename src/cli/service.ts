@@ -46,15 +46,16 @@ export function resolveWatchEntryFrom(moduleUrl: string): { entry: string; exist
   return { entry, exists: fs.existsSync(entry) };
 }
 
-/** 守护启动命令参数（dev=tsx loader / prod=dist/srelay.js 稳定入口） */
-export function buildWatchArgs(root: string): string[] {
+/** 守护启动命令参数（dev=tsx loader / prod=dist/srelay.js 稳定入口；global=全局单守护模式） */
+export function buildWatchArgs(root: string, opts?: { global?: boolean }): string[] {
   const isDev = import.meta.url.endsWith('.ts');
+  const extra = opts?.global ? ['--global'] : [];
   if (isDev) {
     const loader = path.join(repoRoot(), 'node_modules', 'tsx', 'dist', 'loader.mjs');
     const { entry } = resolveWatchEntry();
-    return ['--import', pathToFileURLSafe(loader), entry, 'watch', '--foreground'];
+    return ['--import', pathToFileURLSafe(loader), entry, 'watch', '--foreground', ...extra];
   }
-  return [resolveWatchEntry().entry, 'watch', '--foreground'];
+  return [resolveWatchEntry().entry, 'watch', '--foreground', ...extra];
 }
 
 function pathToFileURLSafe(p: string): string {
@@ -144,12 +145,16 @@ WantedBy=default.target
 
 // ── 安装/卸载/状态（分平台执行） ──
 
-function windowsRunScript(root: string): string {
+function windowsRunScript(root: string, opts?: { global?: boolean }): string {
   const nodeAbs = process.execPath;
-  const args = buildWatchArgs(root).map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
+  const args = buildWatchArgs(root, opts).map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ');
   const logFile = watchLogPath(root);
   // 输出全部落盘：静默启动后报错必须可诊断（用户教训：闪框有信号，纯静默=故障不可见）
-  return ['@echo off', `cd /d "${root}"`, `${nodeAbs} ${args} >> "${logFile}" 2>&1`, ''].join('\r\n');
+  // [fork] ①nodeAbs 加引号（默认装在 C:\Program Files\nodejs，含空格裸奔必死于 'C:\Program'，上游 #1）；
+  //       ②首行 chcp 65001：cmd.exe 按 OEM 码页（中文系统=GBK）逐行解析本文件，
+  //         而 fs.writeFileSync 落盘是 UTF-8——项目路径含中文时 cd/重定向全部乱码；
+  //         chcp 行本身纯 ASCII 任何码页下都先被正确解析，之后各行按 UTF-8 解析，与文件编码对齐
+  return ['@echo off', 'chcp 65001 >nul', `cd /d "${root}"`, `"${nodeAbs}" ${args} >> "${logFile}" 2>&1`, ''].join('\r\n');
 }
 
 /**
@@ -178,7 +183,7 @@ export function windowsSilentVbs(cmdPath: string): string {
   return `CreateObject("Wscript.Shell").Run """${cmdPath}""", 0, False\r\n`;
 }
 
-export async function installWatchService(root: string): Promise<void> {
+export async function installWatchService(root: string, opts?: { global?: boolean }): Promise<void> {
   fs.mkdirSync(relayDir(root), { recursive: true });
   // 入口预检（chunk-hash 事故防线）：守护入口必须是稳定存在文件——
   // 0.4.0 前这里写入带 hash 的 chunk 路径，dist 重建后开机即 MODULE_NOT_FOUND
@@ -191,9 +196,15 @@ export async function installWatchService(root: string): Promise<void> {
   if (process.platform === 'win32') {
     const { REG_PATH, REG_NAME } = await import('./winregistry.js');
     const cmdPath = path.join(relayDir(root), 'watch-task.cmd');
-    fs.writeFileSync(cmdPath, windowsRunScript(root), 'utf8');
+    fs.writeFileSync(cmdPath, windowsRunScript(root, opts), 'utf8');
     const vbsPath = path.join(relayDir(root), 'watch-task.vbs');
-    fs.writeFileSync(vbsPath, windowsSilentVbs(cmdPath), 'utf8');
+    // [fork] vbs 必须 UTF-16LE+BOM：wscript 只认 ANSI/UTF-16，
+    // UTF-8 落盘的中文路径会被按 GBK 误读（cmd 之下更深一层的同款编码坑）
+    fs.writeFileSync(vbsPath, Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(windowsSilentVbs(cmdPath), 'utf16le'),
+    ]));
+    if (opts?.global) console.log(pc.dim('  模式：全局守护（--global，一个进程看管注册表全部项目）'));
     try {
       await execFileP('powershell', ['-Command',
         `Set-ItemProperty -Path '${REG_PATH}' -Name '${REG_NAME}' -Value 'wscript.exe "${vbsPath}"'`]);

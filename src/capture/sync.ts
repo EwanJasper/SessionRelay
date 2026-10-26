@@ -35,6 +35,17 @@ function titleFromMessages(msgs: Array<{ role: string; content: string }>): stri
   return first.content.replace(/\s+/g, ' ').trim().slice(0, 60);
 }
 
+// [fork 0922] 会话水位线：内容签名未变 且 会话仍在库里 → 整跳过（discover 仍跑，ingestOne 清零）。
+// 背景：N 个项目守护各自监听同一批源目录，源库任何写入都触发所有守护各跑一轮 cycle，
+// 每个 cycle 又对每个已知会话跑 3-4 条查询——活跃时段单守护 7.5% 单核，守护越多放大越狠。
+// 签名铁律：内容由 adapter.changeProbe（zcode=MAX(rowid) 聚合，每周期 2 条 SQL）决定；
+// 文件型源退回 mtimeMs+sizeBytes。不得只用 mtime——内容变更未必 bump mtime（上游测试契约）。
+// "仍在库里"缺一不可（上游测试抓出的真缺陷）：rebuild/forget/手动删行后库与签名脱钩，
+// 没有它重建后的库永远收不到重摄。已知会话集=每周期一条本地聚合查询，代价毫秒级。
+// 内存态即够：守护重启后首轮全量（本就是补账需求）；10 分钟一次全量清扫兜底一切"以为没变其实变了"。
+const syncWatermark = new Map<string, string>();
+let lastFullSweep = 0;
+
 export async function runSync(opts: SyncOptions): Promise<SyncStats> {
   const root = opts.projectRoot;
   const cfg = opts.config;
@@ -43,14 +54,22 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
 
   if (mode === 'off') return result;
 
-  // 改动 1：注册表初始化（含 custom adapter 加载）
-  ensureRegistered(root);
+  // [fork 0922] 10 分钟全量清扫：清水位线跑一轮完整 ingest，堵一切"以为没变其实变了"的边角
+  if (Date.now() - lastFullSweep > 600_000) syncWatermark.clear();
+  lastFullSweep = Date.now();
+
+  // 改动 1：注册表初始化（含 custom adapter 加载）——[fork 56d54d0] 原本连调两次，
+  // 第二次因 customLoaded 守卫恒返回空结果，custom adapter 的加载错误从未上报
   const customResult = ensureRegistered(root);
   for (const err of customResult.errors) result.warnings.push(`custom adapter 加载失败：${err}`);
 
   const own = !opts.db;
   const db = opts.db ?? createDb(dbFile(root));
   const projectId = cfg.identity.project_id ?? projectIdOf(root);
+  // [fork 0922] 已知会话集：库里现存 (source, source_session_id)——水位线跳过的第二个必要条件
+  const knownSessions = new Set<string>(
+    (db.prepare("SELECT source || ':' || source_session_id AS k FROM sessions WHERE project_id = ?").all(projectId) as Array<{ k: string }>).map(r => r.k)
+  );
   const ignoreRules = loadIgnoreRules(root);
   // forget 防复活次级防线（设计 v4 §3.2）：入口整表载入一次，ingest 内 Set 判定
   const tombstones = loadTombstones(db);
@@ -68,6 +87,8 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
       }
       const aConfig = adapterConfig(cfg, source);
       const discovered = adapter.discover(root, aConfig);
+      // [fork 0922] 内容签名探针：每源每周期一次聚合查询；无探针的源退回 mtime+size
+      const probe = adapter.changeProbe?.(aConfig);
 
       for (const ds of discovered) {
         result.discovered++;
@@ -86,7 +107,15 @@ export async function runSync(opts: SyncOptions): Promise<SyncStats> {
           continue;
         }
 
+        // [fork 0922] 水位线：内容签名未变 且 会话仍在库里 → 跳过（rebuild/forget/删行后自动失效）
+        const wmKey = `${ds.source}:${ds.sourceSessionId}`;
+        const sig = probe
+          ? probe.get(ds.sourceSessionId)
+          : (ds.mtimeMs !== undefined ? `${ds.mtimeMs}:${ds.sizeBytes}` : undefined);
+        if (sig !== undefined && syncWatermark.get(wmKey) === sig && knownSessions.has(wmKey)) continue;
+
         await ingestOne(db, ds, { mode, projectId, cfg, result, stats: opts.stats, ignoreRules, tombstones, source, aConfig });
+        if (sig !== undefined) syncWatermark.set(wmKey, sig);
       }
     }
   } finally {
@@ -202,7 +231,8 @@ async function ingestOne(
       createdAt: ds.createdAt ?? lastEventAt,
       lastEventAt,
       sourceFile: ds.sourceFile,
-      origin: ctx.origin,
+      // [fork 0924] 适配器的来源提示（如 zcode 工作流子代理→workflow）优先于默认 auto
+      origin: ds.originHint ?? ctx.origin,
     });
     if (up.isNew) ctx.result.newSessions++;
 

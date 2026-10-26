@@ -84,7 +84,8 @@ export async function cmdSave(f: SaveFlags): Promise<void> {
         const full = getSessionFull(db, id);
         if (!full) continue;
         const merged = [...new Set([...full.userTags, ...tags])];
-        const metaText = metaTextOf(full.title, [...full.topics, ...merged, ...(f.summary ? [f.summary] : [])]);
+        // [fork 0922] meta_text 重写并回决策文本（与 confirm 时一致，防检索面静默变窄）
+        const metaText = metaTextOf(full.title, [...full.topics, ...merged, ...(f.summary ? [f.summary] : []), ...full.decisions.map((d) => d.text.slice(0, 30))]);
         db.prepare('UPDATE sessions SET user_tags = ?, user_summary = COALESCE(?, user_summary), meta_text = ? WHERE id = ?')
           .run(JSON.stringify(merged), f.summary ?? null, metaText, id);
       }

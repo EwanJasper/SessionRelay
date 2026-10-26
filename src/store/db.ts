@@ -263,7 +263,7 @@ export interface UpsertCapture {
   createdAt: string;
   lastEventAt: string;
   sourceFile: string;
-  origin?: 'auto' | 'manual';
+  origin?: 'auto' | 'manual' | 'workflow';
 }
 
 export function upsertCapturedSession(
@@ -415,7 +415,7 @@ export function getMessageRange(db: DB, sessionId: string, fromSeq: number, toSe
 
 // ───────────────────── Phase 2：confirmed 副作用与元数据查询 ─────────────────────
 
-import { extractMessages, summaryRule, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
+import { extractMessages, extractDecisions, extractQuestions, summaryRule, type Msg, type ExtractedMeta } from '../core/extract/extract.js';
 
 export function getSessionMessages(db: DB, sessionId: string): Msg[] {
   return (db.prepare('SELECT role, content, seq_num, created_at FROM messages WHERE session_id = ? ORDER BY seq_num')
@@ -424,7 +424,9 @@ export function getSessionMessages(db: DB, sessionId: string): Msg[] {
 }
 
 /** confirmed 统一入口（judge 与 srelay confirm 共用）：提取元数据 + summary_rule + meta_text 重算 */
-export function confirmSession(db: DB, id: string, at: string): boolean {
+/** [fork 0924] 提取刷新（不改变状态）：长活会话在 pending 转换时调用——
+ *  决策/话题/问题随消息增量对齐，不再冻结到 6h 确认（mc整合包实测：活跃会话决策滞后 20+ 小时） */
+export function refreshExtraction(db: DB, id: string): boolean {
   const s = getSession(db, id);
   if (!s) return false;
   const msgs = getSessionMessages(db, id); // meta 模式无正文 → 提取为空，摘要仅标题/计数
@@ -436,13 +438,58 @@ export function confirmSession(db: DB, id: string, at: string): boolean {
     lastAt: s.last_event_at,
   });
   applyExtraction(db, id, meta, summary);
+  return true;
+}
+
+export function confirmSession(db: DB, id: string, at: string): boolean {
+  const s = getSession(db, id);
+  if (!s) return false;
+  if (!refreshExtraction(db, id)) return false;
   db.prepare(`UPDATE sessions SET state = 'confirmed', confirmed_at = ?, pending_at = NULL WHERE id = ?`).run(at, id);
+  return true;
+}
+
+/** [fork 0924b] 决策/问题增量刷新（pending 转换用，O(增量)）：
+ *  水位 = 决策列里已有的最大 seq；只对新消息跑提取并追加（键去重）。
+ *  topics/summary/meta_text 的全量重建留给 confirm（6h 一次，成本可摊）。
+ *  没有水位的会话（从未提取过）退化为全量——与旧行为一致。 */
+export function refreshDecisionsIncremental(db: DB, id: string): boolean {
+  const s = getSession(db, id);
+  if (!s) return false;
+  let existing: Array<{ text: string; seq: number; at?: string }> = [];
+  try { existing = JSON.parse((db.prepare('SELECT decisions FROM sessions WHERE id = ?').get(id) as { decisions?: string } | undefined)?.decisions ?? '[]'); } catch { existing = []; }
+  const lastSeq = existing.reduce((m, d) => Math.max(m, d.seq ?? 0), 0);
+  const msgs = (db.prepare('SELECT role, content, seq_num AS seqNum, created_at AS createdAt FROM messages WHERE session_id = ? AND seq_num > ? ORDER BY seq_num')
+    .all(id, lastSeq) as Msg[]).map((m) => ({ ...m, role: m.role === 'user' ? 'user' as const : 'assistant' as const }));
+  const newDecs = extractDecisions(msgs).filter((d) => !existing.some((e) => e.text === d.text));
+  const newQs = extractQuestions(msgs);
+  if (newDecs.length === 0 && newQs.length === 0) return true;
+  const mergedDecs = [...existing, ...newDecs];
+  let questions: Array<{ q: string; seq: number; at?: string; unresolved: boolean }> = [];
+  try { questions = JSON.parse((db.prepare('SELECT key_questions FROM sessions WHERE id = ?').get(id) as { key_questions?: string } | undefined)?.key_questions ?? '[]'); } catch { questions = []; }
+  const qKeys = new Set(questions.map((q) => (q.q ?? '').slice(0, 40)));
+  const mergedQs = [...questions, ...newQs.filter((q) => !qKeys.has((q.q ?? '').slice(0, 40)))];
+  const existingTags = (() => {
+    const row = db.prepare('SELECT user_tags, topics FROM sessions WHERE id = ?').get(id) as { user_tags?: string | null; topics?: string | null } | undefined;
+    try { return JSON.parse(row?.user_tags ?? '[]') as string[]; } catch { return []; }
+  })();
+  let existingTopics: string[] = [];
+  try { existingTopics = JSON.parse((db.prepare('SELECT topics FROM sessions WHERE id = ?').get(id) as { topics?: string | null } | undefined)?.topics ?? '[]') as string[]; } catch { existingTopics = []; }
+  const topicsAndDecisions = [...existingTopics, ...mergedDecs.map((d) => d.text.slice(0, 30)), ...existingTags];
+  db.prepare('UPDATE sessions SET decisions = ?, key_questions = ?, meta_text = ? WHERE id = ?')
+    .run(JSON.stringify(mergedDecs), JSON.stringify(mergedQs), metaTextOf(s.title, topicsAndDecisions), id);
   return true;
 }
 
 export function applyExtraction(db: DB, id: string, meta: ExtractedMeta, summary: string): void {
   const s = getSession(db, id);
-  const topicsAndDecisions = [...meta.topics, ...meta.decisions.map((d) => d.text.slice(0, 30))];
+  // [fork 0924] meta_text 重写必须并回既有 user_tags（confirm/refresh 路径同 annotate/save——
+  // 否则刷新一次，用户标签就从检索索引里静默消失）
+  let existingTags: string[] = [];
+  try {
+    existingTags = JSON.parse((db.prepare('SELECT user_tags FROM sessions WHERE id = ?').get(id) as { user_tags?: string | null } | undefined)?.user_tags ?? '[]') as string[];
+  } catch { /* 空标签 */ }
+  const topicsAndDecisions = [...meta.topics, ...meta.decisions.map((d) => d.text.slice(0, 30)), ...existingTags];
   db.prepare(`
     UPDATE sessions SET
       files_mentioned = ?, topics = ?, decisions = ?, key_questions = ?, code_changes = ?,
@@ -466,7 +513,10 @@ export interface DecisionRow {
 }
 
 export function listDecisions(db: DB, projectId: string, filter?: { topic?: string; source?: string }): DecisionRow[] {
-  const conds = ['project_id = ?', "state = 'confirmed'", 'decisions IS NOT NULL'];
+  // [fork 0924b] 不再过滤 state='confirmed'——长活会话（一直 active）的决策也要可见，
+  // 否则决策列再新鲜也进不了简报（mc整合包 0924 实测：791 条消息的活跃会话 9 条决策不可见）。
+  // 未确认会话的"半成品"风险由抽取守卫+origin 排除+简报 48h 窗三层兜住。
+  const conds = ['project_id = ?', 'decisions IS NOT NULL', "(origin IS NULL OR origin != 'workflow')"];
   const params: unknown[] = [projectId];
   if (filter?.source) { conds.push('source = ?'); params.push(filter.source); }
   const rows = db.prepare(`SELECT id, source, title, created_at, decisions, topics FROM sessions WHERE ${conds.join(' AND ')} ORDER BY created_at DESC`).all(...params) as Array<{
@@ -488,14 +538,20 @@ export function listDecisions(db: DB, projectId: string, filter?: { topic?: stri
 export interface UnresolvedRow { q: string; at: string; source: string; sessionId: string; title: string | null }
 
 export function listUnresolved(db: DB, projectId: string, limit = 20): UnresolvedRow[] {
-  const rows = db.prepare(`SELECT id, source, title, created_at, key_questions FROM sessions WHERE project_id = ? AND key_questions IS NOT NULL ORDER BY created_at DESC`).all(projectId) as Array<{
+  // [fork 0924] 同步排除 workflow 施工会话（与 listDecisions 同规，问题 4 的垃圾同源）
+  const rows = db.prepare(`SELECT id, source, title, created_at, key_questions FROM sessions WHERE project_id = ? AND key_questions IS NOT NULL AND (origin IS NULL OR origin != 'workflow') ORDER BY created_at DESC`).all(projectId) as Array<{
     id: string; source: string; title: string | null; created_at: string; key_questions: string;
   }>;
   const out: UnresolvedRow[] = [];
+  const seenQ = new Set<string>();
   for (const r of rows) {
     let qs: Array<{ q: string; at?: string; unresolved: boolean }> = [];
     try { qs = JSON.parse(r.key_questions); } catch { continue; }
     for (const q of qs.filter((x) => x.unresolved)) {
+      // [fork 0924] 同一问题在多个会话被捕获时去重（简报曾同条双显）
+      const key = (q.q ?? '').replace(/\s+/g, '').slice(0, 40);
+      if (key && seenQ.has(key)) continue;
+      if (key) seenQ.add(key);
       out.push({ q: q.q, at: q.at ?? r.created_at, source: r.source, sessionId: r.id, title: r.title });
     }
   }
@@ -781,10 +837,13 @@ export function insertMessage(
   db: DB,
   m: { sessionId: string; role: string; content: string; seqNum: number; createdAt?: string },
 ): number {
+  // [fork 0922] 索引文本截断 100KB：jieba 对超大消息（工具输出转储）同步分词会卡事件循环秒级；
+  // 100KB 内检索召回完整，超出部分正文仍全量入库、只是不进全文索引
+  const idxSource = m.content.length > 100_000 ? m.content.slice(0, 100_000) : m.content;
   const info = db.prepare(`
     INSERT OR IGNORE INTO messages (session_id, role, content, search_text, seq_num, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(m.sessionId, m.role, m.content, toSearchText(m.content), m.seqNum, m.createdAt ?? null);
+  `).run(m.sessionId, m.role, m.content, toSearchText(idxSource), m.seqNum, m.createdAt ?? null);
   return info.changes;
 }
 

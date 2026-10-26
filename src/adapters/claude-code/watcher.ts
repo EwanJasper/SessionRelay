@@ -29,13 +29,11 @@ export function watchDir(
   let watcher: fs.FSWatcher | null = null;
   let pollTimer: NodeJS.Timeout | null = null;
 
-  try {
-    watcher = fs.watch(dir, { recursive: true }, (_ev, filename) => {
-      if (!filename) return;
-      onEvent(path.join(dir, filename.toString()));
-    });
-  } catch {
-    // Linux 递归不支持 → mtime 轮询兜底（技术方案 §9.1）
+  // [fork 0922] 轮询兜底提为函数：原本只在 fs.watch 同步创建失败（Linux）时进入，
+  // 但运行中的 error 事件（目录被删/句柄溢出/杀软干扰）无人监听会让 EventEmitter
+  // 直接 throw——全局守护一死全部项目捕获停摆。error 时降级轮询自愈。
+  const startPolling = () => {
+    if (pollTimer) return;
     const snap = new Map<string, number>();
     const scan = () => {
       try {
@@ -59,6 +57,20 @@ export function watchDir(
     };
     scan(); // 建立基线
     pollTimer = setInterval(scan, 1000);
+  };
+
+  try {
+    watcher = fs.watch(dir, { recursive: true }, (_ev, filename) => {
+      if (!filename) return;
+      onEvent(path.join(dir, filename.toString()));
+    });
+    watcher.on('error', () => {
+      try { watcher?.close(); } catch { /* 已关 */ }
+      watcher = null;
+      startPolling(); // 事件流断了就退化为 1s 轮询，捕获不断线
+    });
+  } catch {
+    startPolling();
   }
 
   return {

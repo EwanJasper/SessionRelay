@@ -37,8 +37,16 @@ interface PreviewSnapshot {
 
 const snapshotFile = (root: string) => path.join(relayDir(root), 'forget-pending.json');
 
-function readSnapshot(root: string): PreviewSnapshot | null {
-  try { return JSON.parse(fs.readFileSync(snapshotFile(root), 'utf8')) as PreviewSnapshot; } catch { return null; }
+function readSnapshot(root: string): { kind: 'missing' } | { kind: 'ok'; snap: PreviewSnapshot } | { kind: 'corrupt' } {
+  const f = snapshotFile(root);
+  if (!fs.existsSync(f)) return { kind: 'missing' };
+  try {
+    return { kind: 'ok', snap: JSON.parse(fs.readFileSync(f, 'utf8')) as PreviewSnapshot };
+  } catch {
+    // [fork 0922] 快照损坏 ≠ 快照缺失：乐观锁防线（设计 §3.6）必须 fail-safe——
+    // 上次预览被中途打断留下的半截 JSON 不能让 --yes 静默跳过 diff 校验
+    return { kind: 'corrupt' };
+  }
 }
 function writeSnapshot(root: string, s: PreviewSnapshot): void {
   fs.writeFileSync(snapshotFile(root), JSON.stringify(s, null, 2));
@@ -189,7 +197,14 @@ export async function cmdForget(f: ForgetFlags, refArg?: string): Promise<void> 
     }
 
     // ── 执行（--yes）：乐观锁 diff（设计 §3.6 并发安全） ──
-    const snap = readSnapshot(root);
+    const snapState = readSnapshot(root);
+    if (snapState.kind === 'corrupt') {
+      die(
+        '预览快照损坏（上次预览可能被中途打断），已拒绝执行',
+        '重新运行不带 --yes 的 forget 预览，生成全新快照后再执行',
+      );
+    }
+    const snap = snapState.kind === 'ok' ? snapState.snap : null;
     if (snap && snap.id === row.id) {
       if (snap.messageCount !== row.messageCount || snap.decisionCount !== decisionCount) {
         die(
