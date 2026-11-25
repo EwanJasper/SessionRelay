@@ -5,6 +5,7 @@
 [![CI](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml/badge.svg)](https://github.com/EwanJasper/SessionRelay/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
 [![downloads](https://img.shields.io/npm/dm/@ewanjasper/sessionrelay)](https://www.npmjs.com/package/@ewanjasper/sessionrelay)
+[![EwanJasper/SessionRelay MCP server](https://glama.ai/mcp/servers/EwanJasper/SessionRelay/badges/score.svg)](https://glama.ai/mcp/servers/EwanJasper/SessionRelay)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933)
 ![MCP](https://img.shields.io/badge/MCP-16%E5%B7%A5%E5%85%B7-6C5CE7)
 ![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows_%7C_macOS_%7C_Linux-2D7DD2)
